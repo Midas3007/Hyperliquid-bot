@@ -1,0 +1,6 @@
+anthropic>=1.11,<2
+hyperliquid-python-sdk>=0.24,<1
+python-telegram-bot[job-queue]>=22,<23
+pydantic>=2.7,<3
+python-dotenv>=1.0
+requests>=2.31
