@@ -4,7 +4,7 @@
 const C = window.FUND_CONFIG
 const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseAnonKey)
 const $app = document.getElementById('app')
-const state = { session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 } }
+const state = { session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 }, trades: null }
 
 // ---------- formatting ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -113,7 +113,20 @@ async function load(skipSync) {
   render()
   if (!state.me.disclaimer_accepted_at && !document.getElementById('gate')) showDisclaimerGate()
   loadWallet()
+  loadTrades()
   if (!skipSync) syncValue()
+}
+
+// Trade history rebuilt on the server from the pool wallet's on-chain transactions.
+async function loadTrades() {
+  try {
+    const { data, error } = await sb.functions.invoke('trade-stats', { body: {} })
+    state.trades = error ? { error: 'Trading activity is unavailable right now.' } : data
+  } catch {
+    state.trades = { error: 'Trading activity is unavailable right now.' }
+  }
+  const el = document.getElementById('trade-stats')
+  if (el) el.innerHTML = tradeStatsView()
 }
 
 // Live on-chain balance of the pool wallet (read-only, straight from the Celo RPC).
@@ -216,6 +229,9 @@ function dashboardView() {
     <div class="card">${walletCard()}</div>
   </div>
 
+  <div class="section-title">Trading activity</div>
+  <div id="trade-stats">${tradeStatsView()}</div>
+
   <div class="section-title">Your position · ${esc(m.name)}</div>
   <div class="grid">
     ${stat('Your value', money(m.net_value), `after ${m.fee_exempt ? 'no' : pct(m.fee_pct)} manager fee`, '', true)}
@@ -272,6 +288,54 @@ function chart(history) {
     <path d="${line}" fill="none" stroke="#e4c56a" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
   </svg>
   <div class="row sub" style="justify-content:space-between"><span>${day(new Date(t0).toISOString())}</span><span>low $${lo.toFixed(4)} · high $${hi.toFixed(4)}</span><span>${day(new Date(t1).toISOString())}</span></div>`
+}
+
+function tradeStatsView() {
+  const T = state.trades, f = state.fund
+  if (!T) return `<div class="card"><div class="sub">Reading trades from the pool wallet\u2026</div></div>`
+  if (T.error) return `<div class="card"><div class="sub">${esc(T.error)}</div></div>`
+  const trades = T.trades || []
+  const hours = Math.max(1, (T.now - T.since) / 3_600_000)
+  const total = trades.reduce((s, x) => s + x.profit, 0)
+  const memberProfit = f.members > 0 ? (n(f.current_value) - n(f.capital) - n(f.fees_accrued)) / f.members : 0
+  const sinceLabel = day(new Date(T.since).toISOString())
+
+  // last 24 hours, bucketed by the viewer's local hour
+  const hourMs = 3_600_000
+  const endHour = Math.floor(T.now / hourMs) * hourMs
+  const buckets = Array.from({ length: 24 }, (_, i) => ({ start: endHour - (23 - i) * hourMs, n: 0, p: 0 }))
+  for (const x of trades) {
+    const b = buckets[23 - Math.floor((endHour - Math.floor(x.t / hourMs) * hourMs) / hourMs)]
+    if (b) { b.n++; b.p += x.profit }
+  }
+  const best = buckets.reduce((a, b) => (b.p > a.p ? b : a), buckets[0])
+  const hourLabel = (ms) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+
+  const W = 600, H = 160, pad = 4, bw = (W - pad * 2) / 24
+  const maxP = Math.max(0.01, ...buckets.map((b) => Math.abs(b.p)))
+  const bars = buckets.map((b, i) => {
+    const h = Math.max(b.n ? 2 : 0, (Math.abs(b.p) / maxP) * (H - 20))
+    const x = pad + i * bw + 2
+    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${(bw - 4).toFixed(1)}" height="${h.toFixed(1)}" fill="${b.p >= 0 ? '#e4c56a' : '#8d8d94'}" rx="1"><title>${hourLabel(b.start)} \u00b7 ${b.n} trade${b.n === 1 ? '' : 's'} \u00b7 ${money(b.p, true)}</title></rect>`
+  }).join('')
+  const ticks = buckets.map((b, i) => (i % 6 === 0 ? `<span style="position:absolute;left:${((i * bw + pad) / W) * 100}%">${hourLabel(b.start)}</span>` : '')).join('')
+
+  return `
+  <div class="grid">
+    ${stat('Trades per hour', (trades.length / hours).toFixed(1), `${trades.length} trades since ${sinceLabel}`)}
+    ${stat('Profit per hour', money(total / hours, true), `${money(total, true)} from trading since ${sinceLabel}`, tone(total))}
+    ${stat('Avg profit per trade', trades.length ? money(total / trades.length, true) : '\u2014', trades.length ? `on an average trade of ${money(trades.reduce((s, x) => s + x.size, 0) / trades.length)}` : 'no trades yet', tone(total))}
+    ${stat('Avg profit per member', money(memberProfit, true), `after manager fee \u00b7 ${f.members} member${f.members === 1 ? '' : 's'}`, tone(memberProfit))}
+  </div>
+  <div class="card" style="margin-top:12px">
+    <div class="chart-head"><div class="label">Profit by hour \u00b7 last 24 hours</div>
+      <div class="sub">${best.n ? `Best hour ${hourLabel(best.start)} \u00b7 ${best.n} trades \u00b7 ${money(best.p, true)}` : 'No trades in the last 24 hours'}</div></div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:160px" role="img" aria-label="Profit per hour for the last 24 hours">
+      <line x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}" stroke="#2a2a2e" vector-effect="non-scaling-stroke"/>${bars}
+    </svg>
+    <div class="sub" style="position:relative;height:16px;margin-top:6px">${ticks}</div>
+    <p class="note" style="margin-bottom:0">Read from the pool wallet's transactions on the Celo blockchain. A trade is one buy and the sale that follows it; profit is the USDT that came back minus the USDT that went out, before gas. Times are in your phone's time zone.</p>
+  </div>`
 }
 
 function walletCard() {
