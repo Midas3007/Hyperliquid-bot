@@ -1,9 +1,10 @@
 // Sets the fund value from the pool wallet's live on-chain balance.
 // Any signed-in member can trigger it: the value comes from the chain, never from the caller.
 // POST { peek: true } only reads the live value (for the admin deposit and withdrawal forms) and saves nothing.
-// Counts USDT + USDC at $1, and wBRL / wARS / cNGN at their live Uniswap v3 price in USDT. CELO (gas) is ignored.
+// Counts USDT + USDC at $1, and every other token the bot can hold (wBRL, wARS, cNGN and the Mento stablecoins)
+// at its live Uniswap v3 price in USDT, directly or through USDm/USDC. CELO (gas) is ignored.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
-import { createPublicClient, erc20Abi, formatUnits, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
+import { createPublicClient, encodePacked, erc20Abi, formatUnits, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
 import { celo } from 'npm:viem@2.21.0/chains'
 
 const MIN_GAP_MS = 2 * 60_000          // at most one sync every 2 minutes
@@ -16,9 +17,19 @@ const TOKENS = [
   { symbol: 'wBRL', address: '0xD76f5Faf6888e24D9F04Bf92a0c8B921FE4390e0', decimals: 18, stable: false },
   { symbol: 'wARS', address: '0x0DC4F92879B7670e5f4e4e6e3c801D229129D90D', decimals: 18, stable: false },
   { symbol: 'cNGN', address: '0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f', decimals: 6, stable: false },
+  { symbol: 'USDm', address: '0x765DE816845861e75A25fCA122bb6898B8B1282a', decimals: 18, stable: false },
+  { symbol: 'EURm', address: '0xD8763CBa276a3738E6DE85b4b3bF5FDed6D6cA73', decimals: 18, stable: false },
+  { symbol: 'BRLm', address: '0xe8537a3d056DA446677B9E9d6c5dB704EaAb4787', decimals: 18, stable: false },
+  { symbol: 'KESm', address: '0x456a3D042C0DbD3db53D5489e98dFb038553B0d0', decimals: 18, stable: false },
+  { symbol: 'XOFm', address: '0x73F93dcc49cB8A239e2032663e9475dd5ef29A08', decimals: 18, stable: false },
+  { symbol: 'PHPm', address: '0x105d4A9306D2E55a71d2Eb95B81553AE1dC20d7B', decimals: 18, stable: false },
+  { symbol: 'COPm', address: '0x8A567e2aE79CA692Bd748aB832081C45de4041eA', decimals: 18, stable: false },
+  { symbol: 'GHSm', address: '0xfAeA5F3404bbA20D3cc2f8C4B0A888F55a3c7313', decimals: 18, stable: false },
 ] as const
+const HUBS = ['0x765DE816845861e75A25fCA122bb6898B8B1282a', '0xcebA9300f2b948710d2653dD7B07f33A8B32118C'] as const // USDm, USDC
 const quoterAbi = parseAbi([
   'function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96)) returns (uint256 amountOut,uint160,uint32,uint256)',
+  'function quoteExactInput(bytes path, uint256 amountIn) returns (uint256 amountOut, uint160[], uint32[], uint256)',
 ])
 
 const cors = {
@@ -42,6 +53,19 @@ async function toUsdt(token: `0x${string}`, amount: bigint) {
       })
       if (result[0] > best) best = result[0]
     } catch { /* no pool at this tier */ }
+  }
+  // No direct pool: try one hop through USDm or USDC.
+  if (best === 0n) {
+    for (const hub of HUBS) {
+      if (hub.toLowerCase() === token.toLowerCase()) continue
+      for (const f1 of [100, 500, 3000]) for (const f2 of [100, 500, 3000]) {
+        try {
+          const path = encodePacked(['address', 'uint24', 'address', 'uint24', 'address'], [token, f1, hub, f2, USDT])
+          const { result } = await chain.simulateContract({ address: QUOTER, abi: quoterAbi, functionName: 'quoteExactInput', args: [path, amount] })
+          if (result[0] > best) best = result[0]
+        } catch { /* no such path */ }
+      }
+    }
   }
   return Number(formatUnits(best, 6))
 }
