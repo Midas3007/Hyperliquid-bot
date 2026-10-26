@@ -45,7 +45,7 @@ const DISCLAIMER = `
     <li><b>No guarantee of profit.</b> Past or displayed results do not predict future returns. Opportunities can disappear for long periods, and competing traders can take them first.</li>
     <li><b>Technology risk.</b> Losses can result from bugs in the bot, smart-contract failures, stablecoin de-pegs, exchange or RFQ-venue failures, network outages, or the theft or loss of private keys. The bot software is open-source third-party code that has not been independently audited.</li>
     <li><b>Not a regulated product.</b> This pool is a private arrangement. It is not registered with or approved by any securities regulator, is not a bank deposit, and is not insured or protected by any compensation scheme. Nothing on this site is financial, investment, legal or tax advice.</li>
-    <li><b>Figures shown.</b> The fund value is recorded by the manager and may lag the true on-chain position, especially while trades are open. The pool wallet's live balance is shown for transparency and may not equal the fund value at any moment.</li>
+    <li><b>Figures shown.</b> The fund value is read automatically from the pool wallet's on-chain balance, with any local-currency tokens priced at live Uniswap rates. It can move with those rates while trades are open, and the manager can correct it by hand.</li>
     <li><b>Fees.</b> The manager takes a performance fee (currently 10%) of profit above the capital you put in, charged when you withdraw and shown on your dashboard as it accrues. No fee is charged on losses. An early-exit penalty may apply if you withdraw within the lock period shown on your dashboard.</li>
     <li><b>Withdrawals</b> are paid at the unit price at the time of withdrawal and may take time to process while funds are in open positions.</li>
     <li><b>Limitation of liability.</b> To the fullest extent permitted by law, the manager and anyone operating this site are not liable for any loss, including loss of capital or profit, arising from your participation, except where caused by their fraud or wilful misconduct.</li>
@@ -71,7 +71,29 @@ async function adminUsers(body) {
   return data
 }
 
-async function load() {
+async function syncFn(body) {
+  const { data, error } = await sb.functions.invoke('sync-value', { body })
+  if (error) throw new Error('Could not read the pool wallet right now. Try again in a minute.')
+  return data
+}
+// Live pool-wallet value in USD, read on the server from the chain. Saves nothing.
+async function liveValue() {
+  const r = await syncFn({ peek: true })
+  if (typeof r?.value !== 'number') throw new Error('The pool wallet address is not set (Admin, Settings).')
+  return r.value
+}
+// Ask the server to refresh the fund value from the wallet; re-render if it changed and the admin isn't mid-edit.
+async function syncValue() {
+  try {
+    const r = await syncFn({})
+    if (!r?.recorded || document.querySelector('.modal')) return
+    const a = document.activeElement
+    if (a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName)) return
+    await load(true)
+  } catch { /* the page still shows the last saved value */ }
+}
+
+async function load(skipSync) {
   try {
     const [fund, me] = await Promise.all([rpc('fund_summary'), rpc('my_position')])
     state.fund = fund
@@ -85,8 +107,9 @@ async function load() {
     return renderError(errText(e))
   }
   render()
-  if (!state.me.disclaimer_accepted_at) showDisclaimerGate()
+  if (!state.me.disclaimer_accepted_at && !document.getElementById('gate')) showDisclaimerGate()
   loadWallet()
+  if (!skipSync) syncValue()
 }
 
 // Live on-chain balance of the pool wallet (read-only, straight from the Celo RPC).
@@ -179,7 +202,7 @@ function dashboardView() {
   return `
   <div class="section-title">The pool</div>
   <div class="grid">
-    ${stat('Fund value', money(f.current_value), 'Updated ' + stamp(f.last_updated), '', true)}
+    ${stat('Fund value', money(f.current_value), 'Live from pool wallet · ' + stamp(f.last_updated), '', true)}
     ${stat('Unit price', '$' + n(f.unit_price).toFixed(4), `<span class="${tone(growth)}">${pct(growth, true)}</span> since start`)}
     ${stat('Fund P&amp;L', money(pnl, true), `${pct(n(f.capital) ? (pnl / n(f.capital)) * 100 : 0, true)} on ${money(f.capital)} invested`, tone(pnl))}
     ${stat('Members', `${f.members} / ${f.total_slots}`, `${Math.max(f.total_slots - f.members, 0)} slots open`)}
@@ -304,10 +327,11 @@ function adminView() {
   <div class="grid two">
     <div class="card">
       <form data-form="value">
+        <div class="label">Manual override</div>
         <label class="field"><span>Current total fund value (USD)</span><input name="value" type="number" step="0.01" min="0" value="${n(f.current_value).toFixed(2)}" required></label>
         <label class="field"><span>Note (optional)</span><input name="note" placeholder="e.g. Daily update"></label>
         <button class="btn" type="submit">Save fund value</button>
-        <p class="note" style="margin:0">Type the pool's total value, including money tied up in open trades. Every member's value and the unit price update from this.</p>
+        <p class="note" style="margin:0">The fund value updates itself from the pool wallet whenever someone opens the site (at most every 2 minutes, and not within 10 minutes of a deposit or withdrawal). Use this only to correct it. The next automatic update will replace it.</p>
       </form>
     </div>
     <div class="card">
@@ -361,10 +385,10 @@ function adminView() {
         <label class="field"><span>Member</span><select name="member" required>${memberOptions()}</select></label>
         <label class="field"><span>Amount (USD)</span><input name="amount" type="number" step="0.01" min="0.01" required></label>
         <label class="field"><span>Date received</span><input name="date" type="date" value="${today()}"></label>
-        <label class="field"><span>Fund value just before this deposit</span><input name="before" type="number" step="0.01" min="0" value="${n(f.current_value).toFixed(2)}"></label>
-        <label class="check"><input type="checkbox" name="founder"> Founder deposit (buys at $1.00, ignores the value above)</label>
+        <label class="check"><input type="checkbox" name="inwallet" checked> The money is already in the pool wallet</label>
+        <label class="check"><input type="checkbox" name="founder"> Founder deposit (buys at $1.00)</label>
         <button class="btn" type="submit">Record deposit</button>
-        <p class="note" style="margin:0">Units bought = amount ÷ (fund value before ÷ total units). The fund value goes up by the deposit automatically.</p>
+        <p class="note" style="margin:0">The site reads the pool wallet live and works out the fund value just before this money arrived, so the member buys units at the right price. If the money is not in the wallet yet, untick the first box and send it within 10 minutes.</p>
       </form>
     </div>
   </div>
@@ -377,8 +401,8 @@ function adminView() {
         <label class="field"><span>Amount to take out, before fees (USD)</span><input name="amount" type="number" step="0.01" min="0.01"></label>
         <label class="check"><input type="checkbox" name="all"> Withdraw everything</label>
         <label class="field"><span>Date paid</span><input name="date" type="date" value="${today()}"></label>
-        <label class="field"><span>Fund value just before this withdrawal</span><input name="before" type="number" step="0.01" min="0.01" value="${n(f.current_value).toFixed(2)}" required></label>
         <button class="btn ghost" type="submit">Preview</button>
+        <p class="note" style="margin:0">Uses the pool wallet's live value. Confirm here first, then send the money within 10 minutes.</p>
       </form>
     </div>
     <div class="card" id="wd-preview">${withdrawPreview()}</div>
@@ -437,8 +461,8 @@ function wireAdmin() {
   const amt = document.querySelector('form[data-form="withdraw"] input[name="amount"]')
   if (all) all.addEventListener('change', () => { amt.disabled = all.checked; if (all.checked) amt.value = '' })
   const founder = document.querySelector('form[data-form="deposit"] input[name="founder"]')
-  const before = document.querySelector('form[data-form="deposit"] input[name="before"]')
-  if (founder) founder.addEventListener('change', () => { before.disabled = founder.checked })
+  const inwallet = document.querySelector('form[data-form="deposit"] input[name="inwallet"]')
+  if (founder) founder.addEventListener('change', () => { inwallet.disabled = founder.checked })
 }
 
 // ---------- modal ----------
@@ -530,7 +554,7 @@ document.addEventListener('submit', (ev) => {
     }
     if (kind === 'value') {
       await rpc('admin_set_value', { p_value: Number(d.value), p_note: d.note || null })
-      flash('Fund value saved.'); return load()
+      flash('Fund value saved.'); return load(true)
     }
     if (kind === 'member') {
       if (!!d.username !== !!d.password) throw new Error('Give both a username and a password, or neither')
@@ -539,15 +563,18 @@ document.addEventListener('submit', (ev) => {
       flash(`${d.name} added${d.username ? ` with login "${d.username.toLowerCase()}"` : ''}. Now record their deposit.`); return load()
     }
     if (kind === 'deposit') {
-      const r = await rpc('admin_add_deposit', {
-        p_member: d.member, p_amount: Number(d.amount), p_on: d.date || null,
-        p_value_before: d.founder ? null : Number(form.querySelector('[name="before"]').value),
-      })
-      flash(`Deposit recorded: ${units(r.units)} units at $${price(r.unit_price)}.`); return load()
+      let before = null
+      if (!d.founder) {
+        const live = await liveValue()
+        before = Math.round((d.inwallet ? live - Number(d.amount) : live) * 100) / 100
+        if (before < 0) throw new Error(`The pool wallet holds ${money(live)}, less than this deposit. Untick "already in the pool wallet" if the money has not arrived.`)
+      }
+      const r = await rpc('admin_add_deposit', { p_member: d.member, p_amount: Number(d.amount), p_on: d.date || null, p_value_before: before })
+      flash(`Deposit recorded: ${units(r.units)} units at $${price(r.unit_price)}${before === null ? '' : ` (fund value before: ${money(before)})`}.`); return load(true)
     }
     if (kind === 'withdraw') {
-      const args = { p_member: d.member, p_amount: d.all ? null : Number(d.amount), p_on: d.date || null, p_value_before: Number(d.before) }
       if (!d.all && !(Number(d.amount) > 0)) throw new Error('Enter an amount, or tick "Withdraw everything"')
+      const args = { p_member: d.member, p_amount: d.all ? null : Number(d.amount), p_on: d.date || null, p_value_before: await liveValue() }
       state.preview = { ...(await rpc('admin_preview_withdrawal', args)), args }
       document.getElementById('wd-preview').innerHTML = withdrawPreview()
       document.getElementById('wd-preview').scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -590,7 +617,7 @@ document.addEventListener('click', (ev) => {
       const p = state.preview
       const r = await rpc('admin_withdraw', p.args)
       state.preview = null
-      flash(`Withdrawal saved. Send ${money(r.net_payout)} to ${r.member}; your fee is ${money(r.fee)}.`); return load()
+      flash(`Withdrawal saved. Now send ${money(r.net_payout)} to ${r.member} within 10 minutes; your fee is ${money(r.fee)}.`); return load(true)
     }
     if (a === 'unlink') {
       if (!await ask(`Remove ${t.dataset.name}'s login? Their money stays in the fund.`)) return
@@ -600,7 +627,7 @@ document.addEventListener('click', (ev) => {
     if (a === 'undo') {
       const last = state.admin.ledger[0]
       if (!await ask(`Undo the latest entry: ${last.kind} by ${last.member} for ${money(last.gross)}?`)) return
-      await rpc('admin_undo_last'); flash('Latest entry undone.'); return load()
+      await rpc('admin_undo_last'); flash('Latest entry undone.'); return load(true)
     }
     if (a === 'del-snap') {
       if (!await ask('Delete this fund value entry?')) return
