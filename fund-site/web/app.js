@@ -46,7 +46,7 @@ const DISCLAIMER = `
     <li><b>Technology risk.</b> Losses can result from bugs in the bot, smart-contract failures, stablecoin de-pegs, exchange or RFQ-venue failures, network outages, or the theft or loss of private keys. The bot software is open-source third-party code that has not been independently audited.</li>
     <li><b>Not a regulated product.</b> This pool is a private arrangement. It is not registered with or approved by any securities regulator, is not a bank deposit, and is not insured or protected by any compensation scheme. Nothing on this site is financial, investment, legal or tax advice.</li>
     <li><b>Figures shown.</b> The fund value is read automatically from the pool wallet's on-chain balance, with any local-currency tokens priced at live Uniswap rates. It can move with those rates while trades are open, and the manager can correct it by hand.</li>
-    <li><b>Fees.</b> The manager takes a performance fee (currently 10%) of profit above the capital you put in, charged when you withdraw and shown on your dashboard as it accrues. No fee is charged on losses. An early-exit penalty may apply if you withdraw within the lock period shown on your dashboard.</li>
+    <li><b>Fees.</b> The manager takes a performance fee (currently 10%) of profit above the capital you put in, charged when you withdraw and shown on your dashboard as it accrues. The fee stays in the pool as the manager's own units. No fee is charged on losses. An early-exit penalty may apply if you withdraw within the lock period shown on your dashboard.</li>
     <li><b>Withdrawals</b> are paid at the unit price at the time of withdrawal and may take time to process while funds are in open positions.</li>
     <li><b>Limitation of liability.</b> To the fullest extent permitted by law, the manager and anyone operating this site are not liable for any loss, including loss of capital or profit, arising from your participation, except where caused by their fraud or wilful misconduct.</li>
     <li><b>Your responsibility.</b> Only contribute money you can afford to lose entirely. You are responsible for any taxes on your gains, and for making sure participation is legal where you live.</li>
@@ -406,7 +406,7 @@ function adminView() {
       <div class="label">Fees</div>
       <div class="big pos">${money(f.fees_accrued)}</div>
       <div class="sub">accrued on open positions (${pct(f.fee_pct)} of profit)</div><br>
-      <div class="label">Collected</div>
+      <div class="label">Collected (kept as your units)</div>
       <div class="big" style="font-size:22px">${money(f.fees_collected)}</div>
       <div class="sub">from withdrawals so far</div>
     </div>
@@ -482,7 +482,7 @@ function adminView() {
   <div class="table-wrap"><table>
     <thead><tr><th>#</th><th>Date</th><th>Member</th><th>Type</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Penalty</th><th class="num">Paid out</th><th class="num">Unit price</th><th class="num">Units</th></tr></thead>
     <tbody>${A.ledger.map((r) => `<tr><td>${r.seq}</td><td>${day(r.date)}</td><td>${esc(r.member)}</td>
-      <td><span class="pill ${r.kind === 'deposit' ? 'gold' : ''}">${r.kind}</span></td>
+      <td><span class="pill ${r.kind === 'deposit' ? 'gold' : ''}">${r.note && r.note.includes('Fee') ? 'fee \u2192 units' : r.kind}</span></td>
       <td class="num">${money(r.gross)}</td><td class="num">${r.kind === 'withdrawal' ? money(r.fee) : ''}</td>
       <td class="num">${r.kind === 'withdrawal' ? money(r.penalty) : ''}</td><td class="num">${r.kind === 'withdrawal' ? money(r.net_payout) : ''}</td>
       <td class="num">$${price(r.unit_price)}</td><td class="num">${units(r.units)}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">No entries</td></tr>'}</tbody>
@@ -533,7 +533,7 @@ function withdrawPreview() {
     <div><span>Units left</span><span>${units(p.units_left)}${p.full_exit ? ' (full exit)' : ''}</span></div>
   </div><br>
   <div class="row"><button class="btn" data-action="confirm-wd">Confirm withdrawal</button><button class="btn plain" data-action="cancel-wd">Cancel</button></div>
-  <p class="note">Send ${money(p.net_payout)} to the member and keep ${money(p.fee)} as your fee. Both leave the pool wallet.</p>`
+  <p class="note">Send ${money(p.net_payout)} to the member. Your ${money(p.fee)} fee stays in the pool wallet and is added to your units automatically.</p>`
 }
 
 // ---------- leaderboard image ----------
@@ -858,7 +858,7 @@ document.addEventListener('click', (ev) => {
       const p = state.preview
       const r = await rpc('admin_withdraw', p.args)
       state.preview = null
-      flash(`Withdrawal saved. Now send ${money(r.net_payout)} to ${r.member} within 5 minutes; your fee is ${money(r.fee)}.`); return load(true)
+      flash(`Withdrawal saved. Now send ${money(r.net_payout)} to ${r.member} within 5 minutes. Your ${money(r.fee)} fee stays in the pool as your units.`); return load(true)
     }
     if (a === 'unlink') {
       if (!await ask(`Remove ${t.dataset.name}'s login? Their money stays in the fund.`)) return
