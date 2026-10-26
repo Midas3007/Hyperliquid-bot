@@ -322,8 +322,9 @@ function adminView() {
   <div class="table-wrap" style="margin-top:12px"><table>
     <thead><tr><th>When</th><th class="num">Value</th><th>Note</th><th></th></tr></thead>
     <tbody>${A.snapshots.map((s) => `<tr><td>${stamp(s.recorded_at)}</td><td class="num">${money(s.value)}</td><td>${esc(s.note || '')}</td>
-      <td class="num"><button class="btn plain small" data-action="del-snap" data-id="${s.id}">Delete</button></td></tr>`).join('')}</tbody>
+      <td class="num">${A.snapshots.length > 1 ? `<button class="btn plain small" data-action="del-snap" data-id="${s.id}">Delete</button>` : ''}</td></tr>`).join('')}</tbody>
   </table></div>
+  <p class="note">To remove a wrong deposit or withdrawal, use <b>Undo latest entry</b> in the Ledger section below. It also takes the money back out of the fund value.</p>
 
   <div class="section-title">Members</div>
   <div class="table-wrap"><table>
@@ -384,7 +385,8 @@ function adminView() {
   </div>
 
   <div class="section-title">Ledger</div>
-  <div class="row" style="margin-bottom:10px"><button class="btn plain small" data-action="undo" ${A.ledger.length ? '' : 'disabled'}>Undo latest entry</button></div>
+  <div class="row" style="margin-bottom:10px"><button class="btn plain small" data-action="undo" ${A.ledger.length ? '' : 'disabled'}>Undo latest entry</button>
+    <span class="note">Removes the newest row. Tap again to remove the one before it.</span></div>
   <div class="table-wrap"><table>
     <thead><tr><th>#</th><th>Date</th><th>Member</th><th>Type</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Penalty</th><th class="num">Paid out</th><th class="num">Unit price</th><th class="num">Units</th></tr></thead>
     <tbody>${A.ledger.map((r) => `<tr><td>${r.seq}</td><td>${day(r.date)}</td><td>${esc(r.member)}</td>
@@ -466,6 +468,21 @@ function loginModal(id, name, reset) {
       <p class="note" style="margin:0">Copy these details and send them to ${esc(name)} privately. Ask them to change the password under Account after signing in.</p>
       <div class="row"><button class="btn" type="submit">${reset ? 'Set password' : 'Create login'}</button><button class="btn plain" type="button" data-action="close-modal">Cancel</button></div>
     </form>`)
+}
+
+// In-page yes/no box: some phone browsers silently block window.confirm().
+function ask(text) {
+  return new Promise((resolve) => {
+    const el = modal(`<p class="note" style="margin:0;font-size:15px;color:var(--white)">${esc(text)}</p>
+      <div class="row"><button class="btn" type="button" data-answer="yes">Yes, continue</button><button class="btn plain" type="button" data-answer="no">Cancel</button></div>`)
+    el.addEventListener('click', (ev) => {
+      const b = ev.target.closest('[data-answer]')
+      if (!b) return
+      ev.stopPropagation()
+      el.remove()
+      resolve(b.dataset.answer === 'yes')
+    })
+  })
 }
 
 function genPassword() {
@@ -576,21 +593,21 @@ document.addEventListener('click', (ev) => {
       flash(`Withdrawal saved. Send ${money(r.net_payout)} to ${r.member}; your fee is ${money(r.fee)}.`); return load()
     }
     if (a === 'unlink') {
-      if (!confirm(`Remove ${t.dataset.name}'s login? Their money stays in the fund.`)) return
+      if (!await ask(`Remove ${t.dataset.name}'s login? Their money stays in the fund.`)) return
       await adminUsers({ action: 'remove_login', member_id: t.dataset.id })
       flash('Login removed.'); return load()
     }
     if (a === 'undo') {
       const last = state.admin.ledger[0]
-      if (!confirm(`Undo the latest entry: ${last.kind} by ${last.member} for ${money(last.gross)}?`)) return
+      if (!await ask(`Undo the latest entry: ${last.kind} by ${last.member} for ${money(last.gross)}?`)) return
       await rpc('admin_undo_last'); flash('Latest entry undone.'); return load()
     }
     if (a === 'del-snap') {
-      if (!confirm('Delete this fund value entry?')) return
+      if (!await ask('Delete this fund value entry?')) return
       await rpc('admin_delete_snapshot', { p_id: Number(t.dataset.id) }); return load()
     }
     if (a === 'del-member') {
-      if (!confirm('Delete this member?')) return
+      if (!await ask('Delete this member?')) return
       await rpc('admin_delete_member', { p_member: t.dataset.id }); return load()
     }
   })
