@@ -7,7 +7,7 @@ import { createPublicClient, erc20Abi, formatUnits, http, isAddress, parseAbi } 
 import { celo } from 'npm:viem@2.21.0/chains'
 
 const MIN_GAP_MS = 2 * 60_000          // at most one sync every 2 minutes
-const LEDGER_QUIET_MS = 10 * 60_000    // pause after a deposit/withdrawal so the money can land or leave
+const LEDGER_QUIET_MS = 5 * 60_000     // pause after a deposit/withdrawal so the money can land or leave
 const QUOTER = '0x82825d0554fA07f7FC52Ab63c961F330fdEFa8E8'
 const USDT = '0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e'
 const TOKENS = [
@@ -68,7 +68,9 @@ Deno.serve(async (req) => {
   const { data: last } = await db.from('nav_snapshots').select('value, recorded_at').order('recorded_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
   if (!peek) {
     const { data: lastEntry } = await db.from('ledger').select('created_at').order('seq', { ascending: false }).limit(1).maybeSingle()
-    if (lastEntry && now - Date.parse(lastEntry.created_at) < LEDGER_QUIET_MS) return reply(200, { skipped: 'recent deposit or withdrawal' })
+    if (lastEntry && now - Date.parse(lastEntry.created_at) < LEDGER_QUIET_MS) {
+      return reply(200, { skipped: 'recent deposit or withdrawal', resumes_at: new Date(Date.parse(lastEntry.created_at) + LEDGER_QUIET_MS).toISOString() })
+    }
     if (last && now - Date.parse(last.recorded_at) < MIN_GAP_MS) return reply(200, { skipped: 'synced recently' })
   }
 

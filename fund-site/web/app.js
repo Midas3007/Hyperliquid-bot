@@ -86,6 +86,10 @@ async function liveValue() {
 async function syncValue() {
   try {
     const r = await syncFn({})
+    const note = document.getElementById('sync-note')
+    if (note && r?.resumes_at) {
+      note.textContent = `Auto-update paused until ${new Date(r.resumes_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} (recent deposit or withdrawal)`
+    }
     if (!r?.recorded || document.querySelector('.modal')) return
     const a = document.activeElement
     if (a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName)) return
@@ -202,7 +206,7 @@ function dashboardView() {
   return `
   <div class="section-title">The pool</div>
   <div class="grid">
-    ${stat('Fund value', money(f.current_value), 'Live from pool wallet · ' + stamp(f.last_updated), '', true)}
+    ${stat('Fund value', money(f.current_value), `<span id="sync-note">Live from pool wallet · ${stamp(f.last_updated)}</span>`, '', true)}
     ${stat('Unit price', '$' + n(f.unit_price).toFixed(4), `<span class="${tone(growth)}">${pct(growth, true)}</span> since start`)}
     ${stat('Fund P&amp;L', money(pnl, true), `${pct(n(f.capital) ? (pnl / n(f.capital)) * 100 : 0, true)} on ${money(f.capital)} invested`, tone(pnl))}
     ${stat('Members', `${f.members} / ${f.total_slots}`, `${Math.max(f.total_slots - f.members, 0)} slots open`)}
@@ -331,7 +335,7 @@ function adminView() {
         <label class="field"><span>Current total fund value (USD)</span><input name="value" type="number" step="0.01" min="0" value="${n(f.current_value).toFixed(2)}" required></label>
         <label class="field"><span>Note (optional)</span><input name="note" placeholder="e.g. Daily update"></label>
         <button class="btn" type="submit">Save fund value</button>
-        <p class="note" style="margin:0">The fund value updates itself from the pool wallet whenever someone opens the site (at most every 2 minutes, and not within 10 minutes of a deposit or withdrawal). Use this only to correct it. The next automatic update will replace it.</p>
+        <p class="note" style="margin:0">The fund value updates itself from the pool wallet whenever someone opens the site (at most every 2 minutes, and not within 5 minutes of a deposit or withdrawal). Use this only to correct it. The next automatic update will replace it.</p>
       </form>
     </div>
     <div class="card">
@@ -388,7 +392,7 @@ function adminView() {
         <label class="check"><input type="checkbox" name="inwallet" checked> The money is already in the pool wallet</label>
         <label class="check"><input type="checkbox" name="founder"> Founder deposit (buys at $1.00)</label>
         <button class="btn" type="submit">Record deposit</button>
-        <p class="note" style="margin:0">The site reads the pool wallet live and works out the fund value just before this money arrived, so the member buys units at the right price. If the money is not in the wallet yet, untick the first box and send it within 10 minutes.</p>
+        <p class="note" style="margin:0">The site reads the pool wallet live and works out the fund value just before this money arrived, so the member buys units at the right price. If the money is not in the wallet yet, untick the first box and send it within 5 minutes.</p>
       </form>
     </div>
   </div>
@@ -402,7 +406,7 @@ function adminView() {
         <label class="check"><input type="checkbox" name="all"> Withdraw everything</label>
         <label class="field"><span>Date paid</span><input name="date" type="date" value="${today()}"></label>
         <button class="btn ghost" type="submit">Preview</button>
-        <p class="note" style="margin:0">Uses the pool wallet's live value. Confirm here first, then send the money within 10 minutes.</p>
+        <p class="note" style="margin:0">Uses the pool wallet's live value. Confirm here first, then send the money within 5 minutes.</p>
       </form>
     </div>
     <div class="card" id="wd-preview">${withdrawPreview()}</div>
@@ -617,7 +621,7 @@ document.addEventListener('click', (ev) => {
       const p = state.preview
       const r = await rpc('admin_withdraw', p.args)
       state.preview = null
-      flash(`Withdrawal saved. Now send ${money(r.net_payout)} to ${r.member} within 10 minutes; your fee is ${money(r.fee)}.`); return load(true)
+      flash(`Withdrawal saved. Now send ${money(r.net_payout)} to ${r.member} within 5 minutes; your fee is ${money(r.fee)}.`); return load(true)
     }
     if (a === 'unlink') {
       if (!await ask(`Remove ${t.dataset.name}'s login? Their money stays in the fund.`)) return
