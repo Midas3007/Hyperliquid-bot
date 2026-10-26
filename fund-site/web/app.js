@@ -4,7 +4,7 @@
 const C = window.FUND_CONFIG
 const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseAnonKey)
 const $app = document.getElementById('app')
-const state = { session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null }
+const state = { session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 } }
 
 // ---------- formatting ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -424,6 +424,18 @@ function adminView() {
       <td class="num">$${price(r.unit_price)}</td><td class="num">${units(r.units)}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">No entries</td></tr>'}</tbody>
   </table></div>
 
+  <div class="section-title">Leaderboard</div>
+  <div class="card">
+    <canvas id="lb" width="1080" height="1350" style="width:100%;max-width:440px;height:auto;display:block;margin:0 auto;border:1px solid var(--line)" role="img" aria-label="Member leaderboard image"></canvas>
+    <div class="row" style="justify-content:center;margin-top:14px">
+      <button class="btn" data-action="lb-download">Download image</button>
+      ${navigator.canShare ? '<button class="btn ghost" data-action="lb-share">Share</button>' : ''}
+      <button class="btn plain" data-action="lb-caption">New caption</button>
+      <button class="btn plain" data-action="lb-names">Names: ${LB_NAMES[state.lb.names]}</button>
+    </div>
+    <p class="note" style="text-align:center">ROI is each member's profit after the manager fee, divided by the money they put in. Only you can see this card; the image shows whatever names option you pick.</p>
+  </div>
+
   <div class="section-title">Settings</div>
   <div class="card">
     <form data-form="settings" class="grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
@@ -460,7 +472,149 @@ function withdrawPreview() {
   <p class="note">Send ${money(p.net_payout)} to the member and keep ${money(p.fee)} as your fee. Both leave the pool wallet.</p>`
 }
 
+// ---------- leaderboard image ----------
+const LB_NAMES = ['Full names', 'Initials', 'Hidden']
+const LB_CAPTIONS = [
+  "While you were \u201cthinking about it\u201d, we were compounding.",
+  'Some people bought the dip. Some people bought excuses.',
+  'Imagine getting paid while you sleep. Could\u2019ve been you.',
+  'Ask your bank what \u201cinterest\u201d means. Then ask us.',
+  'This could have been your name. Just saying.',
+  'Slots are limited. Your FOMO is not.',
+  'Missed the boat? It\u2019s still sailing. Without you.',
+  'The bot never sleeps. Neither do our gains.',
+]
+
+function lbName(name, i) {
+  if (state.lb.names === 1) return String(name).trim().charAt(0).toUpperCase() + '.'
+  if (state.lb.names === 2) return `Member #${i + 1}`
+  return String(name)
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const lines = []
+  let line = ''
+  for (const word of text.split(' ')) {
+    const test = line ? line + ' ' + word : word
+    if (ctx.measureText(test).width > maxWidth && line) { lines.push(line); line = word } else line = test
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+async function drawLeaderboard() {
+  const cv = document.getElementById('lb')
+  if (!cv) return
+  try {
+    await Promise.all([document.fonts.load('600 80px "Cormorant Garamond"'), document.fonts.load('italic 600 44px "Cormorant Garamond"'),
+      document.fonts.load('500 30px "JetBrains Mono"'), document.fonts.load('700 30px "JetBrains Mono"')])
+  } catch { /* fallback fonts */ }
+  const ctx = cv.getContext('2d')
+  const W = 1080, H = 1350
+  const f = state.fund
+  const GOLD = '#c9a84c', GOLD_HI = '#e4c56a', WHITE = '#f5f5f2', GREY = '#8d8d94', LINE = '#2a2a2e'
+  const MONO = '"JetBrains Mono", ui-monospace, monospace', SERIF = '"Cormorant Garamond", Georgia, serif'
+  const spaced = (px) => { if ('letterSpacing' in ctx) ctx.letterSpacing = px }
+
+  const rows = state.admin.members
+    .filter((m) => n(m.units) > 0 && n(m.capital) > 0)
+    .map((m) => ({ name: m.name, roi: ((n(m.net_value) - n(m.capital)) / n(m.capital)) * 100 }))
+    .sort((a, b) => b.roi - a.roi)
+    .slice(0, 8)
+    .map((r, i) => ({ ...r, name: lbName(r.name, i) }))
+
+  // background, glow and double frame
+  ctx.fillStyle = '#0a0a0b'; ctx.fillRect(0, 0, W, H)
+  const glow = ctx.createRadialGradient(W / 2, 0, 40, W / 2, 0, 950)
+  glow.addColorStop(0, 'rgba(201,168,76,0.24)'); glow.addColorStop(1, 'rgba(201,168,76,0)')
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H)
+  ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.strokeRect(36, 36, W - 72, H - 72)
+  ctx.strokeStyle = 'rgba(201,168,76,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(50, 50, W - 100, H - 100)
+
+  // header
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
+  spaced('10px'); ctx.fillStyle = GREY; ctx.font = `500 24px ${MONO}`
+  ctx.fillText('THE LEADERBOARD', W / 2, 130)
+  spaced('2px'); ctx.fillStyle = WHITE; ctx.font = `600 76px ${SERIF}`
+  const [a, b] = String(f.fund_name).split('×')
+  if (b !== undefined) {
+    const wa = ctx.measureText(a).width, wx = ctx.measureText('×').width, wb = ctx.measureText(b).width
+    let x = W / 2 - (wa + wx + wb) / 2
+    ctx.textAlign = 'left'
+    ctx.fillText(a, x, 215); x += wa
+    ctx.fillStyle = GOLD; ctx.fillText('×', x, 215); x += wx
+    ctx.fillStyle = WHITE; ctx.fillText(b, x, 215)
+    ctx.textAlign = 'center'
+  } else ctx.fillText(f.fund_name, W / 2, 215)
+
+  // headline fund return
+  const growth = (n(f.unit_price) - 1) * 100
+  const startT = f.history?.[0]?.t || f.started_at
+  const days = startT ? Math.max(1, Math.round((Date.now() - new Date(startT).getTime()) / 86400000)) : null
+  spaced('0px'); ctx.fillStyle = growth >= 0 ? GOLD_HI : WHITE; ctx.font = `700 132px ${MONO}`
+  ctx.fillText(pct(growth, true), W / 2, 380)
+  spaced('4px'); ctx.fillStyle = GREY; ctx.font = `500 26px ${MONO}`
+  ctx.fillText(`FUND RETURN${days ? ` · ${days} DAY${days === 1 ? '' : 'S'}` : ''} · ${f.members} MEMBER${f.members === 1 ? '' : 'S'}`, W / 2, 430)
+
+  // divider
+  ctx.strokeStyle = LINE; ctx.lineWidth = 2
+  ctx.beginPath(); ctx.moveTo(120, 480); ctx.lineTo(W - 120, 480); ctx.stroke()
+
+  // rows
+  const top = 520, bottom = 1060
+  const rowH = Math.min(118, (bottom - top) / Math.max(rows.length, 1))
+  const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.roi)))
+  const left = 120, right = W - 120
+  if (!rows.length) {
+    ctx.fillStyle = GREY; ctx.font = `500 30px ${MONO}`; ctx.textAlign = 'center'
+    ctx.fillText('No members on the board yet', W / 2, 760)
+  }
+  rows.forEach((r, i) => {
+    const y = top + i * rowH
+    const medal = ['#e4c56a', '#c8c8cc', '#c08a5a'][i]
+    // rank badge
+    ctx.beginPath(); ctx.arc(left + 30, y + 38, 30, 0, Math.PI * 2)
+    ctx.fillStyle = medal ? medal : '#18181b'; ctx.fill()
+    if (!medal) { ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke() }
+    ctx.fillStyle = medal ? '#111' : WHITE; ctx.font = `700 28px ${MONO}`; ctx.textAlign = 'center'; spaced('0px')
+    ctx.fillText(String(i + 1), left + 30, y + 48)
+    // name and ROI
+    ctx.textAlign = 'left'; ctx.fillStyle = WHITE; ctx.font = `600 ${i === 0 ? 50 : 44}px ${SERIF}`
+    let name = r.name
+    while (ctx.measureText(name).width > 520 && name.length > 3) name = name.slice(0, -2)
+    if (name !== r.name) name = name.trimEnd() + '…'
+    ctx.fillText(name, left + 82, y + 52)
+    ctx.textAlign = 'right'; ctx.fillStyle = r.roi >= 0 ? GOLD_HI : '#b6b6bc'; ctx.font = `700 ${i === 0 ? 46 : 40}px ${MONO}`
+    ctx.fillText(pct(r.roi, true), right, y + 52)
+    // bar
+    const barW = (right - left - 82) * Math.max(0.02, Math.abs(r.roi) / maxAbs)
+    ctx.fillStyle = '#18181b'; ctx.fillRect(left + 82, y + 70, right - left - 82, 8)
+    const bar = ctx.createLinearGradient(left + 82, 0, left + 82 + barW, 0)
+    bar.addColorStop(0, r.roi >= 0 ? '#8a6d24' : '#3a3a3e'); bar.addColorStop(1, r.roi >= 0 ? GOLD_HI : '#8d8d94')
+    ctx.fillStyle = bar; ctx.fillRect(left + 82, y + 70, barW, 8)
+  })
+
+  // caption
+  const caption = LB_CAPTIONS[state.lb.caption % LB_CAPTIONS.length]
+  ctx.textAlign = 'center'; ctx.fillStyle = WHITE; ctx.font = `italic 600 46px ${SERIF}`; spaced('0px')
+  const lines = wrapText(ctx, caption, W - 260)
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, 1140 + i * 54 - (lines.length - 1) * 27))
+  ctx.strokeStyle = GOLD; ctx.lineWidth = 2
+  ctx.beginPath(); ctx.moveTo(W / 2 - 40, 1205); ctx.lineTo(W / 2 + 40, 1205); ctx.stroke()
+
+  // footnote
+  ctx.fillStyle = GREY; ctx.font = `400 17px ${MONO}`; spaced('1px')
+  ctx.fillText(`ROI after fees as of ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`, W / 2, 1250)
+  ctx.fillText('Past returns don\u2019t guarantee future returns. Not financial advice.', W / 2, 1278)
+  spaced('0px')
+}
+
+function lbBlob() {
+  return new Promise((resolve) => document.getElementById('lb').toBlob(resolve, 'image/png'))
+}
+
 function wireAdmin() {
+  drawLeaderboard()
   const all = document.querySelector('form[data-form="withdraw"] input[name="all"]')
   const amt = document.querySelector('form[data-form="withdraw"] input[name="amount"]')
   if (all) all.addEventListener('change', () => { amt.disabled = all.checked; if (all.checked) amt.value = '' })
@@ -615,6 +769,25 @@ document.addEventListener('click', (ev) => {
   if (a === 'copy') { navigator.clipboard?.writeText(t.dataset.value); t.textContent = 'Copied'; return }
   if (a === 'login') return loginModal(t.dataset.id, t.dataset.name, false)
   if (a === 'reset') return loginModal(t.dataset.id, t.dataset.name, true)
+  if (a === 'lb-caption') { state.lb.caption = (state.lb.caption + 1) % LB_CAPTIONS.length; drawLeaderboard(); return }
+  if (a === 'lb-names') { state.lb.names = (state.lb.names + 1) % LB_NAMES.length; t.textContent = `Names: ${LB_NAMES[state.lb.names]}`; drawLeaderboard(); return }
+  if (a === 'lb-download') {
+    lbBlob().then((blob) => {
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = 'midas-kiyoshi-leaderboard.png'
+      document.body.appendChild(link); link.click(); link.remove()
+      setTimeout(() => URL.revokeObjectURL(link.href), 5000)
+    })
+    return
+  }
+  if (a === 'lb-share') {
+    lbBlob().then((blob) => {
+      const file = new File([blob], 'midas-kiyoshi-leaderboard.png', { type: 'image/png' })
+      if (navigator.canShare?.({ files: [file] })) navigator.share({ files: [file], text: LB_CAPTIONS[state.lb.caption] }).catch(() => {})
+    })
+    return
+  }
   if (a === 'cancel-wd') { state.preview = null; document.getElementById('wd-preview').innerHTML = withdrawPreview(); return }
   busy(t, async () => {
     if (a === 'confirm-wd') {
