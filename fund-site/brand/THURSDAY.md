@@ -28,3 +28,10 @@ Vertical 1080x1920 for WhatsApp status plus 16:9.
 Minimal finance/hedge-fund mark. References Kiyoshi's folding fan; Midas = the golden touch (King Midas).
 Ideas: a fan whose ribs are gold lines rising like a chart; an M formed by fan ribs; a fan inside a coin.
 Colours: gold on black / black on chemical white. Deliver SVG (site, favicon) and PNG.
+
+## Fund site dashboard additions (asked 2026-10-28)
+- General dashboard: win rate, traded volume, number of trades.
+- P&L chart, general (fund) and personal, with an hourly / daily / weekly toggle.
+- Same toggle for the number-of-trades chart.
+Data: the trade-stats edge function (on-chain fills of the pool wallet) for trades, wins and volume; nav
+snapshots for P&L; personal P&L = member's share of fund P&L over time from their ledger.
