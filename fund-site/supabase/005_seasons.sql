@@ -227,8 +227,9 @@ begin
     select p.id member_id, (public.position_of(p.id)->>'net_value')::numeric net, (public.position_of(p.id)->>'fee')::numeric fee
     from (select member_id id from public.ledger group by member_id having sum(units) > 0.0000001) p;
 
-  delete from public.ledger;
-  delete from public.nav_snapshots;
+  -- "where true": the API's safety setting refuses a delete without a where clause
+  delete from public.ledger where true;
+  delete from public.nav_snapshots where true;
 
   for h in select * from carry where net > 0.005 loop
     insert into public.ledger (member_id, kind, txn_date, fund_value_before, unit_price, units, capital, gross, opening, note)

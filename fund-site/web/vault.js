@@ -25,19 +25,31 @@ const vUsd = (v) => Number(v) / 1e6
 const vShares = (v) => (Number(v) / 1e18).toLocaleString('en-US', { maximumFractionDigits: 4 })
 const vLink = (path, text) => `<a href="${VNET.explorer}/${path}" target="_blank" rel="noopener">${text}</a>`
 
+// The wallet: the classic injected one, or any wallet that announces itself (EIP-6963: Rabby, Coinbase, ...).
+const VW = { list: [] }
+window.addEventListener('eip6963:announceProvider', (e) => {
+  if (!VW.list.some((x) => x.info?.uuid === e.detail?.info?.uuid)) VW.list.push(e.detail)
+  if (!VS.d) return
+  for (const el of document.querySelectorAll('#vault-box')) el.innerHTML = vaultBox()
+})
+window.dispatchEvent(new Event('eip6963:requestProvider'))
+const vProv = () => window.ethereum || VW.list[0]?.provider || null
+
 async function vInit() {
   if (VS.viem) return
   VS.viem = await import('https://cdn.jsdelivr.net/npm/viem@2.21.60/+esm')
   VS.abi = VS.viem.parseAbi(VAULT_ABI_SRC)
   VS.chain = VS.viem.defineChain({ id: VNET.id, name: VNET.name, nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 }, rpcUrls: { default: { http: [VNET.rpc] } } })
   VS.pub = VS.viem.createPublicClient({ chain: VS.chain, transport: VS.viem.http(VNET.rpc) })
-  if (window.ethereum) {
-    window.ethereum.on?.('accountsChanged', (a) => { VS.account = a[0] || null; vRefresh() })
-    window.ethereum.on?.('chainChanged', (c) => { VS.chainId = Number(c); vRefresh() })
+  await new Promise((r) => setTimeout(r, 300)) // give wallets a moment to announce themselves
+  const prov = vProv()
+  if (prov) {
+    prov.on?.('accountsChanged', (a) => { VS.account = a[0] || null; vRefresh() })
+    prov.on?.('chainChanged', (c) => { VS.chainId = Number(c); vRefresh() })
     try {
-      const a = await window.ethereum.request({ method: 'eth_accounts' })
+      const a = await prov.request({ method: 'eth_accounts' })
       VS.account = a[0] || null
-      VS.chainId = Number(await window.ethereum.request({ method: 'eth_chainId' }))
+      VS.chainId = Number(await prov.request({ method: 'eth_chainId' }))
     } catch { /* not connected yet */ }
   }
 }
@@ -63,11 +75,27 @@ function vNextSettle() {
   return t.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
+// No wallet in this browser (e.g. Chrome on a phone): open the page inside a wallet app instead.
+function vNoWallet() {
+  const url = location.origin + location.pathname, host = location.host + location.pathname, enc = encodeURIComponent(url)
+  return `<div class="card"><div class="label">Connect a wallet</div>
+    <p class="note">This browser has no wallet. On a phone, open this page inside your wallet app (its built-in browser), then tap Connect:</p>
+    <div class="row">
+      <a class="btn small" href="https://metamask.app.link/dapp/${host}">Open in MetaMask</a>
+      <a class="btn ghost small" href="https://link.trustwallet.com/open_url?coin_id=52752&url=${enc}">Trust Wallet</a>
+      <a class="btn ghost small" href="https://go.cb-w.com/dapp?cb_url=${enc}">Coinbase Wallet</a>
+      <button class="btn plain small" data-action="copy" data-value="${esc(url)}">Copy link</button>
+    </div>
+    <p class="note" style="margin-bottom:0">Rabby, Valora or MiniPay: open the app, go to its browser (Dapps / Discover) and paste the link. On a computer, install the MetaMask or Rabby extension.</p></div>`
+}
+
 function vaultBox() {
   if (!VCFG.address) return ''
   const d = VS.d
   const head = `<div class="section-title">On-chain fund${VCFG.network === 'testnet' ? ' · testnet' : ''}</div>`
-  if (!d) return `${head}<div class="card"><div class="sub">${VS.loadErr ? esc(VS.loadErr) : 'Reading the fund contract…'}</div></div>`
+  if (!d) return `${head}<div class="card"><div class="sub">${VS.loadErr ? esc(VS.loadErr) : 'Reading the fund contract…'}</div>
+    ${VS.loadErr ? '<button class="btn plain small" data-vault="retry" style="margin-top:10px">Try again</button>' : ''}</div>
+    ${vProv() ? '' : `<div style="margin-top:12px">${vNoWallet()}</div>`}`
   const price = vUsd(d.sharePrice), me = d.me
   const fundTiles = `
   <div class="grid">
@@ -78,10 +106,8 @@ function vaultBox() {
   </div>`
   const notice = VS.msg ? `<div class="msg ${VS.msg.startsWith('Done') ? 'ok' : 'err'}" style="margin-bottom:12px">${esc(VS.msg)}</div>` : ''
   let walletCard
-  if (!window.ethereum) {
-    walletCard = `<div class="card"><div class="label">Your wallet</div>
-      <p class="note">Open this page in your wallet app's browser to connect: MetaMask, Rabby, Valora or MiniPay.</p>
-      <a class="btn ghost small" href="https://metamask.app.link/dapp/${location.host}${location.pathname}">Open in MetaMask</a></div>`
+  if (!vProv()) {
+    walletCard = vNoWallet()
   } else if (!VS.account) {
     walletCard = `<div class="card"><div class="label">Your wallet</div><p class="note">Connect to deposit USDT, see your shares and redeem.</p>
       <button class="btn" data-vault="connect">Connect wallet</button></div>`
@@ -135,12 +161,14 @@ function vaultBox() {
 }
 
 async function vRefresh() {
-  try { await vInit(); await vLoad(); VS.loadErr = null } catch { VS.loadErr = 'The fund contract could not be read right now. Try again in a minute.' }
+  try { await vInit(); await vLoad(); VS.loadErr = null } catch (e) {
+    VS.loadErr = `The fund contract could not be read right now (${String(e?.shortMessage || e?.message || e).split('\n')[0].slice(0, 120)}).`
+  }
   for (const el of document.querySelectorAll('#vault-box')) el.innerHTML = vaultBox()
 }
 
 async function vWallet() {
-  return VS.viem.createWalletClient({ account: VS.account, chain: VS.chain, transport: VS.viem.custom(window.ethereum) })
+  return VS.viem.createWalletClient({ account: VS.account, chain: VS.chain, transport: VS.viem.custom(vProv()) })
 }
 async function vSend(label, fn, args, address = VCFG.address) {
   VS.busy = true; VS.msg = `${label}: confirm in your wallet…`
@@ -168,11 +196,12 @@ document.addEventListener('click', async (ev) => {
   const a = b.dataset.vault
   VS.msg = null
   try {
-    if (a === 'connect') { const acc = await window.ethereum.request({ method: 'eth_requestAccounts' }); VS.account = acc[0]; VS.chainId = Number(await window.ethereum.request({ method: 'eth_chainId' })); return vRefresh() }
+    if (a === 'retry') return vRefresh()
+    if (a === 'connect') { const acc = await vProv().request({ method: 'eth_requestAccounts' }); VS.account = acc[0]; VS.chainId = Number(await vProv().request({ method: 'eth_chainId' })); return vRefresh() }
     if (a === 'switch') {
       const hex = '0x' + VNET.id.toString(16)
-      try { await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }) } catch {
-        await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: VNET.name, rpcUrls: [VNET.rpc], nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 }, blockExplorerUrls: [VNET.explorer] }] })
+      try { await vProv().request({ method: 'wallet_switchEthereumChain', params: [{ chainId: hex }] }) } catch {
+        await vProv().request({ method: 'wallet_addEthereumChain', params: [{ chainId: hex, chainName: VNET.name, rpcUrls: [VNET.rpc], nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 }, blockExplorerUrls: [VNET.explorer] }] })
       }
       return
     }
