@@ -130,3 +130,9 @@ footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px;
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { color: var(--black); background: var(--gold-hi); }
 .chart-head { flex-wrap: wrap; gap: 8px; }
+/* tap / drag a chart for exact numbers */
+.scrub { position: relative; touch-action: pan-y; cursor: crosshair; -webkit-user-select: none; user-select: none; }
+.scrub .cursor { display: none; position: absolute; top: 0; bottom: 0; background: rgba(228,197,106,.16); border-left: 1px solid rgba(228,197,106,.7); pointer-events: none; }
+.scrub .dot { display: none; position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--gold-hi); box-shadow: 0 0 0 3px rgba(228,197,106,.25); pointer-events: none; }
+.readout { font-family: var(--mono); font-size: 12px; color: var(--white); min-height: 18px; margin: -2px 0 8px; overflow-wrap: anywhere; }
+.readout b { font-weight: 500; }
