@@ -1,0 +1,42 @@
+# Render Blueprint: runs the Kiyoshi bot (kiyoshi/) as an always-on background worker.
+# Setup steps: kiyoshi/HOSTING.md. Only changes inside kiyoshi/ redeploy it.
+services:
+  - type: worker
+    name: kiyoshi
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: ccr-bd86732d-umzid7
+    rootDir: kiyoshi
+    buildCommand: npm ci
+    startCommand: npm run desk
+    autoDeploy: true
+    maxShutdownDelaySeconds: 180 # let a trade in progress finish before a restart
+    disk:
+      name: kiyoshi-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: AGENT_PRIVATE_KEY # the bot wallet key: typed in by Midas on Render, never stored in the repo
+        sync: false
+      - key: MAX_TRADE_USD # same as on the phone
+        sync: false
+      - key: LIVE
+        value: "1"
+      - key: DATA_DIR
+        value: /data
+      - key: MIN_EDGE_USD
+        value: "0.01"
+      - key: INTERVAL_SEC
+        value: "60"
+      - key: MAX_FLATTEN_LOSS_BPS
+        value: "50"
+      - key: MAX_HOLD_MIN
+        value: "30"
+      # Settlement pause (src/settle-pause.ts): the fund site's public Supabase address and anon key
+      - key: FUND_SUPABASE_URL
+        value: https://bmudotiuafxrhzkqihyb.supabase.co
+      - key: FUND_SUPABASE_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtdWRvdGl1YWZ4cmh6a3FpaHliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NjcxNDcsImV4cCI6MjEwODU0MzE0N30.xipuPyy0y78Jc3CrR5OmncD7FWT0NsPgiroorQRpnAA

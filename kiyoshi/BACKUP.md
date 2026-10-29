@@ -1,6 +1,6 @@
 # Kiyoshi backup
 
-Unmodified copy of https://github.com/MELcodes99/kiyoshi at commit `2f331a66ff9be40ab33d2dde9645a924d3598f16`, updated on 2026-10-27.
+Copy of https://github.com/MELcodes99/kiyoshi at commit `22874cc`, updated on 2026-10-29, plus Midas's additions below.
 
 The original repository has no licence file, so its code is all rights reserved by its author (Mel Okoye).
 This copy is a private backup for running the bot; do not republish it.
@@ -8,7 +8,9 @@ This copy is a private backup for running the bot; do not republish it.
 To run it on a new device, follow README.md, but clone this repository instead and `cd kiyoshi`.
 
 ## Midas's additions
-- `docs/FUND_VAULT_PLAN.md`: notes and open decisions for the on-chain fund (vault contract, public dashboard,
-  transferable shares). Planning only; no contract code yet.
+- `docs/FUND_VAULT_PLAN.md`: the on-chain fund plan.
+- `src/settle-pause.ts` (+ 7 lines in `src/desk.ts`, `test/settle-pause.test.ts`): no new trades from 20:00 UTC
+  until the fund's daily settlement is done. Only active when `FUND_SUPABASE_URL` / `FUND_SUPABASE_KEY` are set.
+- `HOSTING.md` and `../render.yaml`: running the bot on Render.
 
 To refresh the bot code from Mel's repo later, ask Claude to "update the kiyoshi backup".

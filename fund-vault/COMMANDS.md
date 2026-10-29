@@ -14,6 +14,9 @@ Tips
 
 ## 1. The bot (Kiyoshi) · `cd ~/kiyoshi`
 
+**The bot now runs on Render** (setup and daily use: `kiyoshi/HOSTING.md`). Logs, suspend and resume are on
+render.com. Only run it on the phone while the Render service is suspended: two copies must never trade at once.
+
 | What | Command |
 |---|---|
 | Go to the bot | `cd ~/kiyoshi` |
