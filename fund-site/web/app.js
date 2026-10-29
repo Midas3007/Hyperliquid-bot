@@ -10,7 +10,7 @@ const state = {
   range: ['hour', 'day', 'week'].includes(savedRange) ? savedRange : 'day',
   session: null, me: null, fund: null, admin: null, // admin sign-in (off-chain tools)
   pub: null, trades: null, wallet: null, flash: null, adminTab: false,
-  lb: { caption: 0, names: 0 }, card: { amounts: true, name: 1 },
+  card: { amounts: true, name: 1 },
 }
 
 // ---------- formatting ----------
@@ -74,9 +74,9 @@ const DISCLAIMER = `
     <li><b>No guarantee of profit.</b> Past or displayed results do not predict future returns. Opportunities can disappear for long periods, and competing traders can take them first.</li>
     <li><b>Technology risk.</b> Losses can result from bugs in the bot, smart-contract failures, stablecoin de-pegs, exchange or RFQ-venue failures, network outages, or the theft or loss of private keys. The bot software is open-source third-party code that has not been independently audited.</li>
     <li><b>Not a regulated product.</b> This pool is a private arrangement. It is not registered with or approved by any securities regulator, is not a bank deposit, and is not insured or protected by any compensation scheme. Nothing on this site is financial, investment, legal or tax advice.</li>
-    <li><b>Figures shown.</b> The fund value is read automatically from the pool wallet's on-chain balance, with any local-currency tokens priced at live Uniswap rates. It can move with those rates while trades are open, and the manager can correct it by hand.</li>
-    <li><b>Fees.</b> The manager takes a performance fee (currently 10%) of profit above the capital you put in, charged when you withdraw and shown on your dashboard as it accrues. The fee stays in the pool as the manager's own units. No fee is charged on losses. An early-exit penalty may apply if you withdraw within the lock period shown on your dashboard.</li>
-    <li><b>Withdrawals</b> are paid at the unit price at the time of withdrawal and may take time to process while funds are in open positions.</li>
+    <li><b>Figures shown.</b> The fund value is reported to the fund contract every hour from the pool wallet's on-chain balance, with any local-currency tokens priced at live Uniswap rates. It can move with those rates while trades are open. The contract limits how far it can move in a day.</li>
+    <li><b>Fees.</b> The manager takes a performance fee (currently 10%, never more than 20%) of profit above what you put in, charged when you redeem and shown on your dashboard as it accrues. The fee stays in the fund as the manager's shares. No fee is charged on losses. A fee change only takes effect 48 hours after it is announced on the site.</li>
+    <li><b>Redemptions</b> settle once a day at that day's share price and are paid in USDT to the wallet that holds the shares. They may wait for the next settlement while funds are in open trades.</li>
     <li><b>Limitation of liability.</b> To the fullest extent permitted by law, the manager and anyone operating this site are not liable for any loss, including loss of capital or profit, arising from your participation, except where caused by their fraud or wilful misconduct.</li>
     <li><b>Your responsibility.</b> Only contribute money you can afford to lose entirely. You are responsible for any taxes on your gains, and for making sure participation is legal where you live.</li>
     <li><b>No affiliation.</b> This pool is independent and is not affiliated with, endorsed by, or operated by the creators of the Kiyoshi software, Celo, Uniswap or Textile.</li>
@@ -89,13 +89,6 @@ async function rpc(name, args) {
   if (error) throw error
   return data
 }
-// Live pool-wallet value in USD, read on the server from the chain (admin: ending a season).
-async function liveValue() {
-  const { data, error } = await sb.functions.invoke('sync-value', { body: { peek: true } })
-  if (error || typeof data?.value !== 'number') throw new Error('Could not read the pool wallet right now. Try again in a minute.')
-  return data.value
-}
-
 async function loadPublic() {
   try { state.pub = await rpc('public_overview') } catch { state.pub = state.pub || { error: true } }
 }
@@ -186,7 +179,6 @@ function render() {
   </main>`
   state.flash = null
   window.mountVault?.()
-  if (tab === 'admin' && state.admin) drawLeaderboard()
   if (tab === 'dashboard' && !state.wallet) loadWallet()
 }
 // The vault's data arrives after the page is drawn: show the Admin tab once the manager wallet is recognised.
@@ -205,14 +197,13 @@ function overviewView() {
   const P = state.pub
   if (!P) return '<div class="boot">Loading…</div>'
   const past = (P.seasons || [])[0]
-  const live = (n(P.unit_price) - 1) * 100
-  const open = Math.max(n(P.total_slots) - n(P.members), 0)
+  const open = Math.max(n(P.total_slots) - n(window.vaultState?.holders?.filter((h) => h.shares + h.escrowed > 0n).length ?? P.members), 0)
   const T = past?.trades
   const best = past?.leaderboard?.[0]
   const hero = past
     ? { label: `${esc(past.name)} return`, value: pct(past.return_pct, true), cls: tone(past.return_pct),
         sub: `${day(past.started_at)} – ${day(past.ended_at)} · every $1 became $${n(past.end_unit_price).toFixed(2)}` }
-    : { label: `Season ${P.season} so far`, value: pct(live, true), cls: tone(live), sub: `since ${day(P.season_started_at)}` }
+    : { label: `Season ${P.season}`, value: 'Live', cls: '', sub: `since ${day(P.season_started_at)}` }
   return `
     <section class="hero-band">
       <div class="tagline" style="text-align:left;margin:0 0 14px">Arbitrage fund · Celo</div>
@@ -243,14 +234,12 @@ function overviewView() {
       <div class="card"><div class="label" style="margin-bottom:10px">Leaderboard · ${esc(past.name)}</div>${boardView(past.leaderboard, 'No members that season.')}</div>
     </div>` : ''}
 
-    <div class="section-title">Season ${P.season} · live</div>
-    <div class="grid">
-      ${stat('Return so far', pct(live, true), `since ${day(P.season_started_at)}`, tone(live), !past)}
-      ${stat('Unit price', '$' + n(P.unit_price).toFixed(4), 'value of $1 at the start of the season')}
-      ${stat('Fund value', money(P.current_value), `live from the pool wallet · ${stamp(P.last_updated)}`)}
-      ${stat('Slots open', `${open} / ${P.total_slots}`, `${P.members} in the fund now`)}
+    <div class="section-title">Season ${P.season} · live on-chain</div>
+    <div data-vx="tiles"></div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="card">${chart(P.vault_history, 'Share price · on-chain fund')}</div>
+      <div class="card"><div class="label" style="margin-bottom:10px">Leaderboard · Season ${P.season}</div><div data-vx="board"></div></div>
     </div>
-    <div class="card" style="margin-top:12px">${chart(P.history, `Unit price · Season ${P.season}`)}</div>
 
     <div class="section-title" id="how">How it works</div>
     <div class="grid steps">
@@ -273,7 +262,6 @@ function dashboardView() {
   const P = state.pub
   if (!P) return '<div class="boot">Loading…</div>'
   const v = P.vault || {}
-  const live = (n(P.unit_price) - 1) * 100
   return `
   <div class="section-title">Your position${v.network === 'testnet' ? ' · testnet' : ''}</div>
   <div data-vx="wallet"></div>
@@ -285,24 +273,13 @@ function dashboardView() {
     <div class="card" id="my-pnl">${myPnlView()}</div>
   </div>` : ''}
 
-  <div class="section-title">Season ${P.season} · the pool</div>
-  <div class="grid">
-    ${stat('Fund value', money(P.current_value), `live from the pool wallet · ${stamp(P.last_updated)}`, '', true)}
-    ${stat('Unit price', '$' + n(P.unit_price).toFixed(4), `<span class="${tone(live)}">${pct(live, true)}</span> since ${day(P.season_started_at)}`)}
-    ${stat('Members', `${P.members} / ${P.total_slots}`, `${Math.max(n(P.total_slots) - n(P.members), 0)} slots open`)}
-    ${stat('Fee', `${n(P.fee_pct)}%`, 'of profit only, never on a loss')}
-  </div>
-  <div class="grid two" style="margin-top:12px">
-    <div class="card">${chart(P.history, `Unit price · Season ${P.season}`)}</div>
-    <div class="card">${walletCard()}</div>
-  </div>
-
   <div class="section-title">Trading activity</div>
   <div id="trade-stats">${tradeStatsView()}</div>
+  <div class="card" style="margin-top:12px">${walletCard()}</div>
 
   <div class="section-title">Leaderboard · Season ${P.season}</div>
-  <div class="card">${boardView(P.leaderboard, 'No members on the board yet this season.')}
-    <p class="note" style="margin-bottom:0">Return after fees on what each member put in, counting payouts. Names are shortened; the manager is not ranked.</p></div>
+  <div class="card"><div data-vx="board"></div>
+    <p class="note" style="margin-bottom:0">Return after fees on what each member put in. Wallets are shortened; the manager is not ranked.</p></div>
   ${(P.seasons || []).map(seasonView).join('')}`
 }
 
@@ -349,20 +326,10 @@ function adminView() {
 
 function offchainAdmin() {
   const f = state.fund, v = state.pub?.vault || {}
-  const growth = (n(f.unit_price) - 1) * 100
   return `
-  <div class="section-title">Season ${f.season}</div>
-  <div class="card">
-    <div class="row" style="justify-content:space-between;align-items:flex-start">
-      <div><div class="label">Season ${f.season} · since ${day(f.season_started_at)}</div>
-        <div class="big ${tone(growth)}">${pct(growth, true)}</div>
-        <div class="sub">unit price $${n(f.unit_price).toFixed(4)} · fund ${money(f.current_value)} · ${f.members} holder${f.members === 1 ? '' : 's'}</div></div>
-      <button class="btn ghost" data-action="new-season">End Season ${f.season} · start Season ${f.season + 1}</button>
-    </div>
-    <p class="note" style="margin-bottom:0">Saves this season's results (return, payouts, trades and leaderboard), then restarts the unit price at $1.00 with everyone's value carried over. Uses the pool wallet's live value when you confirm.</p>
-  </div>
+  <div class="section-title">Off-chain settings</div>
 
-  <div class="grid two" style="margin-top:12px">
+  <div class="grid two">
     <form class="card" data-form="vault-config"><div class="label">On-chain fund contract</div>
       <label class="field" style="margin-top:10px"><span>Network</span><select name="network">
         <option value="testnet" ${v.network === 'testnet' ? 'selected' : ''}>Celo Sepolia (testnet)</option>
@@ -371,23 +338,8 @@ function offchainAdmin() {
       <label class="field"><span>USDT address (tUSDT on testnet)</span><input name="usdt" value="${esc(v.usdt || '')}" placeholder="0x…" autocapitalize="none" spellcheck="false"></label>
       <button class="btn" type="submit">Save</button>
       <p class="note" style="margin:0">Paste what <span class="mono">npm run deploy</span> printed. The site and the keeper switch to it straight away.</p></form>
-    <form class="card" data-form="value"><div class="label">Pool value · manual correction</div>
-      <label class="field" style="margin-top:10px"><span>Current total fund value (USD)</span><input name="value" type="number" step="0.01" min="0" value="${n(f.current_value).toFixed(2)}" required></label>
-      <label class="field"><span>Note (optional)</span><input name="note" placeholder="e.g. Correction"></label>
-      <button class="btn plain" type="submit">Save fund value</button>
-      <p class="note" style="margin:0">The keeper updates it from the pool wallet every hour; use this only to correct it.</p></form>
   </div>
 
-  <div class="section-title">Leaderboard image</div>
-  <div class="card">
-    <canvas id="lb" width="1080" height="1350" style="width:100%;max-width:440px;height:auto;display:block;margin:0 auto;border:1px solid var(--line)" role="img" aria-label="Member leaderboard image"></canvas>
-    <div class="row" style="justify-content:center;margin-top:14px">
-      <button class="btn" data-action="lb-download">Download image</button>
-      ${navigator.canShare ? '<button class="btn ghost" data-action="lb-share">Share</button>' : ''}
-      <button class="btn plain" data-action="lb-caption">New caption</button>
-      <button class="btn plain" data-action="lb-names">Names: ${LB_NAMES[state.lb.names]}</button>
-    </div>
-  </div>
 
   <div class="section-title">Settings</div>
   <div class="card">
@@ -607,143 +559,6 @@ function walletLive() {
   <p class="note" style="margin-bottom:0">Stablecoins held right now. This can differ from the fund value while trades are open or before new money is added to the pool.</p>`
 }
 
-// ---------- leaderboard image ----------
-const LB_NAMES = ['Full names', 'Initials', 'Hidden']
-const LB_CAPTIONS = [
-  "While you were \u201cthinking about it\u201d, we were compounding.",
-  'Some people bought the dip. Some people bought excuses.',
-  'Imagine getting paid while you sleep. Could\u2019ve been you.',
-  'Ask your bank what \u201cinterest\u201d means. Then ask us.',
-  'This could have been your name. Just saying.',
-  'Slots are limited. Your FOMO is not.',
-  'Missed the boat? It\u2019s still sailing. Without you.',
-  'The bot never sleeps. Neither do our gains.',
-]
-
-function lbName(name, i) {
-  if (state.lb.names === 1) return String(name).trim().charAt(0).toUpperCase() + '.'
-  if (state.lb.names === 2) return `Member #${i + 1}`
-  return String(name)
-}
-
-function wrapText(ctx, text, maxWidth) {
-  const lines = []
-  let line = ''
-  for (const word of text.split(' ')) {
-    const test = line ? line + ' ' + word : word
-    if (ctx.measureText(test).width > maxWidth && line) { lines.push(line); line = word } else line = test
-  }
-  if (line) lines.push(line)
-  return lines
-}
-
-async function drawLeaderboard() {
-  const cv = document.getElementById('lb')
-  if (!cv) return
-  try {
-    await Promise.all([document.fonts.load('600 80px "Cormorant Garamond"'), document.fonts.load('italic 600 44px "Cormorant Garamond"'),
-      document.fonts.load('500 30px "JetBrains Mono"'), document.fonts.load('700 30px "JetBrains Mono"')])
-  } catch { /* fallback fonts */ }
-  const ctx = cv.getContext('2d')
-  const W = 1080, H = 1350
-  const f = state.fund
-  const GOLD = '#c9a84c', GOLD_HI = '#e4c56a', WHITE = '#f5f5f2', GREY = '#8d8d94', LINE = '#2a2a2e'
-  const MONO = '"JetBrains Mono", ui-monospace, monospace', SERIF = '"Cormorant Garamond", Georgia, serif'
-  const spaced = (px) => { if ('letterSpacing' in ctx) ctx.letterSpacing = px }
-
-  const rows = state.admin.members
-    .filter((m) => n(m.units) > 0 && n(m.capital) > 0)
-    .map((m) => ({ name: m.name, roi: ((n(m.net_value) - n(m.capital)) / n(m.capital)) * 100 }))
-    .sort((a, b) => b.roi - a.roi)
-    .slice(0, 8)
-    .map((r, i) => ({ ...r, name: lbName(r.name, i) }))
-
-  // background, glow and double frame
-  ctx.fillStyle = '#0a0a0b'; ctx.fillRect(0, 0, W, H)
-  const glow = ctx.createRadialGradient(W / 2, 0, 40, W / 2, 0, 950)
-  glow.addColorStop(0, 'rgba(201,168,76,0.24)'); glow.addColorStop(1, 'rgba(201,168,76,0)')
-  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H)
-  ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.strokeRect(36, 36, W - 72, H - 72)
-  ctx.strokeStyle = 'rgba(201,168,76,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(50, 50, W - 100, H - 100)
-
-  // header
-  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'
-  spaced('10px'); ctx.fillStyle = GREY; ctx.font = `500 24px ${MONO}`
-  ctx.fillText('THE LEADERBOARD', W / 2, 130)
-  spaced('2px'); ctx.fillStyle = WHITE; ctx.font = `600 76px ${SERIF}`
-  const [a, b] = String(f.fund_name).split('×')
-  if (b !== undefined) {
-    const wa = ctx.measureText(a).width, wx = ctx.measureText('×').width, wb = ctx.measureText(b).width
-    let x = W / 2 - (wa + wx + wb) / 2
-    ctx.textAlign = 'left'
-    ctx.fillText(a, x, 215); x += wa
-    ctx.fillStyle = GOLD; ctx.fillText('×', x, 215); x += wx
-    ctx.fillStyle = WHITE; ctx.fillText(b, x, 215)
-    ctx.textAlign = 'center'
-  } else ctx.fillText(f.fund_name, W / 2, 215)
-
-  // headline fund return
-  const growth = (n(f.unit_price) - 1) * 100
-  const startT = f.history?.[0]?.t || f.started_at
-  const days = startT ? Math.max(1, Math.round((Date.now() - new Date(startT).getTime()) / 86400000)) : null
-  spaced('0px'); ctx.fillStyle = growth >= 0 ? GOLD_HI : WHITE; ctx.font = `700 132px ${MONO}`
-  ctx.fillText(pct(growth, true), W / 2, 380)
-  spaced('4px'); ctx.fillStyle = GREY; ctx.font = `500 26px ${MONO}`
-  ctx.fillText(`FUND RETURN${days ? ` · ${days} DAY${days === 1 ? '' : 'S'}` : ''} · ${f.members} MEMBER${f.members === 1 ? '' : 'S'}`, W / 2, 430)
-
-  // divider
-  ctx.strokeStyle = LINE; ctx.lineWidth = 2
-  ctx.beginPath(); ctx.moveTo(120, 480); ctx.lineTo(W - 120, 480); ctx.stroke()
-
-  // rows
-  const top = 520, bottom = 1060
-  const rowH = Math.min(118, (bottom - top) / Math.max(rows.length, 1))
-  const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.roi)))
-  const left = 120, right = W - 120
-  if (!rows.length) {
-    ctx.fillStyle = GREY; ctx.font = `500 30px ${MONO}`; ctx.textAlign = 'center'
-    ctx.fillText('No members on the board yet', W / 2, 760)
-  }
-  rows.forEach((r, i) => {
-    const y = top + i * rowH
-    const medal = ['#e4c56a', '#c8c8cc', '#c08a5a'][i]
-    // rank badge
-    ctx.beginPath(); ctx.arc(left + 30, y + 38, 30, 0, Math.PI * 2)
-    ctx.fillStyle = medal ? medal : '#18181b'; ctx.fill()
-    if (!medal) { ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.stroke() }
-    ctx.fillStyle = medal ? '#111' : WHITE; ctx.font = `700 28px ${MONO}`; ctx.textAlign = 'center'; spaced('0px')
-    ctx.fillText(String(i + 1), left + 30, y + 48)
-    // name and ROI
-    ctx.textAlign = 'left'; ctx.fillStyle = WHITE; ctx.font = `600 ${i === 0 ? 50 : 44}px ${SERIF}`
-    let name = r.name
-    while (ctx.measureText(name).width > 520 && name.length > 3) name = name.slice(0, -2)
-    if (name !== r.name) name = name.trimEnd() + '…'
-    ctx.fillText(name, left + 82, y + 52)
-    ctx.textAlign = 'right'; ctx.fillStyle = r.roi >= 0 ? GOLD_HI : '#b6b6bc'; ctx.font = `700 ${i === 0 ? 46 : 40}px ${MONO}`
-    ctx.fillText(pct(r.roi, true), right, y + 52)
-    // bar
-    const barW = (right - left - 82) * Math.max(0.02, Math.abs(r.roi) / maxAbs)
-    ctx.fillStyle = '#18181b'; ctx.fillRect(left + 82, y + 70, right - left - 82, 8)
-    const bar = ctx.createLinearGradient(left + 82, 0, left + 82 + barW, 0)
-    bar.addColorStop(0, r.roi >= 0 ? '#8a6d24' : '#3a3a3e'); bar.addColorStop(1, r.roi >= 0 ? GOLD_HI : '#8d8d94')
-    ctx.fillStyle = bar; ctx.fillRect(left + 82, y + 70, barW, 8)
-  })
-
-  // caption
-  const caption = LB_CAPTIONS[state.lb.caption % LB_CAPTIONS.length]
-  ctx.textAlign = 'center'; ctx.fillStyle = WHITE; ctx.font = `italic 600 46px ${SERIF}`; spaced('0px')
-  const lines = wrapText(ctx, caption, W - 260)
-  lines.forEach((l, i) => ctx.fillText(l, W / 2, 1140 + i * 54 - (lines.length - 1) * 27))
-  ctx.strokeStyle = GOLD; ctx.lineWidth = 2
-  ctx.beginPath(); ctx.moveTo(W / 2 - 40, 1205); ctx.lineTo(W / 2 + 40, 1205); ctx.stroke()
-
-  // footnote
-  ctx.fillStyle = GREY; ctx.font = `400 17px ${MONO}`; spaced('1px')
-  ctx.fillText(`ROI after fees as of ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`, W / 2, 1250)
-  ctx.fillText('Past returns don\u2019t guarantee future returns. Not financial advice.', W / 2, 1278)
-  spaced('0px')
-}
-
 function svgImg(svg, color) {
   return new Promise((resolve) => {
     const im = new Image()
@@ -778,10 +593,6 @@ function saveBlob(blob, name) {
   link.download = name
   document.body.appendChild(link); link.click(); link.remove()
   setTimeout(() => URL.revokeObjectURL(link.href), 5000)
-}
-
-function lbBlob() {
-  return new Promise((resolve) => document.getElementById('lb').toBlob(resolve, 'image/png'))
 }
 
 function modal(html) {
@@ -838,10 +649,6 @@ document.addEventListener('submit', (ev) => {
       if (error) throw error
       flash('Password updated.'); return render()
     }
-    if (kind === 'value') {
-      await rpc('admin_set_value', { p_value: Number(d.value), p_note: d.note || null })
-      flash('Fund value saved.'); await Promise.all([loadPublic(), loadAdmin()]); return render()
-    }
     if (kind === 'vault-config') {
       for (const a of [d.vault, d.usdt]) if (a && !/^0x[0-9a-fA-F]{40}$/.test(a.trim())) throw new Error('Check the addresses (0x followed by 40 characters)')
       await rpc('admin_set_vault', { p_network: d.network, p_vault: d.vault || null, p_usdt: d.usdt || null })
@@ -872,34 +679,6 @@ document.addEventListener('click', (ev) => {
     const y = window.scrollY; render(); window.scrollTo(0, y); return
   }
   if (a === 'copy') { navigator.clipboard?.writeText(t.dataset.value); t.textContent = 'Copied'; return }
-  if (a === 'lb-caption') { state.lb.caption = (state.lb.caption + 1) % LB_CAPTIONS.length; drawLeaderboard(); return }
-  if (a === 'lb-names') { state.lb.names = (state.lb.names + 1) % LB_NAMES.length; t.textContent = `Names: ${LB_NAMES[state.lb.names]}`; drawLeaderboard(); return }
-  if (a === 'lb-download') { lbBlob().then((b) => saveBlob(b, 'midas-kiyoshi-leaderboard.png')); return }
-  if (a === 'lb-share') {
-    lbBlob().then((blob) => {
-      const file = new File([blob], 'midas-kiyoshi-leaderboard.png', { type: 'image/png' })
-      if (navigator.canShare?.({ files: [file] })) navigator.share({ files: [file], text: LB_CAPTIONS[state.lb.caption] }).catch(() => {})
-    })
-    return
-  }
-  busy(t, async () => {
-    if (a === 'new-season') {
-      const f = state.fund
-      if (!state.trades || state.trades.error) await loadTrades()
-      const T = state.trades && !state.trades.error ? state.trades : null
-      const trades = T ? {
-        count: T.trades.length, wins: T.trades.filter((x) => x.profit > 0).length,
-        volume: Math.round(T.trades.reduce((s, x) => s + x.size, 0) * 2 * 100) / 100,
-        profit: Math.round(T.trades.reduce((s, x) => s + x.profit, 0) * 1e6) / 1e6, since: T.since, until: T.now,
-      } : null
-      const live = await liveValue()
-      const ret = (live / n(f.total_units) - 1) * 100
-      if (!await ask(`End Season ${f.season} at ${pct(ret, true)} (fund value ${money(live)} now) and start Season ${f.season + 1} at $1.00? This cannot be undone.`)) return
-      const r = await rpc('admin_start_season', { p_value: live, p_trades: trades })
-      flash(`Season ${r.ended} closed at ${pct(r.return_pct, true)}. Season ${r.ended + 1} has started at $1.00 with ${money(r.carried_over)} carried over.`)
-      await Promise.all([loadPublic(), loadAdmin()]); return render()
-    }
-  })
 })
 
 window.addEventListener('hashchange', render)

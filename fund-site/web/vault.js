@@ -281,8 +281,17 @@ function vAdmin() {
   </tbody></table></div>`
 }
 
+// Leaderboard: every holder's return after fees on what they put in (the manager is not ranked).
+function vBoard() {
+  if (!VS.d || VS.holders === undefined) return '<p class="note">Reading the fund contract…</p>'
+  const rows = VS.holders.filter((h) => h.shares + h.escrowed > 0n && h.cost > 0n && !same(h.a, VS.d.feeRecipient))
+    .map((h) => ({ label: vMask(h.a), roi: ((vUsd(h.value) - vUsd(h.fee) - vUsd(h.cost)) / vUsd(h.cost)) * 100, active: true, me: same(h.a, VS.account) }))
+    .sort((x, y) => y.roi - x.roi)
+  return boardView(rows, 'No members yet this season. Be the first.')
+}
+
 function vRender() {
-  const fill = { tiles: vTiles, wallet: vWallet, account: vAccount, admin: vAdmin, connect: vConnectButton }
+  const fill = { tiles: vTiles, wallet: vWallet, account: vAccount, admin: vAdmin, connect: vConnectButton, board: vBoard }
   for (const el of document.querySelectorAll('[data-vx]')) {
     if (!vOn() && el.dataset.vx !== 'connect') { el.innerHTML = el.dataset.vx === 'wallet' ? '<div class="card"><p class="note" style="margin:0">The on-chain fund opens soon.</p></div>' : ''; continue }
     if (fill[el.dataset.vx]) el.innerHTML = fill[el.dataset.vx]()
@@ -309,7 +318,7 @@ async function vRefresh() {
 // History, holders and the personal P&L, from the vault's events (only when a view needs them).
 async function vExtras() {
   const needHistory = !!document.querySelector('[data-vx="account"]') && VS.account && VS.d
-  const needHolders = !!document.querySelector('[data-vx="admin"]') && VS.d && (VS.d.isManager || VS.d.isOwner)
+  const needHolders = (!!document.querySelector('[data-vx="admin"]') && VS.d && (VS.d.isManager || VS.d.isOwner)) || (!!document.querySelector('[data-vx="board"]') && VS.d)
   const needMine = !!document.getElementById('my-pnl') && VS.account && VS.d
   if (!needHistory && !needHolders && !needMine) return
   try {
@@ -332,7 +341,7 @@ async function vExtras() {
     if (needHolders) {
       const addrs = [...new Set(logs.map((l) => l.args?.member || l.args?.to).filter(Boolean).map((a) => a.toLowerCase()))]
       const info = await Promise.all(addrs.map((a) => VS.pub.readContract({ address: vcfg().address, abi: VS.abi, functionName: 'memberInfo', args: [a] })))
-      VS.holders = addrs.map((a, i) => ({ a: VS.viem.getAddress(a), shares: info[i][0], escrowed: info[i][1], value: info[i][2], cost: info[i][3], queued: info[i][5], allowed: info[i][7] }))
+      VS.holders = addrs.map((a, i) => ({ a: VS.viem.getAddress(a), shares: info[i][0], escrowed: info[i][1], value: info[i][2], cost: info[i][3], fee: info[i][4], queued: info[i][5], allowed: info[i][7] }))
         .sort((x, y) => (y.value > x.value ? 1 : y.value < x.value ? -1 : 0))
     }
   } catch { VS.history = VS.history || []; VS.holders = VS.holders || [] }
