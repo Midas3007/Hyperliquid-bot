@@ -1,4 +1,4 @@
-# Original score for the Midas × Kiyoshi Fund promo: a 37 s bossa / 60s lounge piece in F
+# Original score for the Midas × Kiyoshi Fund promo: a mellow 37 s bossa / 60s lounge piece in F
 # (nylon guitar, upright bass, brushes, vibraphone, flute, strings), fully synthesized, no samples.
 #   python3 score.py out.wav
 # Timing follows the video: guitar alone 0-3.8 s, band from 3.8 s, melody from 7.5 s, strings from 18.8 s,
@@ -42,8 +42,9 @@ def nylon(m, dur, vel=1.0):
     f = hz(m)
     N = max(2, int(round(sr / f - 0.5)))  # the averaging filter adds half a sample of delay
     n = int(sr * (dur + 0.25))
-    burst = onepole(rng.uniform(-1, 1, N), 0.85)
-    burst -= np.roll(burst, N // 5)  # pluck position
+    burst = onepole(onepole(rng.uniform(-1, 1, N), 0.93), 0.93)  # soft thumb, no pick: dark excitation
+    burst -= np.roll(burst, N // 3)  # plucked nearer the middle: rounder tone
+    burst *= np.clip(np.arange(N) / (0.004 * sr), 0, 1)  # 4 ms soft attack
     y = np.zeros(n)
     y[:N] = burst * vel
     g = 0.5 * 0.99935  # loss per period, tuned so notes ring about as long as a nylon string
@@ -56,7 +57,7 @@ def nylon(m, dur, vel=1.0):
     end, rel = int(sr * dur), int(0.12 * sr)
     env[end:end + rel] = np.linspace(1, 0, len(env[end:end + rel]))
     env[end + rel:] = 0
-    return onepole(resample_poly(y * env, 1, OS), 0.35)
+    return onepole(resample_poly(y * env, 1, OS), 0.55)
 
 
 def upright(m, dur, vel=1.0):
@@ -76,7 +77,7 @@ def vibes(m, dur, vel=1.0):
         + 0.25 * np.sin(2 * np.pi * f * 3.98 * t) * np.exp(-t / 0.35) \
         + 0.08 * np.sin(2 * np.pi * f * 9.2 * t) * np.exp(-t / 0.08)
     trem = 1 - 0.28 * (0.5 + 0.5 * np.sin(2 * np.pi * 5.2 * t))  # motor tremolo
-    env = (1 - np.exp(-t / 0.002)) * np.clip((dur + 1.2 - t) / 0.5, 0, 1)
+    env = (1 - np.exp(-t / 0.006)) * np.clip((dur + 1.2 - t) / 0.5, 0, 1)  # soft mallets
     return partials * trem * env * vel
 
 
@@ -159,7 +160,7 @@ for bar in range(FINAL_BAR):
             beat = e / 2
             if b0 <= beat < b0 + blen:
                 for i, m in enumerate(voic):  # slight strum
-                    add(nylon(m, BEAT * 0.9, 0.55 * soft), at(bar, beat) + i * 0.007 + rng.normal(0, 0.003), pan=-0.3 + 0.1 * i, gain=0.5)
+                    add(nylon(m, BEAT * 0.9, 0.55 * soft), at(bar, beat) + i * 0.007 + rng.normal(0, 0.003), pan=-0.3 + 0.1 * i, gain=0.45)
 
 # ---------- upright bass (from bar 2) ----------
 for bar in range(2, FINAL_BAR):
@@ -178,9 +179,9 @@ for bar in range(2, FINAL_BAR):
     lvl = 0.5 if bar == 16 else 1.0
     for s16 in range(16):
         acc = 1.0 if s16 in (4, 12) else 0.55 if s16 % 2 == 0 else 0.35
-        add(brush(BEAT * 0.45, acc * lvl), at(bar, s16 / 4), pan=0.35, gain=0.25)
+        add(brush(BEAT * 0.45, acc * lvl), at(bar, s16 / 4), pan=0.35, gain=0.17)
     for s16 in CLAVE[bar % 2]:
-        add(rim(0.8 * lvl), at(bar, s16 / 4), pan=0.25, gain=0.2)
+        add(rim(0.8 * lvl), at(bar, s16 / 4), pan=0.25, gain=0.1)
 
 # ---------- melody (original): vibraphone, with flute doubling the second half ----------
 MEL = [
@@ -207,13 +208,13 @@ for bar, beat, d, m in MEL:
 for bar in range(10, FINAL_BAR):
     for name, b0, blen in chords_in(bar):
         lvl = 0.5 + 0.5 * min(1, (bar - 10) / 4)
-        add(strings([m + 12 for m in CH[name][1]], BEAT * blen, lvl), at(bar, b0), pan=0.0, gain=0.9)
+        add(strings([m + 12 for m in CH[name][1]], BEAT * blen, lvl), at(bar, b0), pan=0.0, gain=1.1)
 
 # ---------- ending: Fmaj9 on the logo, vibes arpeggio, everything rings out ----------
 T_END = at(FINAL_BAR)
 add(upright(29, 3.5, 0.9), T_END, gain=0.27)  # low F
 for i, m in enumerate([41, 48, 57, 60, 64, 67]):
-    add(nylon(m, 4.5, 0.6), T_END + i * 0.045, pan=-0.3 + 0.1 * i, gain=0.6)
+    add(nylon(m, 4.5, 0.6), T_END + i * 0.045, pan=-0.3 + 0.1 * i, gain=0.65)
 for i, m in enumerate([65, 69, 72, 76, 79, 84, 88]):
     add(vibes(m, 2.5, 0.8), T_END + 0.35 + i * BEAT * 0.25, pan=0.3, gain=0.13)
 add(strings([57 + 12, 64 + 12, 67 + 12, 72 + 12], 4.0, 0.8), T_END, gain=0.9)
@@ -222,16 +223,17 @@ add(rim(0.5), T_END, pan=0.25, gain=0.08)
 # ---------- room, master ----------
 n_ir = int(SR * 1.8)
 tt = np.arange(n_ir) / SR
-ir = np.stack([rng.normal(0, 1, n_ir) * np.exp(-tt / 0.45) for _ in range(2)], axis=1)
+ir = np.stack([rng.normal(0, 1, n_ir) * np.exp(-tt / 0.6) for _ in range(2)], axis=1)
 ir[:, 0] = onepole(ir[:, 0], 0.5)
 ir[:, 1] = onepole(ir[:, 1], 0.5)
 ir /= np.sqrt((ir ** 2).sum(axis=0))
 wet = np.stack([fftconvolve(mix[:, c], ir[:, c])[:len(mix)] for c in range(2)], axis=1)
-out = mix + 0.32 * wet
+out = mix + 0.42 * wet
+out = np.stack([onepole(out[:, c], 0.3) for c in range(2)], axis=1)  # warm top end
 out = out[: int(SR * DUR)]
 fade = int(SR * 1.4)
 out[-fade:] *= np.linspace(1, 0, fade)[:, None] ** 1.5
-out = np.tanh(out / np.max(np.abs(out)) * 1.4) / np.tanh(1.4) * 0.89
+out = np.tanh(out / np.max(np.abs(out)) * 0.9) / np.tanh(0.9) * 0.89
 
 import wave
 with wave.open(sys.argv[1] if len(sys.argv) > 1 else 'score.wav', 'wb') as w:
