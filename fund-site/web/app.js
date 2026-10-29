@@ -262,7 +262,7 @@ function dashboardView() {
     ${stat('Your share', pct(n(m.share) * 100), `${units(m.units)} units`)}
     ${stat('Capital invested', money(m.capital), `Deposited ${money(m.total_deposited)} · paid out ${money(m.total_withdrawn)}`)}
   </div>
-  <div class="card" style="margin-top:12px">${barChart('Your P&amp;L', personalBuckets(m, f), 'p', { money: true, cumulative: true })}
+  <div class="card" style="margin-top:12px">${barChart('Your P&amp;L', personalBuckets(m, f), 'p', { money: true, cumulative: true, personal: true })}
     <p class="note" style="margin-bottom:0">Your units times the change in unit price, before the manager fee. Deposits and withdrawals are not counted as profit.</p></div>
   <div class="grid two" style="margin-top:12px">
     <div class="card">
@@ -292,9 +292,9 @@ function dashboardView() {
   </div>`
 }
 
-function chart(history) {
-  const pts = (history || []).map((h) => ({ t: new Date(h.t).getTime(), v: n(h.unit_price) }))
-  if (pts.length < 2) return `<div class="label">Unit price</div><p class="note">The chart appears after the next fund value update.</p>`
+function chart(history, title = 'Unit price · value of $1 at season start') {
+  const pts = (history || []).map((h) => ({ t: new Date(h.t).getTime(), v: n(h.unit_price), value: n(h.value) }))
+  if (pts.length < 2) return `<div class="label">${title.split(' · ')[0]}</div><p class="note">The chart appears after the next fund value update.</p>`
   const W = 600, H = 200, pad = 6
   const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1
   let lo = Math.min(...pts.map((p) => p.v)), hi = Math.max(...pts.map((p) => p.v))
@@ -303,17 +303,63 @@ function chart(history) {
   const y = (v) => H - pad - ((v - lo) / (hi - lo)) * (H - 2 * pad)
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')
   const area = `${line} L${x(t1).toFixed(1)},${H} L${x(t0).toFixed(1)},${H} Z`
-  const last = pts[pts.length - 1].v
+  const last = pts[pts.length - 1]
+  const id = chartId({ kind: 'line', pts: pts.map((p) => ({ ...p, fx: x(p.t) / W, fy: y(p.v) / H })) })
   return `
-  <div class="chart-head"><div class="label">Unit price · value of $1 at start</div><div class="mono" style="font-size:13px">$${last.toFixed(4)}</div></div>
+  <div class="chart-head"><div class="label">${title}</div><div class="mono" style="font-size:13px">$${last.v.toFixed(4)}</div></div>
+  <div class="readout" id="${id}-r">${lineReadout(last)} <span class="muted">· tap or drag the chart</span></div>
+  <div class="scrub" data-chart="${id}">
   <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Unit price history">
     <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#c9a84c" stop-opacity=".28"/><stop offset="1" stop-color="#c9a84c" stop-opacity="0"/></linearGradient></defs>
     ${lo < 1 && hi > 1 ? `<line x1="0" x2="${W}" y1="${y(1)}" y2="${y(1)}" stroke="#2a2a2e" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>` : ''}
     <path d="${area}" fill="url(#g)"/>
     <path d="${line}" fill="none" stroke="#e4c56a" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
-  </svg>
+  </svg><i class="cursor"></i><i class="dot"></i></div>
   <div class="row sub" style="justify-content:space-between"><span>${day(new Date(t0).toISOString())}</span><span>low $${lo.toFixed(4)} · high $${hi.toFixed(4)}</span><span>${day(new Date(t1).toISOString())}</span></div>`
 }
+const lineReadout = (p) => `<b>$${p.v.toFixed(4)}</b> · fund ${money(p.value)} · ${stamp(new Date(p.t).toISOString())}`
+
+// ---------- tap / drag a chart for exact numbers ----------
+const CHARTS = new Map()
+let chartSeq = 0, scrubbing = null
+function chartId(data) { const id = 'ch' + (++chartSeq); CHARTS.set(id, data); return id }
+const exact = (v) => { const x = n(v); return Math.abs(x) > 0 && Math.abs(x) < 1 ? (x < 0 ? '−$' : '+$') + Math.abs(x).toFixed(4) : money(x, true) }
+function scrubAt(el, clientX) {
+  const c = CHARTS.get(el.dataset.chart), out = document.getElementById(el.dataset.chart + '-r')
+  if (!c || !out) return
+  const r = el.getBoundingClientRect(), fx = Math.min(Math.max((clientX - r.left) / r.width, 0), 1)
+  const cur = el.querySelector('.cursor'), dot = el.querySelector('.dot')
+  if (c.kind === 'line') {
+    let best = c.pts[0]
+    for (const p of c.pts) if (Math.abs(p.fx - fx) < Math.abs(best.fx - fx)) best = p
+    cur.style.cssText = `display:block;left:${best.fx * 100}%;width:0`
+    dot.style.cssText = `display:block;left:${best.fx * 100}%;top:${best.fy * 100}%`
+    out.innerHTML = lineReadout(best)
+    return
+  }
+  const i = Math.min(c.buckets.length - 1, Math.max(0, Math.floor((fx * c.W - c.pad) / c.bw)))
+  const b = c.buckets[i], v = b[c.key]
+  cur.style.cssText = `display:block;left:${((c.pad + i * c.bw) / c.W) * 100}%;width:${(c.bw / c.W) * 100}%`
+  const cum = c.buckets.slice(0, i + 1).reduce((s, x) => s + x[c.key], 0)
+  const parts = c.money ? [`<b class="${tone(v)}">${exact(v)}</b>`] : [`<b>${v} trade${v === 1 ? '' : 's'}</b>`]
+  if (c.money && c.trades) parts.push(`${b.n} trade${b.n === 1 ? '' : 's'}`)
+  if (!c.money) parts.push(`${exact(b.p)} profit`)
+  if (c.cumulative) parts.push(`running total ${exact(cum)}`)
+  out.innerHTML = `${parts.join(' · ')} · ${rangeText(b.start, c.range)}`
+}
+// The bucket's time span, in full: "Thu 29 Oct, 14:00–15:00", "Thu 29 Oct 2026", "26 Oct – 1 Nov"
+function rangeText(ms, range) {
+  const d = new Date(ms), unit = (RANGES[range] || RANGES.day).unit
+  if (unit === 'hour') return `${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}–${new Date(ms + 3_600_000).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+  if (unit === 'day') return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+  return `${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${new Date(stepBack(ms, 'day', -6)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+}
+document.addEventListener('pointerdown', (e) => { const el = e.target.closest('.scrub'); if (el) { scrubbing = el; scrubAt(el, e.clientX) } })
+document.addEventListener('pointermove', (e) => {
+  const el = scrubbing || (e.pointerType === 'mouse' ? e.target.closest('.scrub') : null)
+  if (el) scrubAt(el, e.clientX)
+})
+for (const t of ['pointerup', 'pointercancel']) document.addEventListener(t, () => { scrubbing = null })
 
 function tradeStatsView() {
   const T = state.trades, f = state.fund
@@ -384,7 +430,7 @@ function barChart(title, buckets, key, opts) {
   const fmt = (v) => (opts.money ? money(v, true) : String(v))
   const bars = buckets.map((b, i) => {
     const v = b[key], h = Math.max(v ? 2 : 0, (Math.abs(v) / maxV) * (H - 24)), x = pad + i * bw + bw * .15
-    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${(bw * .7).toFixed(1)}" height="${h.toFixed(1)}" fill="${v >= 0 ? '#e4c56a' : '#8d8d94'}" rx="1"><title>${bucketLabel(b.start)} · ${fmt(v)}${opts.money ? ` · ${b.n} trade${b.n === 1 ? '' : 's'}` : ''}</title></rect>`
+    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${(bw * .7).toFixed(1)}" height="${h.toFixed(1)}" fill="${v >= 0 ? '#e4c56a' : '#8d8d94'}" rx="1"/>`
   }).join('')
   let line = ''
   if (opts.cumulative) { // running total, scaled to the chart
@@ -392,14 +438,17 @@ function barChart(title, buckets, key, opts) {
     const y = (v) => H - 4 - ((v - lo) / (hi - lo || 1)) * (H - 28)
     line = `<path d="${cum.map((v, i) => `${i ? 'L' : 'M'}${(pad + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="#f4f4f0" stroke-opacity=".55" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`
   }
+  const id = chartId({ kind: 'bar', buckets, key, W, pad, bw, range: state.range, money: !!opts.money, cumulative: !!opts.cumulative, trades: !opts.personal })
   const every = Math.ceil(buckets.length / 4)
   const ticks = buckets.map((b, i) => (i % every === 0 ? `<span style="position:absolute;left:${((pad + i * bw) / W) * 100}%;white-space:nowrap">${bucketLabel(b.start, false)}</span>` : '')).join('')
   return `
   <div class="chart-head"><div class="label">${title} · ${RANGES[state.range].label.toLowerCase()}</div>${rangeToggle()}</div>
   <div class="sub" style="margin:-4px 0 8px">${fmt(opts.money ? Math.round(total * 100) / 100 : total)} over the last ${RANGES[state.range].count} ${RANGES[state.range].unit}s${opts.cumulative ? ' · line = running total' : ''}</div>
+  <div class="readout" id="${id}-r"><span class="muted">Tap or drag across the bars for exact numbers</span></div>
+  <div class="scrub" data-chart="${id}">
   <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:170px" role="img" aria-label="${title}">
     <line x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}" stroke="#2a2a2e" vector-effect="non-scaling-stroke"/>${bars}${line}
-  </svg>
+  </svg><i class="cursor"></i></div>
   <div class="sub" style="position:relative;height:16px;margin-top:6px;overflow:hidden">${ticks}</div>`
 }
 // A member's own P&L per bucket: for each fund value update, the member's units at the time multiplied by the

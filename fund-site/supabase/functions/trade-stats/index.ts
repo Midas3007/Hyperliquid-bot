@@ -46,12 +46,13 @@ Deno.serve(async (req) => {
   if (!memberId) return reply(403, { error: 'Members only' })
 
   const db = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const { data: s } = await db.from('settings').select('bot_wallet, started_at').eq('id', 1).single()
+  const { data: s } = await db.from('settings').select('bot_wallet, started_at, season_started_at').eq('id', 1).single()
   const wallet = String(s?.bot_wallet ?? '').toLowerCase()
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) return reply(200, { error: 'No pool wallet set' })
 
   const now = Date.now()
-  const start = s?.started_at ? Date.parse(`${s.started_at}T00:00:00Z`) : now - 7 * 86_400_000
+  // the current season only: a new season starts the trade history afresh
+  const start = s?.season_started_at ? Date.parse(s.season_started_at) : s?.started_at ? Date.parse(`${s.started_at}T00:00:00Z`) : now - 7 * 86_400_000
   const since = Math.max(start, now - MAX_DAYS * 86_400_000)
   const key = `${wallet}:${since}`
   if (cache && cache.key === key && now - cache.at < CACHE_MS) return reply(200, cache.body)
