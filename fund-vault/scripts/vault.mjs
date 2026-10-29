@@ -3,7 +3,7 @@
 //
 //   npm run vault -- status                       roles, settings, value, queues, pending changes
 //   npm run vault -- pause | unpause              immediate
-//   npm run vault -- set-manager 0x…              queued for 48 hours (also set-operator, set-fee-recipient, set-owner)
+//   npm run vault -- set-manager 0x…              queued for 48 hours (also set-operator, set-treasury, set-fee-recipient, set-owner)
 //   npm run vault -- set-max-move 50              queued: how far the value may move in a day, in %
 //   npm run vault -- execute manager              apply a queued change after its 48 hours
 //   npm run vault -- cancel manager               cancel a queued change, immediately
@@ -23,7 +23,7 @@ const net = network(process.argv)
 const dep = loadDeployment(net.name)
 const V = art('FundVault').abi
 const read = (fn, a = []) => net.pub.readContract({ address: dep.vault, abi: V, functionName: fn, args: a })
-const CHANGES = { owner: 0, operator: 1, manager: 2, 'fee-recipient': 3, fee: 4, 'max-move': 5 }
+const CHANGES = { owner: 0, operator: 1, manager: 2, 'fee-recipient': 3, fee: 4, 'max-move': 5, treasury: 6 }
 const NAMES = Object.keys(CHANGES)
 const me = net.account.address
 
@@ -38,19 +38,20 @@ const addr = (x) => {
   return getAddress(x)
 }
 async function liveNav() {
-  const { value, holdings } = await walletValue(net, await read('operator'), dep)
+  const { value, holdings } = await walletValue(net, await read('treasury'), dep)
   console.log(`Bot wallet value: ${fmtUsd(value)}  (${holdings.map((h) => `${h.amount.toFixed(2)} ${h.symbol}`).join(', ') || 'empty'})`)
   return value
 }
 const amountOrLive = async (x) => (x === 'live' || !x ? liveNav() : usd(x))
 
 async function status() {
-  const [owner, operator, manager, feeRecipient, paused, feeBps, maxMove, nav, supply, price, cap, min, settlements, navAt, q] = await Promise.all(
-    ['owner', 'operator', 'manager', 'feeRecipient', 'paused', 'feeBps', 'maxNavChangeBps', 'nav', 'totalSupply', 'sharePrice', 'depositCap', 'minDeposit', 'settlements', 'navUpdatedAt', 'queueLengths'].map((f) => read(f)))
+  const [owner, operator, manager, feeRecipient, paused, feeBps, maxMove, nav, supply, price, cap, min, settlements, navAt, q, treasury] = await Promise.all(
+    ['owner', 'operator', 'manager', 'feeRecipient', 'paused', 'feeBps', 'maxNavChangeBps', 'nav', 'totalSupply', 'sharePrice', 'depositCap', 'minDeposit', 'settlements', 'navUpdatedAt', 'queueLengths', 'treasury'].map((f) => read(f)))
   const tag = (a) => (a.toLowerCase() === me.toLowerCase() ? ' (bot wallet)' : a.toLowerCase() === PERSONAL.toLowerCase() ? ' (personal wallet)' : '')
   console.log(`\nFund vault ${dep.vault} on ${net.name}${paused ? '   *** PAUSED ***' : ''}`)
   console.log(`  owner          ${owner}${tag(owner)}`)
-  console.log(`  operator       ${operator}${tag(operator)}`)
+  console.log(`  treasury       ${treasury}${tag(treasury)}`)
+  console.log(`  operator       ${operator}${tag(operator) || ' (keeper)'}`)
   console.log(`  manager        ${manager}${tag(manager)}`)
   console.log(`  fee recipient  ${feeRecipient}${tag(feeRecipient)}`)
   console.log(`  fee            ${Number(feeBps) / 100}% of profit · value may move ${Number(maxMove) / 100}% a day`)
@@ -65,8 +66,8 @@ async function status() {
     const left = Number(eta) * 1000 - Date.now()
     console.log(`  QUEUED CHANGE  ${name} -> ${v}  ${left > 0 ? `ready in ${(left / 3_600_000).toFixed(1)} h` : 'ready: npm run vault -- execute ' + name}`)
   }
-  const allowance = await net.pub.readContract({ address: dep.usdt, abi: erc20Abi, functionName: 'allowance', args: [operator, dep.vault] })
-  if (allowance === 0n) console.log('  note           the operator has not approved payouts yet: npm run vault -- approve')
+  const allowance = await net.pub.readContract({ address: dep.usdt, abi: erc20Abi, functionName: 'allowance', args: [treasury, dep.vault] })
+  if (allowance === 0n) console.log('  note           the treasury has not approved payouts yet: npm run vault -- approve')
 }
 
 try {

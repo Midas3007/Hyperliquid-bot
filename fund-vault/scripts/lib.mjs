@@ -26,20 +26,20 @@ export const NETWORKS = {
 }
 
 // The bot wallet key: from this folder's .env, or the bot's own .env (~/kiyoshi or ~/midas-arb). Never printed.
-export function botKey() {
+export function botKey(varName = 'AGENT_PRIVATE_KEY') {
   const places = [path.join(ROOT, '.env'), path.join(ROOT, '..', 'kiyoshi', '.env'), path.join(os.homedir(), 'kiyoshi', '.env'), path.join(os.homedir(), 'midas-arb', '.env')]
   for (const p of places) {
     if (!fs.existsSync(p)) continue
-    const k = dotenv.parse(fs.readFileSync(p)).AGENT_PRIVATE_KEY
+    const k = dotenv.parse(fs.readFileSync(p))[varName]
     if (k) return { key: k.startsWith('0x') ? k : '0x' + k, from: p }
   }
-  throw new Error('No AGENT_PRIVATE_KEY found. Put it in fund-vault/.env (or keep it in ~/kiyoshi/.env).')
+  throw new Error(`No ${varName} found. Put it in fund-vault/.env (or keep it in ~/kiyoshi/.env).`)
 }
 
-export function network(args) {
+export function network(args, keyVar = 'AGENT_PRIVATE_KEY') {
   const name = args.includes('--mainnet') ? 'mainnet' : args.includes('--local') ? 'local' : args.includes('--testnet') ? 'testnet' : (process.env.VAULT_NETWORK || 'testnet')
   const n = NETWORKS[name]
-  const { key, from } = botKey()
+  const { key, from } = botKey(keyVar)
   const account = privateKeyToAccount(key)
   const transport = fallback(n.rpcs.map((u) => http(u, { timeout: 20_000, retryCount: 2 })))
   return {

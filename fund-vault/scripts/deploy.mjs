@@ -1,19 +1,24 @@
 // Deploy the fund vault from the phone, signed by the bot wallet.
 //   npm run deploy -- --testnet     Celo Sepolia, with a test USDT you can mint (try everything here first)
 //   npm run deploy -- --mainnet     Celo, real USDT
-// Owner and operator: the bot wallet. Manager and fee recipient: Midas's personal wallet.
+// Owner and treasury: the bot wallet. Operator: the keeper wallet (--keeper 0x…, settles automatically from the
+// server; holds no money). Manager and fee recipient: Midas's personal wallet.
 // The source is then verified on Sourcify (shows as verified on Blockscout and Celoscan).
 import fs from 'node:fs'
 import path from 'node:path'
 import { formatEther } from 'viem'
+import { getAddress, isAddress } from 'viem'
 import { CELO_USDT, PERSONAL, ROOT, art, confirm, errText, network, saveDeployment } from './lib.mjs'
 
 const net = network(process.argv)
 const bot = net.account.address
+const k = process.argv.indexOf('--keeper')
+const keeper = k > 0 && isAddress(process.argv[k + 1] || '') ? getAddress(process.argv[k + 1]) : bot
 const gas = await net.pub.getBalance({ address: bot })
 console.log(`\nNetwork:        ${net.name} (${net.chain.name})`)
 console.log(`Bot wallet:     ${bot}  (key from ${net.keyFrom})  ${formatEther(gas)} CELO for gas`)
-console.log(`Owner/operator: ${bot} (bot wallet)`)
+console.log(`Owner/treasury: ${bot} (bot wallet)`)
+console.log(`Operator:       ${keeper}${keeper === bot ? ' (bot wallet: add --keeper 0x… for automatic settling)' : ' (keeper)'}`)
 console.log(`Manager/fees:   ${PERSONAL} (personal wallet)`)
 console.log(`Asset:          ${net.name === 'mainnet' ? `USDT ${CELO_USDT}` : 'a new test USDT (tUSDT)'}`)
 if (gas === 0n) {
@@ -33,8 +38,8 @@ async function deploy(name, args) {
 
 let usdt = CELO_USDT
 if (net.name !== 'mainnet') usdt = (await deploy('MockUSDT', [])).address
-const v = await deploy('FundVault', [usdt, bot, bot, PERSONAL, PERSONAL])
-saveDeployment(net.name, { network: net.name, chainId: net.chain.id, vault: v.address, usdt, block: v.block, owner: bot, manager: PERSONAL, deployedAt: new Date().toISOString() })
+const v = await deploy('FundVault', [usdt, bot, bot, keeper, PERSONAL, PERSONAL])
+saveDeployment(net.name, { network: net.name, chainId: net.chain.id, vault: v.address, usdt, block: v.block, owner: bot, treasury: bot, operator: keeper, manager: PERSONAL, deployedAt: new Date().toISOString() })
 console.log(`\nSaved to deployments/${net.name}.json`)
 
 // Source verification on Sourcify: the compiler metadata plus the exact source files.

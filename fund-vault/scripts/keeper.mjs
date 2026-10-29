@@ -1,5 +1,6 @@
-// Keeper: runs next to the bot on the phone. Every hour it posts the bot wallet's value (the share price on the
-// dashboard); once a day it settles the queued deposits and redemptions at that value.
+// Keeper, phone version (the server's vault-keeper function normally does this): every hour it posts the
+// treasury's value; once a day it settles the queued deposits and redemptions at that value. Signs with
+// KEEPER_PRIVATE_KEY (the operator wallet) from fund-vault/.env.
 //   npm run keeper                 testnet
 //   npm run keeper -- --mainnet    the real fund
 // Settings (env): KEEPER_REPORT_MIN (60), KEEPER_SETTLE_HOUR_UTC (20 = 9 pm in Lagos), KEEPER_DRY=1 to only print.
@@ -8,7 +9,7 @@ import { erc20Abi } from 'viem'
 import { art, errText, fmtUsd, loadDeployment, network, send } from './lib.mjs'
 import { walletValue } from './nav.mjs'
 
-const net = network(process.argv)
+const net = network(process.argv, 'KEEPER_PRIVATE_KEY')
 const dep = loadDeployment(net.name)
 const V = art('FundVault').abi
 const REPORT_MS = Number(process.env.KEEPER_REPORT_MIN || 60) * 60_000
@@ -31,14 +32,15 @@ async function cashNeeded(value) {
 async function tick() {
   if (await read('paused')) return log('paused; nothing to do')
   if ((await read('operator')).toLowerCase() !== net.account.address.toLowerCase()) return log('this wallet is no longer the operator; stopping is safe')
-  const { value } = await walletValue(net, net.account.address, dep)
+  const treasury = await read('treasury')
+  const { value } = await walletValue(net, treasury, dep)
   const now = new Date()
   const day = now.toISOString().slice(0, 10)
   const [q, nav] = await Promise.all([read('queueLengths'), read('nav')])
   const due = now.getUTCHours() >= SETTLE_HOUR && lastSettleDay !== day
   if (due && (q[0] > 0n || q[1] > 0n)) {
     const need = await cashNeeded(value)
-    const usdt = await net.pub.readContract({ address: dep.usdt, abi: erc20Abi, functionName: 'balanceOf', args: [net.account.address] })
+    const usdt = await net.pub.readContract({ address: dep.usdt, abi: erc20Abi, functionName: 'balanceOf', args: [treasury] })
     if (usdt < need) return log(`settlement due, but the bot wallet holds ${fmtUsd(usdt)} USDT and payouts need ~${fmtUsd(need)}; waiting for trades to close`)
     log(`settling ${q[0]} deposit(s), ${q[1]} redemption(s) at ${fmtUsd(value)}`)
     if (!DRY) log(`settled: ${net.explorer}/tx/${await send(net, dep.vault, V, 'settle', [value])}`)

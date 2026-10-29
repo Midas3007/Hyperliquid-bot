@@ -1,5 +1,5 @@
 // Trade history of the pool wallet, rebuilt from the chain (Celo Blockscout API), for the dashboard's
-// "Trading activity" section. Any signed-in member can call it; it only reads public chain data.
+// "Trading activity" section. Anyone can call it; it only reads public chain data.
 //
 // A trade is a buy leg (a tx the wallet sent that moved USDT out) followed by a sell leg (a tx the wallet
 // sent that brought USDT back). Profit = USDT back - USDT out. Direct USDT transfers (withdrawals) and
@@ -8,7 +8,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 
 const EXPLORER = 'https://celo.blockscout.com/api'
 const USDT = '0x48065fbbe25f71c9282ddf5e1cd6d6a887483d5e'
-const CACHE_MS = 60_000
+const CACHE_MS = 5 * 60_000 // the explorer rate-limits (429)
 const MAX_DAYS = 90 // enough for the dashboard's weekly view
 let cache: { key: string; at: number; body: unknown } | null = null
 
@@ -38,13 +38,8 @@ async function explorer(params: Record<string, string>, stopBefore: number) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
 
+  // Public: members now sign in with a wallet, and this only reads public chain data (cached).
   const url = Deno.env.get('SUPABASE_URL')!
-  const caller = createClient(url, Deno.env.get('SUPABASE_ANON_KEY')!, {
-    global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
-  })
-  const { data: memberId } = await caller.rpc('my_member_id')
-  if (!memberId) return reply(403, { error: 'Members only' })
-
   const db = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const { data: s } = await db.from('settings').select('bot_wallet, started_at, season_started_at').eq('id', 1).single()
   const wallet = String(s?.bot_wallet ?? '').toLowerCase()

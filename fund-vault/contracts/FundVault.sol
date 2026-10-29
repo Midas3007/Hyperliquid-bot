@@ -9,12 +9,13 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// @title Midas × Kiyoshi Fund vault (Phase 1)
 /// @notice Members deposit USDT and receive fund shares; they redeem shares for USDT. Requests are queued and
 /// settled together (once a day) at the fund value the operator reports, so nobody can time the bot.
-/// The money is traded from the operator's wallet (the bot); this contract keeps the share ledger, each member's
+/// The money is traded from the treasury (the bot wallet); this contract keeps the share ledger, each member's
 /// cost, the performance fee and the queues, and only ever pays redemptions to the member who owns the shares.
 ///
-/// Roles: owner (pause, assign roles, all behind a 48-hour delay except pause), operator (reports value, settles,
-/// receives deposits, funds redemptions), manager (fee rate behind the delay and a hard cap, allow-list, limits),
-/// fee recipient (receives fee shares, pays no fee itself).
+/// Roles: owner (pause, assign roles, all behind a 48-hour delay except pause), treasury (receives deposits,
+/// funds redemptions: the bot wallet), operator (reports value and settles: a keeper wallet that holds no money),
+/// manager (pause, allow-list, limits, fee rate behind the delay and a hard cap), fee recipient (receives fee
+/// shares, pays no fee itself).
 ///
 /// Shares cannot be transferred between wallets in this version (transfers come in Phase 2 with their own fee).
 contract FundVault is ERC20, ReentrancyGuard {
@@ -31,9 +32,11 @@ contract FundVault is ERC20, ReentrancyGuard {
     // ---------- roles and settings ----------
     address public owner;
     address public operator;
+    address public treasury;
     address public manager;
     address public feeRecipient;
     bool public paused;
+    bool public ownerPaused; // paused by the owner: only the owner can lift it
     uint256 public feeBps = 1000; // 10% of profit
     uint256 public maxNavChangeBps = 5000; // the reported value may move at most 50% a day (bugs, bad prices)
     uint256 public depositCap; // max fund value after deposits, in USDT units (6 decimals); 0 = closed
@@ -60,7 +63,7 @@ contract FundVault is ERC20, ReentrancyGuard {
     mapping(address => bool) private inRedeemQueue;
 
     // ---------- delayed changes ----------
-    enum Change { Owner, Operator, Manager, FeeRecipient, FeeBps, MaxNavChange }
+    enum Change { Owner, Operator, Manager, FeeRecipient, FeeBps, MaxNavChange, Treasury }
     struct Pending { uint256 value; uint256 eta; }
     mapping(Change => Pending) public pending;
 
@@ -109,14 +112,21 @@ contract FundVault is ERC20, ReentrancyGuard {
         _;
     }
 
-    constructor(IERC20 asset_, address owner_, address operator_, address manager_, address feeRecipient_)
-        ERC20("Midas Kiyoshi Fund Share", "MKF")
-    {
-        if (owner_ == address(0) || operator_ == address(0) || manager_ == address(0) || feeRecipient_ == address(0)) {
-            revert BadAmount();
-        }
+    constructor(
+        IERC20 asset_,
+        address owner_,
+        address treasury_,
+        address operator_,
+        address manager_,
+        address feeRecipient_
+    ) ERC20("Midas Kiyoshi Fund Share", "MKF") {
+        if (
+            owner_ == address(0) || treasury_ == address(0) || operator_ == address(0) || manager_ == address(0)
+                || feeRecipient_ == address(0)
+        ) revert BadAmount();
         asset = asset_;
         owner = owner_;
+        treasury = treasury_;
         operator = operator_;
         manager = manager_;
         feeRecipient = feeRecipient_;
@@ -199,10 +209,10 @@ contract FundVault is ERC20, ReentrancyGuard {
     }
 
     /// @notice Settle every queued redemption and deposit at one price: newNav / total shares.
-    /// newNav is the fund's value held by the operator (all of the bot wallet's tokens, priced in USDT), without
+    /// newNav is the fund's value held by the treasury (all of the bot wallet's tokens, priced in USDT), without
     /// queued deposits or unpaid payouts that sit in this contract. Redemptions are paid first, then deposits buy
-    /// shares. If deposits do not cover the payouts, the difference is pulled from the operator (approve first);
-    /// any surplus deposit money is sent to the operator to trade.
+    /// shares. If deposits do not cover the payouts, the difference is pulled from the treasury (it approves this
+    /// contract once); any surplus deposit money is sent to the treasury to trade.
     function settle(uint256 newNav) external nonReentrant only(operator) notPaused {
         uint256 supply = totalSupply();
         if (supply > 0) _checkJump(newNav);
@@ -212,9 +222,9 @@ contract FundVault is ERC20, ReentrancyGuard {
         (address[] memory payees, uint256[] memory amounts, uint256 payouts) = _settleRedeems(newNav, supply, id);
         uint256 deposits = _settleDeposits(newNav, supply, id);
 
-        // Cash: deposits pay the redemptions first; the operator tops up or receives the difference.
-        if (payouts > deposits) asset.safeTransferFrom(operator, address(this), payouts - deposits);
-        else if (deposits > payouts) asset.safeTransfer(operator, deposits - payouts);
+        // Cash: deposits pay the redemptions first; the treasury tops up or receives the difference.
+        if (payouts > deposits) asset.safeTransferFrom(treasury, address(this), payouts - deposits);
+        else if (deposits > payouts) asset.safeTransfer(treasury, deposits - payouts);
 
         for (uint256 i; i < payees.length; ++i) {
             if (amounts[i] == 0) continue;
@@ -300,13 +310,22 @@ contract FundVault is ERC20, ReentrancyGuard {
     // Owner (the bot wallet): pause, opening shares, roles (delayed)
     // =====================================================================================================
 
-    function setPaused(bool p) external only(owner) {
+    /// @notice Pause or unpause: immediate, and it cannot move money. The owner and the manager can both pause;
+    /// a pause made by the owner can only be lifted by the owner.
+    function setPaused(bool p) external {
+        if (msg.sender == owner) {
+            ownerPaused = p;
+        } else if (msg.sender == manager) {
+            if (!p && ownerPaused) revert NotAuthorized();
+        } else {
+            revert NotAuthorized();
+        }
         paused = p;
         emit Paused(p);
     }
 
     /// @notice One time, before anyone else holds shares: mint the opening position at $1.00 per share.
-    /// assets must equal the fund value the operator holds at that moment.
+    /// assets must equal the fund value the treasury holds at that moment.
     function openingShares(address to, uint256 assets) external only(owner) {
         if (totalSupply() != 0 || settlements != 0) revert AlreadyOpened();
         if (assets == 0 || to == address(0)) revert BadAmount();
@@ -358,7 +377,8 @@ contract FundVault is ERC20, ReentrancyGuard {
         else if (c == Change.Manager) manager = a;
         else if (c == Change.FeeRecipient) feeRecipient = a;
         else if (c == Change.FeeBps) feeBps = p.value;
-        else maxNavChangeBps = p.value;
+        else if (c == Change.MaxNavChange) maxNavChangeBps = p.value;
+        else treasury = a;
         emit ChangeExecuted(c, p.value);
     }
 

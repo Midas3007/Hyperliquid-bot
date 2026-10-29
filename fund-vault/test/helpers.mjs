@@ -11,9 +11,10 @@ export const sh = (x) => parseUnits(String(x), 18)
 const chain = { id: 31337, name: 'local', nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 }, rpcUrls: { default: { http: [] } } }
 export const pub = createPublicClient({ chain, transport: custom(provider) })
 
+export let KEEPER
 export async function setup() {
   await provider.request({ method: 'hardhat_reset', params: [] })
-  const [bot, personal, alice, bob, carol] = await provider.request({ method: 'eth_accounts' })
+  const [bot, personal, alice, bob, carol, keeper] = await provider.request({ method: 'eth_accounts' })
   const w = (a) => createWalletClient({ account: a, chain, transport: custom(provider) })
   const deploy = async (name, args) => {
     const { abi, bytecode } = art(name)
@@ -21,8 +22,9 @@ export async function setup() {
     const r = await pub.waitForTransactionReceipt({ hash })
     return r.contractAddress
   }
+  KEEPER = keeper
   const usdt = await deploy('MockUSDT', [])
-  const vault = await deploy('FundVault', [usdt, bot, bot, personal, personal])
+  const vault = await deploy('FundVault', [usdt, bot, bot, keeper, personal, personal])
   const V = art('FundVault').abi, U = art('MockUSDT').abi
   const send = async (from, address, abi, functionName, args = []) => {
     // dry-run first, so a revert reports the contract's error name
@@ -47,5 +49,5 @@ export async function setup() {
     throw new Error(`expected a revert${name ? ' (' + name + ')' : ''}`)
   }
   const warp = async (s) => { await provider.request({ method: 'evm_increaseTime', params: [s] }); await provider.request({ method: 'evm_mine', params: [] }) }
-  return { bot, personal, alice, bob, carol, usdt, vault, v, u, read, bal, fails, warp }
+  return { bot, personal, alice, bob, carol, keeper, usdt, vault, v, u, read, bal, fails, warp }
 }
