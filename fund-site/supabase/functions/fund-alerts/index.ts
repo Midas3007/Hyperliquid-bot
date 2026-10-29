@@ -1,13 +1,16 @@
-// Telegram alerts for the fund, run by the database every 10 minutes (pg_cron).
-//   - Linking: the first private chat that sends /start to the Telegram bot gets the alerts (TELEGRAM_BOT_TOKEN,
-//     an Edge Function secret, comes from @BotFather).
-//   - Heartbeat: the Kiyoshi bot posts {heartbeat: {message, signature}} every few minutes, signed by the bot
-//     wallet (the vault's treasury), so nobody can fake it.
-//   - Checks: bot silent or erroring, share price down sharply, settlement missed or waiting, keeper errors or
-//     low on CELO, fund paused; and a short daily summary after the settlement.
-// Each alert is sent once when it starts, reminded every 6 hours, and followed by an "OK again" message.
+// Telegram alerts and commands for the fund. Three kinds of request reach it:
+//   - The database's schedule (pg_cron, every 10 minutes): runs the checks below, and makes sure Telegram
+//     delivers chat messages here (webhook) with the command menu set.
+//   - Telegram, the moment someone messages the bot: carries a secret header derived from TELEGRAM_BOT_TOKEN
+//     (an Edge Function secret from @BotFather). The first private chat that sends /start gets the alerts;
+//     only that chat gets answers. Commands are read-only: nothing here can move money.
+//   - The Kiyoshi bot's heartbeat {heartbeat: {message, signature}}, signed by the bot wallet (the vault's
+//     treasury), so nobody can fake it.
+// Checks: bot silent or erroring, share price down sharply, settlement missed or waiting, keeper errors or low on
+// CELO, fund paused; and a short daily summary after the settlement. Each alert is sent once when it starts,
+// reminded every 6 hours, and followed by an "OK again" message.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
-import { createPublicClient, defineChain, formatEther, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
+import { createPublicClient, defineChain, erc20Abi, formatEther, formatUnits, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
 import { celo } from 'npm:viem@2.21.0/chains'
 
 const SETTLE_HOUR_UTC = 20
@@ -15,6 +18,8 @@ const REMIND_MS = 6 * 3_600_000
 const SILENT_MS = 20 * 60_000
 const PRICE_DROP = 0.05 // share price 5% below its 24-hour high
 const MIN_KEEPER_CELO = 0.1
+const MIN_CHECK_GAP_MS = 2 * 60_000
+const LAGOS_MS = 3_600_000 // UTC+1, for "today"
 const celoSepolia = defineChain({
   id: 11142220, name: 'Celo Sepolia', nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 },
   rpcUrls: { default: { http: ['https://forno.celo-sepolia.celo-testnet.org'] } },
@@ -23,18 +28,52 @@ const NETS: Record<string, any> = {
   mainnet: { chain: celo, rpc: 'https://forno.celo.org', explorer: 'https://celoscan.io' },
   testnet: { chain: celoSepolia, rpc: 'https://forno.celo-sepolia.celo-testnet.org', explorer: 'https://celo-sepolia.blockscout.com' },
 }
-const vaultAbi = parseAbi(['function paused() view returns (bool)', 'function treasury() view returns (address)', 'function queueLengths() view returns (uint256, uint256)'])
+const vaultAbi = parseAbi([
+  'function paused() view returns (bool)', 'function treasury() view returns (address)', 'function operator() view returns (address)',
+  'function queueLengths() view returns (uint256, uint256)', 'function totalPendingDeposits() view returns (uint256)',
+  'function balanceOf(address) view returns (uint256)', 'function sharePrice() view returns (uint256)', 'function nav() view returns (uint256)',
+])
 const SITE = 'https://midas-kiyoshi-fund.vercel.app'
+const COMMANDS = [
+  { command: 'status', description: 'Bot, fund value and keeper at a glance' },
+  { command: 'today', description: 'Trades and trading profit today' },
+  { command: 'queue', description: 'Deposits and withdrawals waiting to settle' },
+  { command: 'keeper', description: 'Keeper gas, last run and last settlement' },
+  { command: 'help', description: 'What this bot does' },
+]
+const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, or the fund is paused. After each daily settlement you get a summary.
+
+Commands (read-only, nothing here moves money):
+/status: bot, fund value and keeper
+/today: trades and profit today (Lagos time)
+/queue: deposits and withdrawals waiting to settle
+/keeper: keeper gas, last run, last settlement
+/help: this message
+
+Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
+
+const usd = (v: bigint) => '$' + Number(formatUnits(v, 6)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const ago = (t?: string | null) => {
+  if (!t) return 'never'
+  const m = Math.round((Date.now() - Date.parse(t)) / 60_000)
+  return m < 60 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`
+}
+async function secretFor(token: string) {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fund-alerts:' + token)))
+  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('').slice(0, 48)
+}
 
 Deno.serve(async (req) => {
   const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
   const reply = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json', ...cors } })
-  const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const SUPA = Deno.env.get('SUPABASE_URL')!
+  const db = createClient(SUPA, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const { data: vc } = await db.from('vault_config').select('*').eq('id', 1).single()
   const net = NETS[vc?.network] ?? NETS.mainnet
   const pub = createPublicClient({ chain: net.chain, transport: http(net.rpc) })
-  const vault = vc?.vault_address as `0x${string}` | undefined
+  const vault = (vc?.vault_address && isAddress(vc.vault_address) ? vc.vault_address : null) as `0x${string}` | null
+  const readV = (fn: string, args: unknown[] = []) => pub.readContract({ address: vault!, abi: vaultAbi, functionName: fn as any, args: args as any }) as Promise<any>
   const body = req.method === 'POST' ? await req.json().catch(() => null) : null
 
   // ---------- heartbeat from the bot ----------
@@ -43,8 +82,8 @@ Deno.serve(async (req) => {
       const { message, signature } = body.heartbeat
       const hb = JSON.parse(String(message))
       if (hb.kind !== 'kiyoshi-heartbeat' || !(Math.abs(Date.now() - Date.parse(hb.at)) < 10 * 60_000)) throw new Error('stale or malformed')
-      if (!vault || !isAddress(vault)) throw new Error('no vault configured')
-      const treasury = await pub.readContract({ address: vault, abi: vaultAbi, functionName: 'treasury' })
+      if (!vault) throw new Error('no vault configured')
+      const treasury = await readV('treasury')
       if (!(await pub.verifyMessage({ address: treasury, message: String(message), signature }).catch(() => false))) throw new Error('not signed by the bot wallet')
       const { data: last } = await db.from('bot_heartbeat').select('at').eq('id', 1).single()
       if (last?.at && Date.parse(hb.at) <= Date.parse(last.at)) throw new Error('replayed')
@@ -60,50 +99,110 @@ Deno.serve(async (req) => {
     const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) })
     return r.json()
   }
+  const secret = await secretFor(token)
   const { data: ac } = await db.from('alert_config').select('*').eq('id', 1).single()
   let chat = ac?.chat_id as number | null
-  // Link the first private chat that sends /start
-  const upd = await tg('getUpdates', { offset: Number(ac?.tg_offset ?? 0), timeout: 0, allowed_updates: ['message'] })
-  if (upd.ok && upd.result.length) {
-    let offset = Number(ac?.tg_offset ?? 0)
-    for (const u of upd.result) {
-      offset = Math.max(offset, u.update_id + 1)
-      const m = u.message
-      if (!m || m.chat?.type !== 'private') continue
-      if (!chat && /^\/start/.test(m.text ?? '')) {
+
+  // A chat message, delivered by Telegram the moment it is sent
+  if (req.headers.get('x-telegram-bot-api-secret-token') !== null) {
+    if (req.headers.get('x-telegram-bot-api-secret-token') !== secret) return new Response('forbidden', { status: 403 })
+    const m = body?.message
+    if (!m || m.chat?.type !== 'private') return reply({ ok: true })
+    const cmd = String(m.text ?? '').trim().split(/[\s@]/)[0].toLowerCase()
+    if (!chat) {
+      if (cmd === '/start') {
         chat = m.chat.id
         await db.from('alert_config').update({ chat_id: chat, chat_name: m.from?.first_name ?? null, linked_at: new Date().toISOString() }).eq('id', 1)
-        await tg('sendMessage', { chat_id: chat, text: `Alerts connected. This chat will get the Midas × Kiyoshi Fund alerts: bot stopped or erroring, share price down sharply, settlement missed, keeper problems, fund paused, and a daily settlement summary.` })
-      } else if (chat && m.chat.id === chat && /^\/status/.test(m.text ?? '')) {
-        await tg('sendMessage', { chat_id: chat, text: await statusText() })
+        await tg('sendMessage', { chat_id: chat, text: `Alerts connected to this chat.\n\n${HELP}` })
       }
+      return reply({ ok: true })
     }
-    await db.from('alert_config').update({ tg_offset: offset }).eq('id', 1)
+    if (m.chat.id !== chat) return reply({ ok: true }) // only the linked chat gets answers
+    let text = ''
+    try {
+      text = cmd === '/status' ? await statusText() : cmd === '/today' ? await todayText() : cmd === '/queue' ? await queueText()
+        : cmd === '/keeper' ? await keeperText() : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
+    } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
+    await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
+    return reply({ ok: true })
   }
-  if (!chat) return reply({ skipped: 'no chat linked yet: send /start to the Telegram bot' })
-  const send = (text: string) => tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
 
   async function statusText() {
     const { data: hb } = await db.from('bot_heartbeat').select('*').eq('id', 1).single()
-    const { data: v } = await db.from('vault_config').select('*').eq('id', 1).single()
-    const { data: h } = await db.from('vault_history').select('nav, price, at').eq('vault_address', v?.vault_address ?? '').order('at', { ascending: false }).limit(1).maybeSingle()
-    const ago = (t?: string | null) => (t ? `${Math.round((Date.now() - Date.parse(t)) / 60_000)} min ago` : 'never')
+    let fund = 'Fund: no vault configured'
+    if (vault) {
+      const [nav, price, paused] = await Promise.all([readV('nav'), readV('sharePrice'), readV('paused')])
+      fund = `Fund: ${usd(nav)} · share price $${Number(formatUnits(price, 6)).toFixed(4)}${paused ? ' · PAUSED' : ''}`
+    }
     return [
-      `Bot: last heartbeat ${ago(hb?.at)}${hb?.pause ? ` · ${hb.pause}` : ''}${hb?.error ? ` · error: ${hb.error}` : ''}`,
-      h ? `Fund: $${Number(h.nav).toFixed(2)} · share price $${Number(h.price).toFixed(4)}` : 'Fund: no value posted yet',
-      `Keeper: ${ago(v?.last_run_at)} · ${v?.last_result ?? ''}`,
+      `Bot: reported ${ago(hb?.at)}${hb?.equity != null ? ` · wallet ~$${Number(hb.equity).toFixed(2)}` : ''}${hb?.pause ? `\n  ${hb.pause}` : ''}${hb?.holding ? '\n  holding leftover inventory' : ''}${hb?.error ? `\n  last error: ${hb.error}` : ''}`,
+      fund,
+      `Keeper: ran ${ago(vc?.last_run_at)} · ${vc?.last_result ?? ''}`,
       SITE,
     ].join('\n')
   }
 
-  // ---------- checks ----------
+  async function todayText() {
+    const r = await fetch(`${SUPA}/functions/v1/trade-stats`, { method: 'POST', headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`, 'Content-Type': 'application/json' }, body: '{}' })
+    const j = await r.json()
+    if (j.error) throw new Error(j.error)
+    const start = Math.floor((Date.now() + LAGOS_MS) / 86_400_000) * 86_400_000 - LAGOS_MS
+    const t = (j.trades ?? []).filter((x: any) => x.t >= start)
+    const profit = t.reduce((a: number, x: any) => a + x.profit, 0)
+    const vol = t.reduce((a: number, x: any) => a + x.size, 0)
+    const wins = t.filter((x: any) => x.profit > 0).length
+    if (!t.length) return 'Today (Lagos time): no trades yet.'
+    const lastT = new Date(t[t.length - 1].t + LAGOS_MS).toISOString().slice(11, 16)
+    return `Today (Lagos time): ${t.length} trade${t.length === 1 ? '' : 's'}, ${wins} profitable (${Math.round((wins / t.length) * 100)}%)\nProfit ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} before gas · traded $${vol.toFixed(2)}\nLast trade ${lastT}`
+  }
+
+  async function queueText() {
+    if (!vault) return 'No vault configured.'
+    const [q, pending, escrow, price, treasury, paused] = await Promise.all([readV('queueLengths'), readV('totalPendingDeposits'), readV('balanceOf', [vault]), readV('sharePrice'), readV('treasury'), readV('paused')])
+    const payouts = (escrow * price) / 10n ** 18n
+    const cash = await pub.readContract({ address: vc.usdt_address as `0x${string}`, abi: erc20Abi, functionName: 'balanceOf', args: [treasury] })
+    const now = new Date(), today = now.toISOString().slice(0, 10)
+    const next = now.getUTCHours() < SETTLE_HOUR_UTC || vc?.last_settle_day !== today ? 'today 20:07 UTC (21:07 Lagos)' : 'tomorrow 20:07 UTC (21:07 Lagos)'
+    if (!q[0] && !q[1]) return `Nothing waiting to settle. Next settlement ${next}.${paused ? '\nThe fund is PAUSED.' : ''}`
+    return [
+      `Waiting to settle: ${q[0]} deposit${q[0] === 1n ? '' : 's'} (${usd(pending)}), ${q[1]} withdrawal${q[1] === 1n ? '' : 's'} (about ${usd(payouts)} before fees)`,
+      `Next settlement ${next}${paused ? ' · the fund is PAUSED, nothing settles until it is unpaused' : ''}`,
+      q[1] ? `Bot wallet USDT ${usd(cash)}${cash + pending < payouts ? ' · not enough for the withdrawals yet' : ' · enough for the withdrawals'}` : '',
+    ].filter(Boolean).join('\n')
+  }
+
+  async function keeperText() {
+    const k = vc?.keeper_address
+    const bal = k && isAddress(k) ? Number(formatEther(await pub.getBalance({ address: k as `0x${string}` }))) : null
+    const op = vault ? await readV('operator') : null
+    return [
+      `Keeper ${k ? `${k.slice(0, 6)}…${k.slice(-4)}` : 'not created'}${bal != null ? ` · ${bal.toFixed(3)} CELO${bal < MIN_KEEPER_CELO ? ' (top it up: send ~0.5 CELO)' : ''}` : ''}`,
+      op && k ? (op.toLowerCase() === k.toLowerCase() ? 'Is the vault operator: yes' : `Is the vault operator: NO (operator is ${op})`) : '',
+      `Last run ${ago(vc?.last_run_at)}: ${vc?.last_result ?? ''}`,
+      `Last daily settlement: ${vc?.last_settle_day ?? 'none yet'} · runs hourly at :07, settles at 20:07 UTC`,
+    ].filter(Boolean).join('\n')
+  }
+
+  // ---------- scheduled run ----------
+  if (ac?.last_check_at && Date.now() - Date.parse(ac.last_check_at) < MIN_CHECK_GAP_MS) return reply({ skipped: 'checked recently' })
+  await db.from('alert_config').update({ last_check_at: new Date().toISOString() }).eq('id', 1)
+  // Make sure Telegram delivers messages here, instantly, with the secret header; and set the "/" menu
+  const hook = `${SUPA}/functions/v1/fund-alerts`
+  const info = await tg('getWebhookInfo', {})
+  if (info.ok && info.result?.url !== hook) {
+    await tg('setWebhook', { url: hook, secret_token: secret, allowed_updates: ['message'] })
+    await tg('setMyCommands', { commands: COMMANDS })
+  }
+  if (!chat) return reply({ skipped: 'no chat linked yet: send /start to the Telegram bot' })
+  const send = (text: string) => tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
+
   const found: Record<string, string | null> = {}
   const now = new Date(), today = now.toISOString().slice(0, 10)
   const { data: hb } = await db.from('bot_heartbeat').select('*').eq('id', 1).single()
   found.bot_silent = hb?.at && Date.now() - Date.parse(hb.at) > SILENT_MS
     ? `The bot has not reported for ${Math.round((Date.now() - Date.parse(hb.at)) / 60_000)} minutes. Check Render → kiyoshi → Logs (is it suspended or crashing?).` : null
   found.bot_error = hb?.error && hb.error_streak >= 3 ? `The bot has failed ${hb.error_streak} cycles in a row: ${hb.error}` : null
-  if (vc?.vault_address) {
+  if (vault) {
     const since = new Date(Date.now() - 24 * 3_600_000).toISOString()
     const { data: rows } = await db.from('vault_history').select('price, at').eq('vault_address', vc.vault_address).gte('at', since).order('at')
     if (rows && rows.length > 1) {
@@ -113,11 +212,11 @@ Deno.serve(async (req) => {
     const res = String(vc.last_result ?? '')
     found.keeper_stale = vc.last_run_at && Date.now() - Date.parse(vc.last_run_at) > 90 * 60_000 ? `The keeper has not run for ${Math.round((Date.now() - Date.parse(vc.last_run_at)) / 60_000)} minutes.` : null
     found.settle_waiting = /settlement waiting/.test(res) ? `Settlement is waiting: ${res.match(/settlement waiting[^·]*/)?.[0]?.trim()}. Let trades close, or add USDT to the bot wallet.` : null
-    found.keeper_error = /vault: |daily limit/.test(res) && !/vault: paused/.test(res) ? `Keeper problem: ${res}` : null
+    // one-off network errors are skipped: a real outage shows up as keeper_stale or settle_missed
+    found.keeper_error = /vault: |daily limit/.test(res) && !/vault: paused|HTTP request failed|timed out|fetch failed/i.test(res) ? `Keeper problem: ${res}` : null
     found.settle_missed = now.getUTCHours() >= SETTLE_HOUR_UTC + 1 && vc.last_settle_day !== today && !found.settle_waiting ? `Today's settlement has not happened yet (due 20:07 UTC). Keeper: ${res || 'no result'}` : null
     try {
-      const v = vc.vault_address as `0x${string}`
-      found.paused = (await pub.readContract({ address: v, abi: vaultAbi, functionName: 'paused' })) ? 'The fund is paused: deposits, redemptions and settlements are stopped.' : null
+      found.paused = (await readV('paused')) ? 'The fund is paused: deposits, redemptions and settlements are stopped.' : null
       if (vc.keeper_address && isAddress(vc.keeper_address)) {
         const bal = Number(formatEther(await pub.getBalance({ address: vc.keeper_address as `0x${string}` })))
         found.keeper_gas = bal < MIN_KEEPER_CELO ? `The keeper wallet has ${bal.toFixed(3)} CELO left. Send it about 0.5 CELO: ${vc.keeper_address}` : null
@@ -142,10 +241,10 @@ Deno.serve(async (req) => {
   }
 
   // Daily summary, once the day's settlement is done
-  if (vc?.last_settle_day === today && ac?.summary_day !== today) {
-    const { data: h } = await db.from('vault_history').select('nav, price').eq('vault_address', vc.vault_address).order('at', { ascending: false }).limit(1).maybeSingle()
+  if (vault && vc?.last_settle_day === today && ac?.summary_day !== today) {
+    const [nav, price] = await Promise.all([readV('nav'), readV('sharePrice')]).catch(() => [null, null])
     const settled = String(vc.last_result ?? '').match(/settled [^·]*/)?.[0]?.trim()
-    await send(`📊 Daily settlement done: ${settled ?? 'nothing was waiting today'}.${h ? `\nFund $${Number(h.nav).toFixed(2)} · share price $${Number(h.price).toFixed(4)}` : ''}\n${SITE}`)
+    await send(`📊 Daily settlement done: ${settled ?? 'nothing was waiting today'}.${nav != null ? `\nFund ${usd(nav)} · share price $${Number(formatUnits(price, 6)).toFixed(4)}` : ''}\n${SITE}`)
     await db.from('alert_config').update({ summary_day: today }).eq('id', 1)
     sent.push('summary')
   }

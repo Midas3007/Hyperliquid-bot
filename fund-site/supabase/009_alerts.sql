@@ -43,3 +43,6 @@ select cron.schedule('fund-alerts', '*/10 * * * *', $cron$
     body := '{}'::jsonb,
     timeout_milliseconds := 60000)
 $cron$);
+
+-- Commands: the scheduled run must not repeat within 2 minutes
+alter table public.alert_config add column if not exists last_check_at timestamptz;

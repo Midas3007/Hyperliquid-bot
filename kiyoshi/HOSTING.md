@@ -53,9 +53,21 @@ The fund's `fund-alerts` function (Supabase) checks every 10 minutes and message
 the bot stops reporting (20+ minutes) or fails 3 cycles in a row, the share price drops 5% below its 24-hour
 high, settlement is waiting or hasn't happened by 21:00 UTC, the keeper errors or hasn't run for 90 minutes, the
 keeper wallet is below 0.1 CELO, or the fund is paused. Each alert comes once, is repeated every 6 hours while it
-lasts, and is followed by "✅ OK again". After each daily settlement you also get a one-line summary. Send
-`/status` to the Telegram bot at any time for a snapshot. The bot on Render reports in every 5 minutes, and signs
-each report with the bot wallet key, so nobody else can fake it.
+lasts, and is followed by "✅ OK again". After each daily settlement you also get a one-line summary. The bot on
+Render reports in every 5 minutes, and signs each report with the bot wallet key, so nobody else can fake it.
+
+Commands. They answer instantly and are read-only (pause, settle and approvals stay on the site and the phone).
+Tap "/" in the chat for the menu:
+
+| Command | Answers with |
+|---|---|
+| `/status` | When the bot last reported (and whether it is paused, holding or erroring), fund value and share price, keeper's last run |
+| `/today` | Today's trades (Lagos time): count, win rate, profit before gas, volume, last trade |
+| `/queue` | Deposits and withdrawals waiting, next settlement time, and whether the bot wallet has enough USDT for the withdrawals |
+| `/keeper` | Keeper gas (CELO), whether it is still the vault operator, last run and last daily settlement |
+| `/help` | What the bot does and the command list |
+
+Only the linked chat gets answers. Messages from anyone else are ignored.
 
 Setup (once):
 1. In Telegram, open **@BotFather**, send `/newbot`, and pick a name and a username ending in `bot`. BotFather
