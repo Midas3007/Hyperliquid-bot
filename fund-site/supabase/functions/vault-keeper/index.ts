@@ -1,5 +1,5 @@
 // Keeper, run by the database every hour (pg_cron). Anyone may call it: it only ever does the right thing, at
-// most once every 50 minutes. The Admin page's "Settle now" posts a message signed by the manager wallet.
+// most once every 20 minutes. The Admin page's "Settle now" posts a message signed by the manager wallet.
 //   1. Off-chain season: records the pool wallet's value (what sync-value does when someone opens the site).
 //   2. On-chain fund (FundVault): posts the treasury's value; once a day after 20:00 UTC it settles the queued
 //      deposits and redemptions, when the bot wallet holds enough USDT to pay the redemptions.
@@ -10,7 +10,7 @@ import { createPublicClient, createWalletClient, defineChain, encodePacked, erc2
 import { generatePrivateKey, privateKeyToAccount } from 'npm:viem@2.21.0/accounts'
 import { celo } from 'npm:viem@2.21.0/chains'
 
-const MIN_GAP_MS = 50 * 60_000
+const MIN_GAP_MS = 20 * 60_000
 const SETTLE_HOUR_UTC = 20
 const LEDGER_QUIET_MS = 5 * 60_000
 const celoSepolia = defineChain({
