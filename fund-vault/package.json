@@ -1,0 +1,24 @@
+{
+  "name": "midas-kiyoshi-fund-vault",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "On-chain fund vault for the Midas × Kiyoshi Fund (Celo): deposit USDT, get shares, settled once a day",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test --test-concurrency=1 test/vault.test.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "vault": "node scripts/vault.mjs",
+    "keeper": "node scripts/keeper.mjs"
+  },
+  "dependencies": {
+    "dotenv": "16.4.5",
+    "viem": "2.21.60"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.1.0",
+    "hardhat": "2.22.17",
+    "solc": "0.8.28"
+  },
+  "engines": { "node": ">=20" }
+}
