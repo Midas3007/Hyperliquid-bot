@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
   const reply = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } })
   const { data: cfg } = await db.from('vault_config').select('*').eq('id', 1).single()
   if (!cfg) return reply({ error: 'vault_config missing' })
-  if (!force && cfg.last_run_at && Date.now() - Date.parse(cfg.last_run_at) < MIN_GAP_MS) return reply({ skipped: 'ran recently' })
+  if (!force && !cfg.settle_now && cfg.last_run_at && Date.now() - Date.parse(cfg.last_run_at) < MIN_GAP_MS) return reply({ skipped: 'ran recently' })
   await db.from('vault_config').update({ last_run_at: new Date().toISOString() }).eq('id', 1)
   const notes: string[] = []
 
@@ -139,7 +139,9 @@ Deno.serve(async (req) => {
     const hash = await wallet.writeContract(request)
     const r = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 })
     if (r.status !== 'success') throw new Error(`${fn} failed: ${hash}`)
-    const [nav, supply, price] = await Promise.all([read('nav'), read('totalSupply'), read('sharePrice')])
+    // read at the receipt's block: a load-balanced RPC can otherwise answer from the block before
+    const at = (fn: string) => pub.readContract({ address: vault, abi: vaultAbi, functionName: fn as any, blockNumber: r.blockNumber }) as Promise<any>
+    const [nav, supply, price] = await Promise.all([at('nav'), at('totalSupply'), at('sharePrice')])
     await db.from('vault_history').insert({ network: cfg.network, vault_address: vault, kind: fn === 'settle' ? 'settle' : 'report', nav: Number(nav) / 1e6, supply: Number(supply) / 1e18, price: Number(price) / 1e6, tx: hash })
     return hash
   }
