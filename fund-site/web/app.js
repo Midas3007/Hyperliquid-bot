@@ -155,16 +155,16 @@ async function loadWallet() {
 }
 
 // ---------- shell ----------
-// Without a connected wallet (or the admin sign-in) only the Overview is open.
+// Without a connected wallet only the Overview is open (the admin sign-in alone does not unlock the tabs).
 const walletConnected = () => !!(window.vaultState?.account && !window.vaultState?.hidden)
-const canEnter = () => walletConnected() || !!state.me?.is_admin
+const canEnter = () => walletConnected()
 function tabName() {
   const t = location.hash.replace('#', '')
   const want = t === 'signin' ? 'admin' : ['dashboard', 'account', 'admin'].includes(t) ? t : 'overview'
   if (t === 'signin') return 'admin' // the admin sign-in form stays reachable at #signin
   return canEnter() ? want : 'overview'
 }
-const adminVisible = () => !!state.me?.is_admin || !!(window.vaultState?.d?.isManager || window.vaultState?.d?.isOwner)
+const adminVisible = () => walletConnected() && (!!state.me?.is_admin || !!(window.vaultState?.d?.isManager || window.vaultState?.d?.isOwner))
 
 function render() {
   const tab = tabName()
