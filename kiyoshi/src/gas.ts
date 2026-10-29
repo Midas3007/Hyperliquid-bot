@@ -1,6 +1,6 @@
 // Midas's addition: keep the bot wallet's gas topped up. When its CELO falls below GAS_TOPUP_BELOW (0.5), it buys
-// GAS_TOPUP_CELO (5) with USDT on Uniswap v3: directly, or through USDm when that is cheaper. Every top-up is capped
-// at GAS_TOPUP_MAX_USD ($10) of USDT, waits at least 6 hours after the previous one, and is skipped while the
+// GAS_TOPUP_CELO (5) with USDT on Uniswap v3: directly, or through USDm when that is cheaper. Every top-up spends at
+// most GAS_TOPUP_MAX_USD ($0.50) of USDT (if 5 CELO costs more, it buys what $0.50 gets), waits at least 6 hours after the previous one, and is skipped while the
 // desk holds leftover inventory or the fund is settling. The USDT spent leaves the fund's value, so its cost is
 // shared by every shareholder in proportion to their shares. The transaction carries the attribution tag like
 // every other one (sendTaggedReceipt).
@@ -8,13 +8,13 @@ import { encodeFunctionData, encodePacked, erc20Abi, formatEther, formatUnits, p
 import { account, pub, sendTaggedReceipt } from './wallet.js'
 import { ensureAllowance } from './swap.js'
 import { TOKENS, UNI } from './config.js'
-import { usdtFor } from './gas-math.js'
+import { topUpSpend, usdtFor } from './gas-math.js'
 
 const CELO: Address = '0x471EcE3750Da237f93B8E339c536989b8978a438' // CELO's ERC-20 interface: the same balance as native gas
 const USDM: Address = '0x765DE816845861e75A25fCA122bb6898B8B1282a'
 const BELOW = parseEther(process.env.GAS_TOPUP_BELOW ?? '0.5')
 const BUY = parseEther(process.env.GAS_TOPUP_CELO ?? '5')
-const MAX_USD = parseUnits(process.env.GAS_TOPUP_MAX_USD ?? '10', 6)
+const MAX_USD = parseUnits(process.env.GAS_TOPUP_MAX_USD ?? '0.5', 6)
 const EVERY_MS = 6 * 3_600_000
 const CHECK_MS = 10 * 60_000
 const SLIPPAGE_BPS = 100n // 1%
@@ -57,8 +57,7 @@ export async function gasTopUp(opts: { canTrade: boolean }): Promise<string | nu
     if (bal >= BELOW || !opts.canTrade || Date.now() - toppedAt < EVERY_MS) return null
     const unit = await bestPath(1_000_000n) // $1
     if (!unit || unit.out === 0n) throw new Error('no Uniswap route from USDT to CELO')
-    const amountIn = usdtFor(BUY, unit.out)
-    if (amountIn > MAX_USD) throw new Error(`5 CELO would cost $${formatUnits(amountIn, 6)}, above the $${formatUnits(MAX_USD, 6)} cap`)
+    const amountIn = topUpSpend(usdtFor(BUY, unit.out), MAX_USD)
     const cash = await pub.readContract({ address: TOKENS.USDT.address, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] })
     if (cash < amountIn) throw new Error(`not enough USDT for gas ($${formatUnits(cash, 6)})`)
     const route = await bestPath(amountIn)
