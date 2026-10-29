@@ -155,17 +155,22 @@ async function loadWallet() {
 }
 
 // ---------- shell ----------
+// Without a connected wallet (or the admin sign-in) only the Overview is open.
+const walletConnected = () => !!(window.vaultState?.account && !window.vaultState?.hidden)
+const canEnter = () => walletConnected() || !!state.me?.is_admin
 function tabName() {
   const t = location.hash.replace('#', '')
-  if (t === 'signin') return 'admin'
-  return ['dashboard', 'account', 'admin'].includes(t) ? t : 'overview'
+  const want = t === 'signin' ? 'admin' : ['dashboard', 'account', 'admin'].includes(t) ? t : 'overview'
+  if (t === 'signin') return 'admin' // the admin sign-in form stays reachable at #signin
+  return canEnter() ? want : 'overview'
 }
-const adminVisible = () => !!state.me?.is_admin || !!(window.vaultState?.d?.isManager || window.vaultState?.d?.isOwner) || tabName() === 'admin'
+const adminVisible = () => !!state.me?.is_admin || !!(window.vaultState?.d?.isManager || window.vaultState?.d?.isOwner)
 
 function render() {
   const tab = tabName()
   state.adminTab = adminVisible()
-  const tabs = [['overview', 'Overview'], ['dashboard', 'Dashboard'], ['account', 'Account'], ...(state.adminTab ? [['admin', 'Admin']] : [])]
+  state.entered = canEnter()
+  const tabs = [['overview', 'Overview'], ...(state.entered ? [['dashboard', 'Dashboard'], ['account', 'Account']] : []), ...(state.adminTab ? [['admin', 'Admin']] : [])]
   const view = { overview: overviewView, dashboard: dashboardView, account: accountView, admin: adminView }[tab]
   $app.innerHTML = `
   <header class="top"><div class="top-in">
@@ -177,7 +182,7 @@ function render() {
     ${state.flash ? `<div class="msg ${state.flash.ok ? 'ok' : 'err'}" style="margin-bottom:16px">${esc(state.flash.text)}</div>` : ''}
     ${state.pub?.error ? '<div class="msg err">The fund data could not be loaded right now. Try again in a minute.</div>' : view()}
     <footer>${DISCLAIMER}
-      <p class="note" style="margin-top:18px">${state.me?.is_admin ? `Admin: ${esc(state.me.username)} · <a href="#" data-action="logout">Sign out</a>` : '<a href="#admin">Admin</a>'}</p></footer>
+      ${state.me?.is_admin ? `<p class="note" style="margin-top:18px">Admin: ${esc(state.me.username)} · <a href="#" data-action="logout">Sign out</a></p>` : ''}</footer>
   </main>`
   state.flash = null
   window.mountVault?.()
@@ -188,7 +193,7 @@ function render() {
 window.onVaultExtras = () => {
   const el = document.getElementById('my-pnl')
   if (el) el.innerHTML = myPnlView()
-  if (adminVisible() !== state.adminTab) render()
+  if (adminVisible() !== state.adminTab || canEnter() !== state.entered) render()
 }
 
 function stat(label, value, sub, cls = '', hero = false) {
@@ -218,7 +223,7 @@ function overviewView() {
         <div class="sub">${hero.sub}</div>
       </div>
       <div class="row" style="margin-top:18px">
-        <button class="btn" data-tab="dashboard">Join with your wallet</button>
+        ${walletConnected() ? '<button class="btn" data-tab="dashboard">Open your dashboard</button>' : '<button class="btn" data-vault="connect">Join with your wallet</button>'}
         <button class="btn plain" data-action="scroll" data-to="how">How it works</button>
       </div>
     </section>
@@ -259,7 +264,7 @@ function overviewView() {
     <div class="card hero join">
       <div><div class="label">Season ${P.season} · ${open} of ${P.total_slots} slots open</div>
         <p class="note" style="font-size:15px;color:var(--white)">Connect your wallet, send the manager your address to be approved, then deposit. Slots are limited.</p></div>
-      <button class="btn" data-tab="dashboard">Connect wallet</button>
+      ${walletConnected() ? '<button class="btn" data-tab="dashboard">Open your dashboard</button>' : '<button class="btn" data-vault="connect">Connect wallet</button>'}
     </div>`
 }
 
@@ -859,6 +864,7 @@ document.addEventListener('click', (ev) => {
   if (t.dataset.tab) { ev.preventDefault(); location.hash = t.dataset.tab === 'overview' ? '' : t.dataset.tab; if (t.dataset.tab === 'overview') render(); return }
   const a = t.dataset.action
   if (a === 'logout') { ev.preventDefault(); sb.auth.signOut(); return }
+  if (a === 'close-modal') { t.closest('.modal')?.remove(); return }
   if (a === 'scroll') { document.getElementById(t.dataset.to)?.scrollIntoView({ behavior: 'smooth' }); return }
   if (a === 'range') {
     state.range = t.dataset.range

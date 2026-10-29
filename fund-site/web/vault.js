@@ -53,7 +53,7 @@ async function vInit() {
     await new Promise((r) => setTimeout(r, 300)) // let wallets announce themselves
     const prov = vProv()
     if (prov) {
-      prov.on?.('accountsChanged', (a) => { VS.account = a[0] || null; VS.hidden = false; vRefresh() })
+      prov.on?.('accountsChanged', (a) => { VS.account = a[0] || null; VS.hidden = false; VS.d = null; vRefresh() })
       prov.on?.('chainChanged', (c) => { VS.chainId = Number(c); vRefresh() })
       try {
         let off = false
@@ -432,7 +432,7 @@ document.addEventListener('click', async (ev) => {
   try {
     if (a === 'retry') return vRefresh()
     if (a === 'connect') {
-      if (!vProv()) { if (!location.hash.includes('dashboard')) location.hash = 'dashboard'; return vRender() }
+      if (!vProv()) { modal(`${vNoWallet()}<button class="btn plain" data-action="close-modal">Close</button>`); return }
       await vInit()
       VS.account = (await vProv().request({ method: 'eth_requestAccounts' }))[0]
       VS.chainId = Number(await vProv().request({ method: 'eth_chainId' }))
@@ -444,7 +444,8 @@ document.addEventListener('click', async (ev) => {
       VS.hidden = true; VS.account = null
       try { localStorage.setItem('vault-disconnected', '1') } catch { /* optional */ }
       try { await vProv()?.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] }) } catch { /* not every wallet supports it */ }
-      return vRender()
+      vRender()
+      return window.onVaultExtras?.()
     }
     if (a === 'switch') {
       const net = vnet(), hex = '0x' + net.id.toString(16)
