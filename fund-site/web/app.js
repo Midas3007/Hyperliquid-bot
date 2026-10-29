@@ -245,6 +245,8 @@ async function renderLanding() {
       <div class="card"><div class="label" style="margin-bottom:10px">Leaderboard · Season ${P.season}</div>${boardView(P.leaderboard, 'The season has just started. Join early.')}</div>
     </div>
 
+    <div id="vault-box"></div>
+
     <div class="section-title">How it works</div>
     <div class="grid steps">
       <div class="card"><div class="step">01</div><b>You join</b><p class="note">The manager confirms your slot and you send your contribution in USDT on Celo. You buy units at that moment's unit price.</p></div>
@@ -261,6 +263,7 @@ async function renderLanding() {
     </div>`}
     <footer>${DISCLAIMER}</footer>
   </main>`
+  window.mountVault?.()
 }
 
 function renderLogin(error) {
@@ -315,7 +318,7 @@ function render() {
   </main>`
   state.flash = null
   if (tab === 'admin') wireAdmin()
-  if (tab === 'dashboard') drawPnlCard()
+  if (tab === 'dashboard') { drawPnlCard(); window.mountVault?.() }
 }
 
 function stat(label, value, sub, cls = '', hero = false) {
@@ -340,6 +343,8 @@ function dashboardView() {
     <div class="card">${chart(f.history)}</div>
     <div class="card">${walletCard()}</div>
   </div>
+
+  <div id="vault-box"></div>
 
   <div class="section-title">Trading activity</div>
   <div id="trade-stats">${tradeStatsView()}</div>
