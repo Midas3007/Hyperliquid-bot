@@ -11,6 +11,7 @@ To run it on a new device, follow README.md, but clone this repository instead a
 - `docs/FUND_VAULT_PLAN.md`: the on-chain fund plan.
 - `src/settle-pause.ts` (+ 7 lines in `src/desk.ts`, `test/settle-pause.test.ts`): no new trades from 20:00 UTC
   until the fund's daily settlement is done. Only active when `FUND_SUPABASE_URL` / `FUND_SUPABASE_KEY` are set.
-- `HOSTING.md` and `../render.yaml`: running the bot on Render.
+- `src/heartbeat.ts` (+ 2 lines in `src/desk.ts`): a signed report to the fund's Telegram alerts every 5 minutes.
+- `HOSTING.md` and `../render.yaml`: running the bot on Render, alerts, and updating from Mel's.
 
-To refresh the bot code from Mel's repo later, ask Claude to "update the kiyoshi backup".
+To refresh the bot code from Mel's repo later, ask Claude to "update the bot from Mel's" (see HOSTING.md).

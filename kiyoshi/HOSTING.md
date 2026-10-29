@@ -46,3 +46,39 @@ the phone again unless the Render service is suspended.
 ## Moving back to the phone
 
 Suspend the Render service first, then `cd ~/kiyoshi && LIVE=1 npm run desk` as before.
+
+## Telegram alerts
+
+The fund's `fund-alerts` function (Supabase) checks every 10 minutes and messages you on Telegram when:
+the bot stops reporting (20+ minutes) or fails 3 cycles in a row, the share price drops 5% below its 24-hour
+high, settlement is waiting or hasn't happened by 21:00 UTC, the keeper errors or hasn't run for 90 minutes, the
+keeper wallet is below 0.1 CELO, or the fund is paused. Each alert comes once, is repeated every 6 hours while it
+lasts, and is followed by "✅ OK again". After each daily settlement you also get a one-line summary. Send
+`/status` to the Telegram bot at any time for a snapshot. The bot on Render reports in every 5 minutes, and signs
+each report with the bot wallet key, so nobody else can fake it.
+
+Setup (once):
+1. In Telegram, open **@BotFather**, send `/newbot`, and pick a name and a username ending in `bot`. BotFather
+   replies with a **token** (`123456:ABC…`). Keep it private.
+2. In Supabase: **Edge Functions → Secrets → Add new secret**. Name: `TELEGRAM_BOT_TOKEN`, value: the token.
+   Save.
+3. Open your new bot in Telegram (BotFather sends its link) and tap **Start**. Within 10 minutes it replies
+   "Alerts connected". Only the first chat that sends /start is linked.
+
+To link a different chat later, ask Claude to reset the alert chat.
+
+## Updating the bot from Mel's repository
+
+Mel keeps improving Kiyoshi at https://github.com/MELcodes99/kiyoshi. To bring those changes in, ask Claude to
+"update the bot from Mel's". Claude then:
+1. reads what Mel changed,
+2. merges it into `kiyoshi/` and keeps Midas's additions (settlement pause, heartbeat, these docs),
+3. runs the type check and tests, and
+4. pushes outside 20:00–20:10 UTC.
+
+Render then redeploys by itself: the old copy finishes its cycle, and the new one waits 60 seconds before
+trading. Check the Logs for the `Kiyoshi LIVE` line afterwards. If the new version misbehaves, go to **Manual
+Deploy → Deploy a specific commit** and pick the previous one.
+
+Mel's changes are not pulled in automatically on purpose. This bot trades the fund's money, so each update is
+read before it goes live.

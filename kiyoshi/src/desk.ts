@@ -10,6 +10,7 @@ import { preview } from './textile.js'
 import { uniQuote, uniSwap } from './uniswap.js'
 import { convertStats, handleConvert } from './convert.js'
 import { settlePause } from './settle-pause.js'
+import { heartbeat } from './heartbeat.js'
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { byEdge, candidateSizes, edgeUsd, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip } from './strategy.js'
 
@@ -303,6 +304,7 @@ while (true) {
     status.lastError = { at: new Date().toISOString(), message: msg }
     log({ event: 'error', message: msg })
   }
+  await heartbeat(status)
   inCycle = false
   if (stopping) { console.log('  shutdown requested; exiting cleanly between cycles'); process.exit(0) }
   if (ONCE && !PORT) break
