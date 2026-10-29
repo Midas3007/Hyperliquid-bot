@@ -46,3 +46,7 @@ $cron$);
 
 -- Commands: the scheduled run must not repeat within 2 minutes
 alter table public.alert_config add column if not exists last_check_at timestamptz;
+
+-- Bot gas: CELO balance and automatic top-ups, from the heartbeat
+alter table public.bot_heartbeat add column if not exists celo numeric, add column if not exists last_topup jsonb, add column if not exists gas_error text;
+alter table public.alert_config add column if not exists last_topup_tx text;

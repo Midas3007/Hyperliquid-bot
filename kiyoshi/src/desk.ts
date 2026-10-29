@@ -11,6 +11,7 @@ import { uniQuote, uniSwap } from './uniswap.js'
 import { convertStats, handleConvert } from './convert.js'
 import { settlePause } from './settle-pause.js'
 import { heartbeat } from './heartbeat.js'
+import { gasState, gasTopUp } from './gas.js'
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { byEdge, candidateSizes, edgeUsd, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip } from './strategy.js'
 
@@ -288,6 +289,9 @@ while (true) {
   inCycle = true
   try {
     await cycle()
+    const gas = await gasTopUp({ canTrade: !holdingInventory && !status.settlePause })
+    status.gas = gasState
+    if (gas) { console.log('  ' + gas); log({ event: 'gas', message: gas }) }
     await updateFlows().catch((e: any) => console.error('  flows:', e.shortMessage ?? e.message))
     const net = netDeposits()
     state.baselineEquity = resolveBaseline(net, state.baselineEquity)

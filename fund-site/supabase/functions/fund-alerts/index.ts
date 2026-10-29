@@ -18,6 +18,7 @@ const REMIND_MS = 6 * 3_600_000
 const SILENT_MS = 20 * 60_000
 const PRICE_DROP = 0.05 // share price 5% below its 24-hour high
 const MIN_KEEPER_CELO = 0.1
+const MIN_BOT_CELO = 1 // the bot buys 5 CELO by itself below 0.5
 const MIN_CHECK_GAP_MS = 2 * 60_000
 const LAGOS_MS = 3_600_000 // UTC+1, for "today"
 const celoSepolia = defineChain({
@@ -47,7 +48,7 @@ Commands (read-only, nothing here moves money):
 /status: bot, fund value and keeper
 /today: trades and profit today (Lagos time)
 /queue: deposits and withdrawals waiting to settle
-/keeper: keeper gas, last run, last settlement
+/keeper: keeper gas, last run, last settlement (the bot's own gas is in /status)
 /help: this message
 
 Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
@@ -87,7 +88,8 @@ Deno.serve(async (req) => {
       if (!(await pub.verifyMessage({ address: treasury, message: String(message), signature }).catch(() => false))) throw new Error('not signed by the bot wallet')
       const { data: last } = await db.from('bot_heartbeat').select('at').eq('id', 1).single()
       if (last?.at && Date.parse(hb.at) <= Date.parse(last.at)) throw new Error('replayed')
-      await db.from('bot_heartbeat').update({ at: hb.at, equity: hb.equity ?? null, error: hb.error ?? null, error_streak: hb.errorStreak ?? 0, pause: hb.pause ?? null, holding: !!hb.holding, received_at: new Date().toISOString() }).eq('id', 1)
+      await db.from('bot_heartbeat').update({ at: hb.at, equity: hb.equity ?? null, error: hb.error ?? null, error_streak: hb.errorStreak ?? 0, pause: hb.pause ?? null, holding: !!hb.holding,
+        celo: hb.celo ?? null, last_topup: hb.lastTopUp ?? null, gas_error: hb.gasError ?? null, received_at: new Date().toISOString() }).eq('id', 1)
       return reply({ ok: true })
     } catch (e) { return reply({ error: `heartbeat: ${(e as Error).message.split('\n')[0]}` }) }
   }
@@ -135,7 +137,7 @@ Deno.serve(async (req) => {
       fund = `Fund: ${usd(nav)} · share price $${Number(formatUnits(price, 6)).toFixed(4)}${paused ? ' · PAUSED' : ''}`
     }
     return [
-      `Bot: reported ${ago(hb?.at)}${hb?.equity != null ? ` · wallet ~$${Number(hb.equity).toFixed(2)}` : ''}${hb?.pause ? `\n  ${hb.pause}` : ''}${hb?.holding ? '\n  holding leftover inventory' : ''}${hb?.error ? `\n  last error: ${hb.error}` : ''}`,
+      `Bot: reported ${ago(hb?.at)}${hb?.equity != null ? ` · wallet ~$${Number(hb.equity).toFixed(2)}` : ''}${hb?.celo != null ? ` · gas ${Number(hb.celo).toFixed(2)} CELO` : ''}${hb?.pause ? `\n  ${hb.pause}` : ''}${hb?.holding ? '\n  holding leftover inventory' : ''}${hb?.error ? `\n  last error: ${hb.error}` : ''}`,
       fund,
       `Keeper: ran ${ago(vc?.last_run_at)} · ${vc?.last_result ?? ''}`,
       SITE,
@@ -201,6 +203,8 @@ Deno.serve(async (req) => {
   const { data: hb } = await db.from('bot_heartbeat').select('*').eq('id', 1).single()
   found.bot_silent = hb?.at && Date.now() - Date.parse(hb.at) > SILENT_MS
     ? `The bot has not reported for ${Math.round((Date.now() - Date.parse(hb.at)) / 60_000)} minutes. Check Render → kiyoshi → Logs (is it suspended or crashing?).` : null
+  found.bot_gas = hb?.celo != null && Number(hb.celo) < MIN_BOT_CELO
+    ? `The bot wallet is down to ${Number(hb.celo).toFixed(3)} CELO for gas. Below 0.5 it buys 5 CELO with USDT by itself${hb.gas_error ? `, but the last try failed: ${hb.gas_error}. Send it a few CELO` : ''}.` : null
   found.bot_error = hb?.error && hb.error_streak >= 3 ? `The bot has failed ${hb.error_streak} cycles in a row: ${hb.error}` : null
   if (vault) {
     const since = new Date(Date.now() - 24 * 3_600_000).toISOString()
@@ -238,6 +242,14 @@ Deno.serve(async (req) => {
       await db.from('alert_state').update({ active: false, detail: null }).eq('key', key)
       sent.push(key + ' ok')
     }
+  }
+
+  // A new gas top-up by the bot
+  const t = hb?.last_topup as any
+  if (t?.tx && t.tx !== ac?.last_topup_tx) {
+    await send(`⛽ The bot bought ${Number(t.celo).toFixed(2)} CELO for gas with $${Number(t.usdt).toFixed(2)} of USDT. The cost comes out of the fund's value, shared by all shareholders.\n${net.explorer}/tx/${t.tx}`)
+    await db.from('alert_config').update({ last_topup_tx: t.tx }).eq('id', 1)
+    sent.push('topup')
   }
 
   // Daily summary, once the day's settlement is done

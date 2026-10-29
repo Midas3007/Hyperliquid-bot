@@ -47,12 +47,22 @@ the phone again unless the Render service is suspended.
 
 Suspend the Render service first, then `cd ~/kiyoshi && LIVE=1 npm run desk` as before.
 
+## Gas (CELO) for the bot
+
+The bot pays for every transaction in CELO from the bot wallet. When it drops below **1 CELO** you get a Telegram
+alert. Below **0.5 CELO** the bot buys **5 CELO** with USDT on Uniswap by itself. It spends at most $10 per
+top-up, at most once every 6 hours, and never while it holds leftover inventory or during the settlement pause.
+Telegram tells you each time, with the transaction link. The USDT spent leaves the fund's value (CELO is not
+counted), so the cost is shared by every shareholder in proportion to their shares. `/status` shows the bot's
+gas. Settings (Render → Environment, all optional): `GAS_TOPUP_BELOW` (0.5), `GAS_TOPUP_CELO` (5),
+`GAS_TOPUP_MAX_USD` (10).
+
 ## Telegram alerts
 
 The fund's `fund-alerts` function (Supabase) checks every 10 minutes and messages you on Telegram when:
 the bot stops reporting (20+ minutes) or fails 3 cycles in a row, the share price drops 5% below its 24-hour
 high, settlement is waiting or hasn't happened by 21:00 UTC, the keeper errors or hasn't run for 90 minutes, the
-keeper wallet is below 0.1 CELO, or the fund is paused. Each alert comes once, is repeated every 6 hours while it
+keeper wallet is below 0.1 CELO, the bot wallet is below 1 CELO, or the fund is paused. Each alert comes once, is repeated every 6 hours while it
 lasts, and is followed by "✅ OK again". After each daily settlement you also get a one-line summary. The bot on
 Render reports in every 5 minutes, and signs each report with the bot wallet key, so nobody else can fake it.
 
