@@ -5,7 +5,7 @@ const C = window.FUND_CONFIG
 const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseAnonKey)
 const $app = document.getElementById('app')
 const savedRange = (() => { try { return localStorage.getItem('range') } catch { return null } })()
-const state = { range: ['hour', 'day', 'week'].includes(savedRange) ? savedRange : 'day', session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 }, trades: null }
+const state = { range: ['hour', 'day', 'week'].includes(savedRange) ? savedRange : 'day', session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 }, card: { amounts: true, name: 1 }, trades: null, pub: null }
 
 // ---------- formatting ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -176,9 +176,97 @@ async function loadWallet() {
 }
 
 // ---------- views ----------
+// ---------- public landing page (no login) ----------
+// Signed-out visitors land here; #signin shows the member login.
+function routeOut() {
+  if (location.hash === '#signin') return renderLogin()
+  renderLanding()
+}
+
+async function renderLanding() {
+  if (!state.pub) $app.innerHTML = `<div class="boot">Loading…</div>`
+  try { state.pub = await rpc('public_overview') } catch { if (!state.pub) state.pub = { error: true } }
+  if (state.session || location.hash === '#signin') return
+  const P = state.pub
+  const past = (P.seasons || [])[0]
+  const live = (n(P.unit_price) - 1) * 100
+  const open = Math.max(n(P.total_slots) - n(P.members), 0)
+  const T = past?.trades
+  const best = past?.leaderboard?.[0]
+  const hero = past
+    ? { label: `${esc(past.name)} return`, value: pct(past.return_pct, true), cls: tone(past.return_pct),
+        sub: `${day(past.started_at)} – ${day(past.ended_at)} · every $1 became $${n(past.end_unit_price).toFixed(2)}` }
+    : { label: `Season ${P.season} so far`, value: pct(live, true), cls: tone(live), sub: `since ${day(P.season_started_at)}` }
+  $app.innerHTML = `
+  <header class="top"><div class="top-in">
+    ${brand()}
+    <button class="btn small" data-action="signin">Member sign in</button>
+  </div></header>
+  <main class="landing">
+    ${P.error ? '<div class="msg err">The track record could not be loaded right now. Try again in a minute.</div>' : `
+    <section class="hero-band">
+      <div class="tagline" style="text-align:left;margin:0 0 14px">Private arbitrage pool · Celo</div>
+      <h1>A bot that trades the gaps between stablecoin markets, <span class="pos">around the clock.</span></h1>
+      <div class="hero-num">
+        <div class="label">${hero.label}</div>
+        <div class="giant ${hero.cls}">${hero.value}</div>
+        <div class="sub">${hero.sub}</div>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button class="btn" data-action="join">Join Season ${P.season}</button>
+        <button class="btn plain" data-action="signin">Member sign in</button>
+      </div>
+    </section>
+
+    <video class="promo" src="media/fund-wide.mp4" poster="media/end-card.jpg" controls playsinline preload="none"></video>
+
+    ${past ? `
+    <div class="section-title">${esc(past.name)} · track record</div>
+    <div class="grid">
+      ${stat('Every $1 became', '$' + n(past.end_unit_price).toFixed(2), `${day(past.started_at)} – ${day(past.ended_at)}`, tone(past.return_pct), true)}
+      ${stat('Paid to members', money(past.paid_out), `${past.members_paid_out} of ${past.members} members cashed out`)}
+      ${best ? stat('Best member', pct(best.roi, true), 'return after fees', tone(best.roi)) : ''}
+      ${T ? stat('Trades', String(T.count), `${T.count ? pct((T.wins / T.count) * 100) : '—'} win rate · ${money(T.volume)} traded`) : ''}
+    </div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="card">${chart(past.history, `Unit price · ${esc(past.name)}`)}</div>
+      <div class="card"><div class="label" style="margin-bottom:10px">Leaderboard · ${esc(past.name)}</div>${boardView(past.leaderboard, 'No members that season.')}</div>
+    </div>` : ''}
+
+    <div class="section-title">Season ${P.season} · live</div>
+    <div class="grid">
+      ${stat('Return so far', pct(live, true), `since ${day(P.season_started_at)}`, tone(live), !past)}
+      ${stat('Unit price', '$' + n(P.unit_price).toFixed(4), 'every member buys in at this price')}
+      ${stat('Fund value', money(P.current_value), `live from the pool wallet · ${stamp(P.last_updated)}`)}
+      ${stat('Slots open', `${open} / ${P.total_slots}`, `${P.members} in the fund now`)}
+    </div>
+    <div class="grid two" style="margin-top:12px">
+      <div class="card">${chart(P.history, `Unit price · Season ${P.season}`)}</div>
+      <div class="card"><div class="label" style="margin-bottom:10px">Leaderboard · Season ${P.season}</div>${boardView(P.leaderboard, 'The season has just started. Join early.')}</div>
+    </div>
+
+    <div class="section-title">How it works</div>
+    <div class="grid steps">
+      <div class="card"><div class="step">01</div><b>You join</b><p class="note">The manager confirms your slot and you send your contribution in USDT on Celo. You buy units at that moment's unit price.</p></div>
+      <div class="card"><div class="step">02</div><b>The bot trades</b><p class="note">Kiyoshi buys a stablecoin where it is cheap and sells it where it is dearer, across Uniswap, Mento and RFQ desks, many times a day.</p></div>
+      <div class="card"><div class="step">03</div><b>You watch it live</b><p class="note">Your dashboard reads the pool wallet straight from the blockchain: your value, your P&amp;L by the hour, and every trade.</p></div>
+      <div class="card"><div class="step">04</div><b>You cash out</b><p class="note">Withdraw at the unit price of the day. A ${n(P.fee_pct)}% fee is taken only from profit, never from your deposit, and never on a loss.</p></div>
+    </div>
+
+    <div class="section-title" id="join">Join</div>
+    <div class="card hero join">
+      <div><div class="label">Season ${P.season} · ${open} of ${P.total_slots} slots open</div>
+        <p class="note" style="font-size:15px;color:var(--white)">Slots are limited and filled by invitation. Ask the fund manager for a place; you get a private login once your contribution arrives.</p></div>
+      <button class="btn plain" data-action="signin">Already a member? Sign in</button>
+    </div>`}
+    <footer>${DISCLAIMER}</footer>
+  </main>`
+}
+
 function renderLogin(error) {
   $app.innerHTML = `
   <div class="login"><div class="login-box">
+    <button class="btn plain small" data-action="home" style="margin-bottom:18px">← Track record</button>
     ${brand('Midas × Kiyoshi Fund')}
     <div class="tagline">Private pool · members only</div>
     <div class="card">
@@ -227,6 +315,7 @@ function render() {
   </main>`
   state.flash = null
   if (tab === 'admin') wireAdmin()
+  if (tab === 'dashboard') drawPnlCard()
 }
 
 function stat(label, value, sub, cls = '', hero = false) {
@@ -240,10 +329,10 @@ function dashboardView() {
   const myRet = n(m.capital) > 0 ? (n(m.net_profit) / n(m.capital)) * 100 : 0
   const locked = m.lock_until && m.lock_until > today() && n(f.early_exit_pct) > 0
   return `
-  <div class="section-title">The pool</div>
+  <div class="section-title">The pool · Season ${f.season}</div>
   <div class="grid">
     ${stat('Fund value', money(f.current_value), `<span id="sync-note">Live from pool wallet · ${stamp(f.last_updated)}</span>`, '', true)}
-    ${stat('Unit price', '$' + n(f.unit_price).toFixed(4), `<span class="${tone(growth)}">${pct(growth, true)}</span> since start`)}
+    ${stat('Unit price', '$' + n(f.unit_price).toFixed(4), `<span class="${tone(growth)}">${pct(growth, true)}</span> since Season ${f.season} began ${day(f.season_started_at)}`)}
     ${stat('Fund P&amp;L', money(pnl, true), `${pct(n(f.capital) ? (pnl / n(f.capital)) * 100 : 0, true)} on ${money(f.capital)} invested`, tone(pnl))}
     ${stat('Members', `${f.members} / ${f.total_slots}`, `${Math.max(f.total_slots - f.members, 0)} slots open`)}
   </div>
@@ -260,7 +349,7 @@ function dashboardView() {
     ${stat('Your value', money(m.net_value), `after ${m.fee_exempt ? 'no' : pct(m.fee_pct)} manager fee`, '', true)}
     ${stat('Your profit', money(m.net_profit, true), `${pct(myRet, true)} on your capital`, tone(m.net_profit))}
     ${stat('Your share', pct(n(m.share) * 100), `${units(m.units)} units`)}
-    ${stat('Capital invested', money(m.capital), `Deposited ${money(m.total_deposited)} · paid out ${money(m.total_withdrawn)}`)}
+    ${stat('Capital invested', money(m.capital), capitalNote(m))}
   </div>
   <div class="card" style="margin-top:12px">${barChart('Your P&amp;L', personalBuckets(m, f), 'p', { money: true, cumulative: true, personal: true })}
     <p class="note" style="margin-bottom:0">Your units times the change in unit price, before the manager fee. Deposits and withdrawals are not counted as profit.</p></div>
@@ -289,6 +378,57 @@ function dashboardView() {
           <td class="num">${units(r.units)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">No entries yet</td></tr>'}</tbody></table>
       </div>
     </div>
+  </div>
+
+  <div class="section-title">Leaderboard · Season ${f.season}</div>
+  <div class="grid two">
+    <div class="card"><div class="label" style="margin-bottom:10px">Ranking · return after fees</div>${boardView(f.leaderboard, 'No members have joined this season yet.')}
+      <p class="note" style="margin-bottom:0">Return after fees on what each member put in, counting payouts. Names are shortened; the manager is not ranked.</p></div>
+    <div class="card">
+      <div class="label">Your P&amp;L card</div>
+      <canvas id="pnl-card" width="1080" height="1350" style="width:100%;max-width:360px;height:auto;display:block;margin:12px auto 0;border:1px solid var(--line)" role="img" aria-label="Your P&L card"></canvas>
+      <div class="row" style="justify-content:center;margin-top:12px">
+        <button class="btn" data-action="card-download">Download</button>
+        ${navigator.canShare ? '<button class="btn ghost" data-action="card-share">Share</button>' : ''}
+        <button class="btn plain small" data-action="card-amounts">${state.card.amounts ? 'Hide' : 'Show'} amounts</button>
+        <button class="btn plain small" data-action="card-name">Name: ${CARD_NAMES[state.card.name]}</button>
+      </div>
+    </div>
+  </div>
+  ${(f.seasons || []).map(seasonView).join('')}`
+}
+
+function capitalNote(m) {
+  const parts = [`Deposited ${money(m.total_deposited)}`]
+  if (n(m.carried_over) > 0) parts.push(`carried over ${money(m.carried_over)}`)
+  if (n(m.fees_earned) > 0) parts.push(`fees earned ${money(m.fees_earned)}`)
+  parts.push(`paid out ${money(m.total_withdrawn)}`)
+  return parts.join(' · ')
+}
+
+// Ranked rows: masked names, return after fees, "You" on the viewer's row.
+function boardView(rows, empty) {
+  if (!rows?.length) return `<p class="note">${empty}</p>`
+  return `<div class="board">${rows.map((r, i) => `<div class="board-row ${r.me ? 'me' : ''}">
+    <span class="rank r${i + 1}">${i + 1}</span>
+    <span class="who-name">${esc(r.label)}${r.me ? ' <span class="pill gold">you</span>' : ''}${r.active ? '' : ' <span class="pill">paid out</span>'}</span>
+    <span class="roi ${tone(r.roi)}">${pct(r.roi, true)}</span></div>`).join('')}</div>`
+}
+
+// A finished season: its track record and final leaderboard.
+function seasonView(z) {
+  const T = z.trades
+  return `
+  <div class="section-title">${esc(z.name)} · final</div>
+  <div class="grid">
+    ${stat(`${esc(z.name)} return`, pct(z.return_pct, true), `${day(z.started_at)} – ${day(z.ended_at)} · unit price $1.00 → $${n(z.end_unit_price).toFixed(4)}`, tone(z.return_pct), true)}
+    ${stat('Paid to members', money(z.paid_out), `${z.members_paid_out} of ${z.members} member${z.members === 1 ? '' : 's'} cashed out`)}
+    ${T ? stat('Trades', String(T.count), `${T.count ? pct((T.wins / T.count) * 100) : '—'} win rate · ${money(T.volume)} volume`) : ''}
+    ${T ? stat('Trading profit', money(T.profit, true), 'before gas, from the pool wallet\'s transactions', tone(T.profit)) : ''}
+  </div>
+  <div class="grid two" style="margin-top:12px">
+    <div class="card">${chart(z.history, `Unit price · ${esc(z.name)}`)}</div>
+    <div class="card"><div class="label" style="margin-bottom:10px">Leaderboard · ${esc(z.name)}</div>${boardView(z.leaderboard, 'No members that season.')}</div>
   </div>`
 }
 
@@ -315,7 +455,7 @@ function chart(history, title = 'Unit price · value of $1 at season start') {
     <path d="${area}" fill="url(#g)"/>
     <path d="${line}" fill="none" stroke="#e4c56a" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
   </svg><i class="cursor"></i><i class="dot"></i></div>
-  <div class="row sub" style="justify-content:space-between"><span>${day(new Date(t0).toISOString())}</span><span>low $${lo.toFixed(4)} · high $${hi.toFixed(4)}</span><span>${day(new Date(t1).toISOString())}</span></div>`
+  <div class="row sub" style="justify-content:space-between;flex-wrap:nowrap;gap:6px;font-size:11px"><span>${new Date(t0).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span><span>low $${lo.toFixed(4)} · high $${hi.toFixed(4)}</span><span>${new Date(t1).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</span></div>`
 }
 const lineReadout = (p) => `<b>$${p.v.toFixed(4)}</b> · fund ${money(p.value)} · ${stamp(new Date(p.t).toISOString())}`
 
@@ -514,7 +654,21 @@ function memberOptions(filter = () => true) {
 function adminView() {
   const f = state.fund, A = state.admin
   const holders = A.members.filter((m) => n(m.units) > 0)
+  const growth = (n(f.unit_price) - 1) * 100
   return `
+  <div class="section-title">Season ${f.season}</div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <div><div class="label">Season ${f.season} · since ${day(f.season_started_at)}</div>
+        <div class="big ${tone(growth)}">${pct(growth, true)}</div>
+        <div class="sub">unit price $${n(f.unit_price).toFixed(4)} · ${f.members} holder${f.members === 1 ? '' : 's'}</div></div>
+      <button class="btn ghost" data-action="new-season">End Season ${f.season} · start Season ${f.season + 1}</button>
+    </div>
+    <p class="note" style="margin-bottom:0">Saves this season's results (return, payouts, trades and leaderboard) as Season ${f.season} stats, then restarts the unit price at $1.00.
+      Everyone still in the fund carries their value over; members who pay fees pay the ${pct(f.fee_pct)} fee on this season's profit, which becomes your units.
+      Uses the pool wallet's live value at the moment you confirm.</p>
+  </div>
+
   <div class="section-title">Fund value</div>
   <div class="grid two">
     <div class="card">
@@ -544,12 +698,13 @@ function adminView() {
 
   <div class="section-title">Members</div>
   <div class="table-wrap"><table>
-    <thead><tr><th>Name</th><th>Login</th><th class="num">Units</th><th class="num">Share</th><th class="num">Capital</th><th class="num">Value</th><th class="num">Fee</th><th class="num">After fee</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Login</th><th class="num">Units</th><th class="num">Share</th><th class="num">Capital</th><th class="num">Value</th><th class="num">Fee</th><th class="num">After fee</th><th>Wallet</th><th></th></tr></thead>
     <tbody>${A.members.map((m) => `<tr>
       <td>${esc(m.name)} ${m.is_admin ? '<span class="pill gold">admin</span>' : ''} ${m.fee_exempt ? '<span class="pill">no fee</span>' : ''}</td>
       <td>${m.has_login ? esc(m.username) + (m.disclaimer_accepted_at ? '' : ' <span class="pill">not signed in yet</span>') : '<span class="muted">none</span>'}</td>
       <td class="num">${units(m.units)}</td><td class="num">${pct(n(m.share) * 100)}</td><td class="num">${money(m.capital)}</td>
       <td class="num">${money(m.gross_value)}</td><td class="num">${money(m.fee)}</td><td class="num">${money(m.net_value)}</td>
+      <td><button class="btn plain small" data-action="wallet" data-id="${m.id}" data-name="${esc(m.name)}" data-wallet="${esc(m.wallet || '')}">${m.wallet ? esc(short(m.wallet)) : 'Add'}</button></td>
       <td class="num"><div class="row" style="justify-content:flex-end;flex-wrap:nowrap">
         ${m.has_login
           ? `<button class="btn plain small" data-action="reset" data-id="${m.id}" data-name="${esc(m.name)}">Reset password</button>
@@ -606,7 +761,7 @@ function adminView() {
   <div class="table-wrap"><table>
     <thead><tr><th>#</th><th>Date</th><th>Member</th><th>Type</th><th class="num">Amount</th><th class="num">Fee</th><th class="num">Penalty</th><th class="num">Paid out</th><th class="num">Unit price</th><th class="num">Units</th></tr></thead>
     <tbody>${A.ledger.map((r) => `<tr><td>${r.seq}</td><td>${day(r.date)}</td><td>${esc(r.member)}</td>
-      <td><span class="pill ${r.kind === 'deposit' ? 'gold' : ''}">${r.note && r.note.includes('Fee') ? 'fee \u2192 units' : r.kind}</span></td>
+      <td><span class="pill ${r.kind === 'deposit' ? 'gold' : ''}">${r.note && r.note.startsWith('Carried') ? 'carried over' : r.note && /^Fee|fees$/.test(r.note) ? 'fee \u2192 units' : r.kind}</span></td>
       <td class="num">${money(r.gross)}</td><td class="num">${r.kind === 'withdrawal' ? money(r.fee) : ''}</td>
       <td class="num">${r.kind === 'withdrawal' ? money(r.penalty) : ''}</td><td class="num">${r.kind === 'withdrawal' ? money(r.net_payout) : ''}</td>
       <td class="num">$${price(r.unit_price)}</td><td class="num">${units(r.units)}</td></tr>`).join('') || '<tr><td colspan="10" class="muted">No entries</td></tr>'}</tbody>
@@ -797,6 +952,109 @@ async function drawLeaderboard() {
   spaced('0px')
 }
 
+// ---------- personal P&L card ----------
+const CARD_NAMES = ['Username', 'Masked', 'Hidden']
+function svgImg(svg, color) {
+  return new Promise((resolve) => {
+    const im = new Image()
+    im.onload = () => resolve(im); im.onerror = () => resolve(null)
+    im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg.replace('<svg ', `<svg xmlns="http://www.w3.org/2000/svg" style="color:${color}" `))
+  })
+}
+// The MIDAS × KIY◠SHI wordmark on a canvas, centred on cx with its baseline at y (same proportions as the page CSS).
+async function drawWordmark(ctx, cx, y, size) {
+  const [mi, fi] = await Promise.all([svgImg(M_GLYPH, '#e4c56a'), svgImg(fanSvg('x'), '#e4c56a')])
+  ctx.font = `400 ${size}px "JetBrains Mono", ui-monospace, monospace`
+  if ('letterSpacing' in ctx) ctx.letterSpacing = `${(size * 0.14).toFixed(1)}px`
+  const mw = size * 0.89 * 73 / 88, fw = size * 0.68 * 100 / 60, w = (t) => ctx.measureText(t).width
+  const parts = [['img', mi, mw, 0.89, 0.08, size * 0.1], ['txt', 'IDAS', '#e4c56a', size * 0.4], ['txt', '×', '#8d8d94', size * 0.55],
+    ['txt', 'KIY', '#f5f5f2', 0], ['img', fi, fw, 0.68, 0.07, size * 0.12], ['txt', 'SHI', '#f5f5f2', 0]]
+  const width = parts.reduce((a, p) => a + (p[0] === 'img' ? p[2] + p[5] : w(p[1]) + p[3]), 0)
+  let x = cx - width / 2
+  ctx.textAlign = 'left'
+  for (const p of parts) {
+    if (p[0] === 'img') { if (p[1]) ctx.drawImage(p[1], x, y + p[4] * size - p[3] * size, p[2], p[3] * size); x += p[2] + p[5] }
+    else { ctx.fillStyle = p[2]; ctx.fillText(p[1], x, y); x += w(p[1]) + p[3] }
+  }
+  if ('letterSpacing' in ctx) ctx.letterSpacing = '0px'
+}
+
+async function drawPnlCard() {
+  const cv = document.getElementById('pnl-card')
+  if (!cv) return
+  try {
+    await Promise.all([document.fonts.load('400 46px "JetBrains Mono"'), document.fonts.load('700 150px "JetBrains Mono"'),
+      document.fonts.load('600 54px "Cormorant Garamond"')])
+  } catch { /* fallback fonts */ }
+  const ctx = cv.getContext('2d'), W = 1080, H = 1350, f = state.fund, m = state.me
+  const GOLD = '#c9a84c', GOLD_HI = '#e4c56a', WHITE = '#f5f5f2', GREY = '#8d8d94', LINE = '#2a2a2e'
+  const MONO = '"JetBrains Mono", ui-monospace, monospace', SERIF = '"Cormorant Garamond", Georgia, serif'
+  const spaced = (px) => { if ('letterSpacing' in ctx) ctx.letterSpacing = px }
+  const roi = n(m.capital) > 0 ? (n(m.net_profit) / n(m.capital)) * 100 : 0
+
+  ctx.fillStyle = '#0a0a0b'; ctx.fillRect(0, 0, W, H)
+  const glow = ctx.createRadialGradient(W / 2, 0, 40, W / 2, 0, 950)
+  glow.addColorStop(0, 'rgba(201,168,76,0.24)'); glow.addColorStop(1, 'rgba(201,168,76,0)')
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H)
+  ctx.strokeStyle = GOLD; ctx.lineWidth = 3; ctx.strokeRect(36, 36, W - 72, H - 72)
+  ctx.strokeStyle = 'rgba(201,168,76,0.35)'; ctx.lineWidth = 1; ctx.strokeRect(50, 50, W - 100, H - 100)
+
+  await drawWordmark(ctx, W / 2, 175, 50)
+  ctx.textAlign = 'center'
+  spaced('8px'); ctx.fillStyle = GREY; ctx.font = `500 24px ${MONO}`
+  ctx.fillText(`P&L CARD · SEASON ${f.season}`, W / 2, 250)
+  const who = state.card.name === 0 ? (m.username || m.name) : state.card.name === 1 ? m.label : ''
+  if (who) { spaced('1px'); ctx.fillStyle = WHITE; ctx.font = `600 58px ${SERIF}`; ctx.fillText(who, W / 2, 345) }
+
+  spaced('0px'); ctx.fillStyle = roi >= 0 ? GOLD_HI : WHITE; ctx.font = `700 150px ${MONO}`
+  ctx.fillText(pct(roi, true), W / 2, 530)
+  spaced('5px'); ctx.fillStyle = GREY; ctx.font = `500 26px ${MONO}`
+  ctx.fillText('RETURN AFTER FEES', W / 2, 585)
+
+  // amounts (optional) and details
+  const rows = []
+  if (state.card.amounts) rows.push(['PROFIT', money(m.net_profit, true), n(m.net_profit) >= 0 ? GOLD_HI : WHITE], ['VALUE', money(m.net_value), WHITE])
+  const fundRet = (n(f.unit_price) - 1) * 100
+  rows.push(['FUND THIS SEASON', pct(fundRet, true), fundRet >= 0 ? GOLD_HI : WHITE], ['SINCE', day(m.joined), WHITE])
+  ctx.strokeStyle = LINE; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(140, 640); ctx.lineTo(W - 140, 640); ctx.stroke()
+  rows.forEach(([k, v, c], i) => {
+    const y = 705 + i * 62
+    spaced('4px'); ctx.textAlign = 'left'; ctx.fillStyle = GREY; ctx.font = `500 24px ${MONO}`; ctx.fillText(k, 140, y)
+    spaced('0px'); ctx.textAlign = 'right'; ctx.fillStyle = c; ctx.font = `700 34px ${MONO}`; ctx.fillText(v, W - 140, y)
+  })
+
+  // unit price since the member joined
+  const since = m.joined ? new Date(m.joined + 'T00:00:00').getTime() : 0
+  const pts = (f.history || []).map((h) => ({ t: new Date(h.t).getTime(), v: n(h.unit_price) })).filter((p) => p.t >= since)
+  const top = 705 + rows.length * 62 + 10, bot = 1170
+  if (pts.length > 1 && bot - top > 80) {
+    const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1
+    let lo = Math.min(...pts.map((p) => p.v)), hi = Math.max(...pts.map((p) => p.v)); if (hi - lo < 0.002) { lo -= 0.001; hi += 0.001 }
+    const X = (t) => 140 + ((t - t0) / Math.max(t1 - t0, 1)) * (W - 280), Y = (v) => bot - ((v - lo) / (hi - lo)) * (bot - top - 20)
+    const grad = ctx.createLinearGradient(0, top, 0, bot); grad.addColorStop(0, 'rgba(201,168,76,0.28)'); grad.addColorStop(1, 'rgba(201,168,76,0)')
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.v)) : ctx.moveTo(X(p.t), Y(p.v))))
+    ctx.lineTo(X(t1), bot); ctx.lineTo(X(t0), bot); ctx.closePath(); ctx.fillStyle = grad; ctx.fill()
+    ctx.beginPath(); pts.forEach((p, i) => (i ? ctx.lineTo(X(p.t), Y(p.v)) : ctx.moveTo(X(p.t), Y(p.v))))
+    ctx.strokeStyle = GOLD_HI; ctx.lineWidth = 4; ctx.lineJoin = 'round'; ctx.stroke()
+  }
+
+  ctx.textAlign = 'center'; ctx.fillStyle = GREY; ctx.font = `400 17px ${MONO}`; spaced('1px')
+  ctx.fillText(`As of ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · midas-kiyoshi-fund.vercel.app`, W / 2, 1250)
+  ctx.fillText('Past returns don\u2019t guarantee future returns. Not financial advice.', W / 2, 1278)
+  spaced('0px')
+}
+
+function canvasBlob(id) {
+  return new Promise((resolve) => document.getElementById(id).toBlob(resolve, 'image/png'))
+}
+function saveBlob(blob, name) {
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = name
+  document.body.appendChild(link); link.click(); link.remove()
+  setTimeout(() => URL.revokeObjectURL(link.href), 5000)
+}
+
 function lbBlob() {
   return new Promise((resolve) => document.getElementById('lb').toBlob(resolve, 'image/png'))
 }
@@ -837,6 +1095,16 @@ function loginModal(id, name, reset) {
       <label class="field"><span>${reset ? 'New password' : 'Password'} (8+ characters)</span><input name="password" type="text" minlength="8" required autocomplete="off" value="${genPassword()}"></label>
       <p class="note" style="margin:0">Copy these details and send them to ${esc(name)} privately. Ask them to change the password under Account after signing in.</p>
       <div class="row"><button class="btn" type="submit">${reset ? 'Set password' : 'Create login'}</button><button class="btn plain" type="button" data-action="close-modal">Cancel</button></div>
+    </form>`)
+}
+
+function walletModal(id, name, wallet) {
+  modal(`
+    <div class="label">Wallet · ${esc(name)}</div>
+    <form data-form="wallet" data-id="${id}">
+      <label class="field"><span>Wallet address (leave empty to remove)</span><input name="wallet" value="${esc(wallet)}" placeholder="0x…" autocapitalize="none" spellcheck="false"></label>
+      <p class="note" style="margin:0">Leaderboards show part of this address (0x12ab…9f3c) instead of the member's shortened name.</p>
+      <div class="row"><button class="btn" type="submit">Save</button><button class="btn plain" type="button" data-action="close-modal">Cancel</button></div>
     </form>`)
 }
 
@@ -935,6 +1203,11 @@ document.addEventListener('submit', (ev) => {
       if (error) throw error
       flash('Settings saved.'); return load()
     }
+    if (kind === 'wallet') {
+      await rpc('admin_set_wallet', { p_member: form.dataset.id, p_wallet: d.wallet || null })
+      form.closest('.modal').remove()
+      flash('Wallet saved.'); return load(true)
+    }
     if (kind === 'create-login' || kind === 'reset') {
       const id = form.dataset.id
       if (kind === 'create-login') await adminUsers({ action: 'create_login', member_id: id, username: d.username, password: d.password })
@@ -977,6 +1250,20 @@ document.addEventListener('click', (ev) => {
     })
     return
   }
+  if (a === 'card-download') { canvasBlob('pnl-card').then((b) => saveBlob(b, `midas-kiyoshi-pnl-season-${state.fund.season}.png`)); return }
+  if (a === 'card-share') {
+    canvasBlob('pnl-card').then((blob) => {
+      const file = new File([blob], `midas-kiyoshi-pnl-season-${state.fund.season}.png`, { type: 'image/png' })
+      if (navigator.canShare?.({ files: [file] })) navigator.share({ files: [file] }).catch(() => {})
+    })
+    return
+  }
+  if (a === 'card-amounts') { state.card.amounts = !state.card.amounts; t.textContent = `${state.card.amounts ? 'Hide' : 'Show'} amounts`; drawPnlCard(); return }
+  if (a === 'card-name') { state.card.name = (state.card.name + 1) % CARD_NAMES.length; t.textContent = `Name: ${CARD_NAMES[state.card.name]}`; drawPnlCard(); return }
+  if (a === 'join') { document.getElementById('join')?.scrollIntoView({ behavior: 'smooth' }); return }
+  if (a === 'signin') { location.hash = 'signin'; return }
+  if (a === 'home') { location.hash = ''; return }
+  if (a === 'wallet') return walletModal(t.dataset.id, t.dataset.name, t.dataset.wallet)
   if (a === 'cancel-wd') { state.preview = null; document.getElementById('wd-preview').innerHTML = withdrawPreview(); return }
   busy(t, async () => {
     if (a === 'confirm-wd') {
@@ -984,6 +1271,22 @@ document.addEventListener('click', (ev) => {
       const r = await rpc('admin_withdraw', p.args)
       state.preview = null
       flash(`Withdrawal saved. Now send ${money(r.net_payout)} to ${r.member} within 5 minutes. Your ${money(r.fee)} fee stays in the pool as your units.`); return load(true)
+    }
+    if (a === 'new-season') {
+      const f = state.fund
+      if (!state.trades || state.trades.error) await loadTrades()
+      const T = state.trades && !state.trades.error ? state.trades : null
+      const trades = T ? {
+        count: T.trades.length, wins: T.trades.filter((x) => x.profit > 0).length,
+        volume: Math.round(T.trades.reduce((s, x) => s + x.size, 0) * 2 * 100) / 100,
+        profit: Math.round(T.trades.reduce((s, x) => s + x.profit, 0) * 1e6) / 1e6, since: T.since, until: T.now,
+      } : null
+      const live = await liveValue()
+      const ret = (live / n(f.total_units) - 1) * 100
+      if (!await ask(`End Season ${f.season} at ${pct(ret, true)} (fund value ${money(live)} now) and start Season ${f.season + 1} at $1.00? This cannot be undone.`)) return
+      const r = await rpc('admin_start_season', { p_value: live, p_trades: trades })
+      flash(`Season ${r.ended} closed at ${pct(r.return_pct, true)}. Season ${r.ended + 1} has started at $1.00 with ${money(r.carried_over)} carried over.`)
+      return load(true)
     }
     if (a === 'unlink') {
       if (!await ask(`Remove ${t.dataset.name}'s login? Their money stays in the fund.`)) return
@@ -1006,12 +1309,12 @@ document.addEventListener('click', (ev) => {
   })
 })
 
-window.addEventListener('hashchange', () => { if (state.me) render() })
+window.addEventListener('hashchange', () => { if (state.me) render(); else if (!state.session) routeOut() })
 
 sb.auth.onAuthStateChange((event, session) => {
   const was = state.session?.user?.id
   state.session = session
-  if (!session) { state.me = null; state.fund = null; state.admin = null; renderLogin() }
+  if (!session) { state.me = null; state.fund = null; state.admin = null; routeOut() }
   else if (session.user.id !== was) setTimeout(load, 0)
 })
-sb.auth.getSession().then(({ data }) => { if (!data.session) renderLogin() })
+sb.auth.getSession().then(({ data }) => { if (!data.session) routeOut() })
