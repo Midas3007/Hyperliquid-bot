@@ -7,7 +7,7 @@
 //   npm run vault -- set-max-move 50              queued: how far the value may move in a day, in %
 //   npm run vault -- execute manager              apply a queued change after its 48 hours
 //   npm run vault -- cancel manager               cancel a queued change, immediately
-//   npm run vault -- approve                      let settlements pull payouts from the bot wallet (once)
+//   npm run vault -- approve [1000]               let settlements pull payouts from the bot wallet (optional cap in USDT)
 //   npm run vault -- open live | open 117.28      opening shares for the personal wallet at $1.00 (once)
 //   npm run vault -- allow 0x… | disallow 0x…     who may deposit (the manager can also do this on the site)
 //   npm run vault -- limits 5000 1                deposit cap and minimum deposit, in USDT
@@ -85,9 +85,12 @@ try {
     if (!(a1 in CHANGES)) throw new Error(`Say which change: ${NAMES.join(', ')}`)
     await act(`${cmd === 'execute' ? 'Apply' : 'Cancel'} the queued ${a1} change.`, cmd === 'execute' ? 'executeChange' : 'cancelChange', [CHANGES[a1]])
   } else if (cmd === 'approve') {
-    console.log(`\nApprove the vault to pull USDT from the bot wallet, only to pay members' redemptions at settlement.`)
+    // approve 1000 = at most $1,000 of payouts can be pulled before you approve again (limits the damage if the
+    // keeper were ever misused); approve with no amount = unlimited
+    const amount = a1 ? usd(a1) : maxUint256
+    console.log(`\nApprove the vault to pull ${a1 ? fmtUsd(amount) : 'unlimited'} USDT from the bot wallet, only to pay members' redemptions at settlement.`)
     if (await confirm('Send it?')) {
-      const hash = await send(net, dep.usdt, erc20Abi, 'approve', [dep.vault, maxUint256])
+      const hash = await send(net, dep.usdt, erc20Abi, 'approve', [dep.vault, amount])
       console.log(`Done: ${net.explorer}/tx/${hash}`)
     }
   } else if (cmd === 'open') {

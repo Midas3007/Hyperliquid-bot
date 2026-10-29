@@ -154,7 +154,8 @@ Deno.serve(async (req) => {
       : await pub.readContract({ address: usdt, abi: erc20Abi, functionName: 'balanceOf', args: [treasury] })
     const [nav, q, supply] = await Promise.all([read('nav'), read('queueLengths'), read('totalSupply')])
     const now = new Date(), today = now.toISOString().slice(0, 10)
-    const due = now.getUTCHours() >= SETTLE_HOUR_UTC && cfg.last_settle_day !== today
+    // settle_now: a one-time early settlement the admin asks for (e.g. to test); cleared once used
+    const due = (now.getUTCHours() >= SETTLE_HOUR_UTC && cfg.last_settle_day !== today) || cfg.settle_now === true
     if (due && (q[0] > 0n || q[1] > 0n)) {
       const [pendingDeposits, escrow] = await Promise.all([read('totalPendingDeposits'), read('balanceOf', [vault])])
       const payouts = supply > 0n ? escrow * value / supply : 0n
@@ -163,11 +164,11 @@ Deno.serve(async (req) => {
       if (cash < need) notes.push(`settlement waiting: the bot wallet holds ${fmt(cash)} USDT, payouts need about ${fmt(need)}`)
       else {
         await write('settle', value)
-        await db.from('vault_config').update({ last_settle_day: today }).eq('id', 1)
+        await db.from('vault_config').update(cfg.settle_now ? { settle_now: false } : { last_settle_day: today }).eq('id', 1)
         notes.push(`settled ${q[0]} deposit(s), ${q[1]} redemption(s) at ${fmt(value)}`)
       }
     } else {
-      if (due) await db.from('vault_config').update({ last_settle_day: today }).eq('id', 1)
+      if (due) await db.from('vault_config').update(cfg.settle_now ? { settle_now: false } : { last_settle_day: today }).eq('id', 1)
       const diff = value > nav ? value - nav : nav - value
       if (supply > 0n && diff >= 10_000n) { // at least one cent
         await write('reportValue', value)

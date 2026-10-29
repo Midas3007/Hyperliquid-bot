@@ -96,3 +96,6 @@ select cron.schedule('fund-vault-keeper', '7 * * * *', $cron$
     headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJtdWRvdGl1YWZ4cmh6a3FpaHliIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NjcxNDcsImV4cCI6MjEwODU0MzE0N30.xipuPyy0y78Jc3CrR5OmncD7FWT0NsPgiroorQRpnAA"}'::jsonb,
     body := '{}'::jsonb)
 $cron$);
+
+-- One-time early settlement (the keeper clears it after use).
+alter table public.vault_config add column if not exists settle_now boolean not null default false;
