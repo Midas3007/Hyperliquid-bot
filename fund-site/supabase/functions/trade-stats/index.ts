@@ -9,7 +9,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 const EXPLORER = 'https://celo.blockscout.com/api'
 const USDT = '0x48065fbbe25f71c9282ddf5e1cd6d6a887483d5e'
 const CACHE_MS = 60_000
-const MAX_DAYS = 30
+const MAX_DAYS = 90 // enough for the dashboard's weekly view
 let cache: { key: string; at: number; body: unknown } | null = null
 
 const cors = {

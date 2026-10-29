@@ -116,3 +116,17 @@ footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px;
   .tabs { order: 3; width: 100%; overflow-x: auto; }
   .card { padding: 14px; }
 }
+
+/* fund wordmark: MIDAS × KIY◠SHI */
+.wordmark { font-family: 'JetBrains Mono', var(--mono), monospace; font-weight: 400; font-size: 19px; letter-spacing: .14em; color: var(--white); white-space: nowrap; display: flex; align-items: baseline; gap: 0; }
+.wordmark .wm-gold { color: var(--gold-hi); }
+.wordmark .wm-x { color: var(--grey); margin: 0 .55em 0 .4em; font-weight: 300; }
+.wm-m { height: .89em; width: auto; vertical-align: -.08em; margin-right: .1em; }
+.wm-o { height: .68em; width: auto; vertical-align: -.07em; color: var(--gold-hi); margin: 0 .12em 0 0; }
+@media (max-width: 560px) { .wordmark { font-size: 14px; letter-spacing: .1em; } }
+/* hourly / daily / weekly toggle */
+.seg { display: inline-flex; border: 1px solid var(--line); }
+.seg button { background: none; border: 0; color: var(--grey-2); padding: 5px 10px; font-family: var(--mono); font-size: 11px; letter-spacing: .08em; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { color: var(--black); background: var(--gold-hi); }
+.chart-head { flex-wrap: wrap; gap: 8px; }

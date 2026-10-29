@@ -4,7 +4,8 @@
 const C = window.FUND_CONFIG
 const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseAnonKey)
 const $app = document.getElementById('app')
-const state = { session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 }, trades: null }
+const savedRange = (() => { try { return localStorage.getItem('range') } catch { return null } })()
+const state = { range: ['hour', 'day', 'week'].includes(savedRange) ? savedRange : 'day', session: null, me: null, fund: null, admin: null, wallet: null, preview: null, flash: null, lb: { caption: 0, names: 0 }, trades: null }
 
 // ---------- formatting ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
@@ -27,14 +28,36 @@ const today = () => new Date().toISOString().slice(0, 10)
 const short = (a) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '')
 const errText = (e) => (e?.message || String(e)).replace(/^.*?ERROR:\s*/, '')
 
-const LOGO = `<svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
-  <circle cx="16" cy="16" r="14.5" fill="none" stroke="#c9a84c" stroke-width="1.2"/>
-  <path d="M9 22V10l7 8 7-8v12" fill="none" stroke="#e4c56a" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
-</svg>`
-const brand = (name) => {
-  const [a, b] = String(name || 'Midas × Kiyoshi Fund').split('×')
-  return `<div class="brand">${LOGO}<div class="brand-name">${esc(a)}${b !== undefined ? `<b>×</b>${esc(b)}` : ''}</div></div>`
+// ---------- the fund mark (from the promo video) ----------
+// MIDAS × KIY◠SHI in JetBrains Mono: the M is a 巾-style kanji built from four tapered fan blades, the O is
+// Kiyoshi's fan in gold. Both are drawn as SVG so they stay sharp at any size.
+function taper(ax, ay, bx, by, wa, wb) { // a long truncated triangle: narrow end at a, wide end at b
+  const len = Math.hypot(bx - ax, by - ay) || 1, nx = -(by - ay) / len, ny = (bx - ax) / len
+  return [[ax + nx * wa / 2, ay + ny * wa / 2], [bx + nx * wb / 2, by + ny * wb / 2], [bx - nx * wb / 2, by - ny * wb / 2], [ax - nx * wa / 2, ay - ny * wa / 2]]
+    .map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(' ')
 }
+const M_GLYPH = (() => {
+  const w = 69, h = 72, P = (u, v) => [w * u, h * v] // cap height 72 units, baseline at y = 72
+  const strokes = [[P(.20, .24), P(.05, 1.02)], [P(.86, .24), P(.14, .24)], [P(.5, 1.06), P(.5, -.08)], [P(.86, 1.0), P(.86, .20)]]
+  const polys = strokes.map(([[ax, ay], [bx, by]]) => `<polygon points="${taper(ax, ay, bx, by, 5, 17)}"/>`).join('')
+  return `<svg class="wm-m" viewBox="-2 -8 73 88" aria-hidden="true"><g fill="currentColor">${polys}</g></svg>`
+})()
+function fanSvg(cls) {
+  const cx = 50, cy = 50, r = 48, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93, N = 13, w = (A1 - A0) / N, gap = .011, pt = (a, rr) => `${(cx + Math.cos(a) * rr).toFixed(2)},${(cy + Math.sin(a) * rr).toFixed(2)}`
+  let blades = ''
+  for (let i = 0; i < N; i++) { const s = A0 + i * w + gap, e = A0 + (i + 1) * w - gap; blades += `<polygon points="${pt(s, r * .06)} ${pt(s, r)} ${pt(e, r)} ${pt(e, r * .06)}"/>` }
+  const ha = A0 + (A1 - A0) * .82, hx = cx + Math.cos(ha) * r * .76, hy = cy + Math.sin(ha) * r * .76
+  let low = ''
+  const lr = r * .13, ly = cy + r * .03
+  for (let i = 0; i < 6; i++) {
+    const s = Math.PI * (.12 + .76 * i / 6) + .04, e = Math.PI * (.12 + .76 * (i + 1) / 6) - .04, q = (a, rr) => `${(cx + Math.cos(a) * rr).toFixed(2)},${(ly + Math.sin(a) * rr).toFixed(2)}`
+    low += `<polygon points="${q(s, lr * .35)} ${q(s, lr)} ${q(e, lr)} ${q(e, lr * .35)}"/>`
+  }
+  const id = 'fh' + Math.random().toString(36).slice(2, 7)
+  return `<svg class="${cls}" viewBox="0 0 100 60" aria-hidden="true"><defs><mask id="${id}"><rect width="100" height="60" fill="#fff"/><circle cx="${hx.toFixed(2)}" cy="${hy.toFixed(2)}" r="${(r * .075).toFixed(2)}" fill="#000"/></mask></defs>
+    <g fill="currentColor"><g mask="url(#${id})">${blades}</g>${low}<circle cx="${cx}" cy="${ly}" r="${(lr * .3).toFixed(2)}" fill="none" stroke="currentColor" stroke-width="${(lr * .14).toFixed(2)}"/></g></svg>`
+}
+const brand = () => `<div class="brand wordmark" role="img" aria-label="Midas × Kiyoshi Fund"><span class="wm-gold">${M_GLYPH}IDAS</span><span class="wm-x">×</span><span>KIY${fanSvg('wm-o')}SHI</span></div>`
 
 // ---------- disclaimer ----------
 const DISCLAIMER = `
@@ -193,7 +216,7 @@ function render() {
   const tabs = [['dashboard', 'Dashboard'], ...(state.me.is_admin ? [['admin', 'Admin']] : []), ['account', 'Account']]
   $app.innerHTML = `
   <header class="top"><div class="top-in">
-    ${brand(state.fund.fund_name)}
+    ${brand()}
     <nav class="tabs">${tabs.map(([k, v]) => `<button class="tab ${k === tab ? 'on' : ''}" data-tab="${k}">${v}</button>`).join('')}</nav>
     <div class="who"><span>${esc(state.me.username || state.me.name)}</span><button class="btn plain small" data-action="logout">Sign out</button></div>
   </div></header>
@@ -239,6 +262,8 @@ function dashboardView() {
     ${stat('Your share', pct(n(m.share) * 100), `${units(m.units)} units`)}
     ${stat('Capital invested', money(m.capital), `Deposited ${money(m.total_deposited)} · paid out ${money(m.total_withdrawn)}`)}
   </div>
+  <div class="card" style="margin-top:12px">${barChart('Your P&amp;L', personalBuckets(m, f), 'p', { money: true, cumulative: true })}
+    <p class="note" style="margin-bottom:0">Your units times the change in unit price, before the manager fee. Deposits and withdrawals are not counted as profit.</p></div>
   <div class="grid two" style="margin-top:12px">
     <div class="card">
       <div class="label">How your value is worked out</div>
@@ -300,42 +325,92 @@ function tradeStatsView() {
   const memberProfit = f.members > 0 ? (n(f.current_value) - n(f.capital) - n(f.fees_accrued)) / f.members : 0
   const sinceLabel = day(new Date(T.since).toISOString())
 
-  // last 24 hours, bucketed by the viewer's local hour
-  const hourMs = 3_600_000
-  const endHour = Math.floor(T.now / hourMs) * hourMs
-  const buckets = Array.from({ length: 24 }, (_, i) => ({ start: endHour - (23 - i) * hourMs, n: 0, p: 0 }))
-  for (const x of trades) {
-    const b = buckets[23 - Math.floor((endHour - Math.floor(x.t / hourMs) * hourMs) / hourMs)]
-    if (b) { b.n++; b.p += x.profit }
-  }
-  const best = buckets.reduce((a, b) => (b.p > a.p ? b : a), buckets[0])
-  const hourLabel = (ms) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-
-  const W = 600, H = 160, pad = 4, bw = (W - pad * 2) / 24
-  const maxP = Math.max(0.01, ...buckets.map((b) => Math.abs(b.p)))
-  const bars = buckets.map((b, i) => {
-    const h = Math.max(b.n ? 2 : 0, (Math.abs(b.p) / maxP) * (H - 20))
-    const x = pad + i * bw + 2
-    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${(bw - 4).toFixed(1)}" height="${h.toFixed(1)}" fill="${b.p >= 0 ? '#e4c56a' : '#8d8d94'}" rx="1"><title>${hourLabel(b.start)} \u00b7 ${b.n} trade${b.n === 1 ? '' : 's'} \u00b7 ${money(b.p, true)}</title></rect>`
-  }).join('')
-  const ticks = buckets.map((b, i) => (i % 6 === 0 ? `<span style="position:absolute;left:${((i * bw + pad) / W) * 100}%">${hourLabel(b.start)}</span>` : '')).join('')
+  const wins = trades.filter((x) => x.profit > 0).length
+  const volume = trades.reduce((s, x) => s + x.size, 0) * 2 // every trade is a buy and a sell
+  const fundBuckets = bucketize(trades.map((x) => ({ t: x.t, p: x.profit, n: 1 })), state.range, T.now)
 
   return `
   <div class="grid">
-    ${stat('Trades per hour', (trades.length / hours).toFixed(1), `${trades.length} trades since ${sinceLabel}`)}
-    ${stat('Profit per hour', money(total / hours, true), `${money(total, true)} from trading since ${sinceLabel}`, tone(total))}
-    ${stat('Avg profit per trade', trades.length ? money(total / trades.length, true) : '\u2014', trades.length ? `on an average trade of ${money(trades.reduce((s, x) => s + x.size, 0) / trades.length)}` : 'no trades yet', tone(total))}
-    ${stat('Avg profit per member', money(memberProfit, true), `after manager fee \u00b7 ${f.members} member${f.members === 1 ? '' : 's'}`, tone(memberProfit))}
+    ${stat('Win rate', trades.length ? pct((wins / trades.length) * 100) : '—', `${wins} of ${trades.length} trades made a profit`)}
+    ${stat('Traded volume', money(volume), `buys + sells since ${sinceLabel}`)}
+    ${stat('Number of trades', String(trades.length), `${(trades.length / hours).toFixed(1)} per hour on average`)}
+    ${stat('Trading profit', money(total, true), `${money(total / hours, true)} per hour · before gas`, tone(total))}
   </div>
-  <div class="card" style="margin-top:12px">
-    <div class="chart-head"><div class="label">Profit by hour \u00b7 last 24 hours</div>
-      <div class="sub">${best.n ? `Best hour ${hourLabel(best.start)} \u00b7 ${best.n} trades \u00b7 ${money(best.p, true)}` : 'No trades in the last 24 hours'}</div></div>
-    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:160px" role="img" aria-label="Profit per hour for the last 24 hours">
-      <line x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}" stroke="#2a2a2e" vector-effect="non-scaling-stroke"/>${bars}
-    </svg>
-    <div class="sub" style="position:relative;height:16px;margin-top:6px">${ticks}</div>
-    <p class="note" style="margin-bottom:0">Read from the pool wallet's transactions on the Celo blockchain. A trade is one buy and the sale that follows it; profit is the USDT that came back minus the USDT that went out, before gas. Times are in your phone's time zone.</p>
-  </div>`
+  <div class="grid" style="margin-top:12px">
+    ${stat('Avg profit per trade', trades.length ? money(total / trades.length, true) : '—', trades.length ? `on an average trade of ${money(trades.reduce((s, x) => s + x.size, 0) / trades.length)}` : 'no trades yet', tone(total))}
+    ${stat('Avg profit per member', money(memberProfit, true), `after manager fee · ${f.members} member${f.members === 1 ? '' : 's'}`, tone(memberProfit))}
+  </div>
+  <div class="grid two" style="margin-top:12px">
+    <div class="card">${barChart('Fund P&amp;L', fundBuckets, 'p', { money: true, cumulative: true })}</div>
+    <div class="card">${barChart('Number of trades', fundBuckets, 'n', {})}</div>
+  </div>
+  <p class="note">Read from the pool wallet's transactions on the Celo blockchain. A trade is one buy and the sale that follows it; profit is the USDT that came back minus the USDT that went out, before gas. Times are in your phone's time zone.</p>`
+}
+
+// ---------- charts with an hourly / daily / weekly toggle ----------
+const RANGES = { hour: { label: 'Hourly', count: 48, unit: 'hour' }, day: { label: 'Daily', count: 30, unit: 'day' }, week: { label: 'Weekly', count: 12, unit: 'week' } }
+function bucketStart(t, unit) {
+  const d = new Date(t)
+  if (unit === 'hour') { d.setMinutes(0, 0, 0); return d.getTime() }
+  d.setHours(0, 0, 0, 0)
+  if (unit === 'week') d.setDate(d.getDate() - ((d.getDay() + 6) % 7)) // weeks start on Monday
+  return d.getTime()
+}
+function stepBack(t, unit, k) {
+  const d = new Date(t)
+  if (unit === 'hour') d.setHours(d.getHours() - k); else d.setDate(d.getDate() - k * (unit === 'week' ? 7 : 1))
+  return d.getTime()
+}
+// items: { t, p (profit), n (count) } -> the last `count` buckets of the range, oldest first
+function bucketize(items, range, now = Date.now()) {
+  const R = RANGES[range] || RANGES.day, end = bucketStart(now, R.unit)
+  const buckets = Array.from({ length: R.count }, (_, i) => ({ start: stepBack(end, R.unit, R.count - 1 - i), p: 0, n: 0 }))
+  const index = new Map(buckets.map((b, i) => [b.start, i]))
+  for (const it of items) { const i = index.get(bucketStart(it.t, R.unit)); if (i !== undefined) { buckets[i].p += it.p; buckets[i].n += it.n } }
+  return buckets
+}
+function rangeToggle() {
+  return `<div class="seg">${Object.entries(RANGES).map(([k, r]) => `<button class="${k === state.range ? 'on' : ''}" data-action="range" data-range="${k}">${r.label}</button>`).join('')}</div>`
+}
+function bucketLabel(ms, long = true) {
+  const unit = (RANGES[state.range] || RANGES.day).unit, d = new Date(ms)
+  if (unit === 'hour') return d.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+  return (unit === 'week' && long ? 'Week of ' : '') + d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+function barChart(title, buckets, key, opts) {
+  const W = 600, H = 170, pad = 4, bw = (W - pad * 2) / buckets.length
+  const vals = buckets.map((b) => b[key]), total = vals.reduce((a, b) => a + b, 0)
+  const maxV = Math.max(opts.money ? 0.01 : 1, ...vals.map(Math.abs))
+  const fmt = (v) => (opts.money ? money(v, true) : String(v))
+  const bars = buckets.map((b, i) => {
+    const v = b[key], h = Math.max(v ? 2 : 0, (Math.abs(v) / maxV) * (H - 24)), x = pad + i * bw + bw * .15
+    return `<rect x="${x.toFixed(1)}" y="${(H - h).toFixed(1)}" width="${(bw * .7).toFixed(1)}" height="${h.toFixed(1)}" fill="${v >= 0 ? '#e4c56a' : '#8d8d94'}" rx="1"><title>${bucketLabel(b.start)} · ${fmt(v)}${opts.money ? ` · ${b.n} trade${b.n === 1 ? '' : 's'}` : ''}</title></rect>`
+  }).join('')
+  let line = ''
+  if (opts.cumulative) { // running total, scaled to the chart
+    let run = 0; const cum = vals.map((v) => (run += v)), lo = Math.min(0, ...cum), hi = Math.max(0.01, ...cum)
+    const y = (v) => H - 4 - ((v - lo) / (hi - lo || 1)) * (H - 28)
+    line = `<path d="${cum.map((v, i) => `${i ? 'L' : 'M'}${(pad + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="#f4f4f0" stroke-opacity=".55" stroke-width="1.5" vector-effect="non-scaling-stroke"/>`
+  }
+  const every = Math.ceil(buckets.length / 4)
+  const ticks = buckets.map((b, i) => (i % every === 0 ? `<span style="position:absolute;left:${((pad + i * bw) / W) * 100}%;white-space:nowrap">${bucketLabel(b.start, false)}</span>` : '')).join('')
+  return `
+  <div class="chart-head"><div class="label">${title} · ${RANGES[state.range].label.toLowerCase()}</div>${rangeToggle()}</div>
+  <div class="sub" style="margin:-4px 0 8px">${fmt(opts.money ? Math.round(total * 100) / 100 : total)} over the last ${RANGES[state.range].count} ${RANGES[state.range].unit}s${opts.cumulative ? ' · line = running total' : ''}</div>
+  <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:170px" role="img" aria-label="${title}">
+    <line x1="0" x2="${W}" y1="${H - 0.5}" y2="${H - 0.5}" stroke="#2a2a2e" vector-effect="non-scaling-stroke"/>${bars}${line}
+  </svg>
+  <div class="sub" style="position:relative;height:16px;margin-top:6px;overflow:hidden">${ticks}</div>`
+}
+// A member's own P&L per bucket: for each fund value update, the member's units at the time multiplied by the
+// change in unit price. Deposits and withdrawals change units, not P&L, so they are not counted as profit.
+function personalBuckets(m, f) {
+  const hist = (f.history || []).map((h) => ({ t: new Date(h.t).getTime(), price: n(h.unit_price) })).sort((a, b) => a.t - b.t)
+  const rows = (m.ledger || []).map((r) => ({ t: new Date(String(r.date).length === 10 ? r.date + 'T00:00:00' : r.date).getTime(), u: n(r.units) })).sort((a, b) => a.t - b.t)
+  const unitsAt = (t) => rows.reduce((s, r) => (r.t <= t ? s + r.u : s), 0)
+  const items = []
+  for (let i = 1; i < hist.length; i++) items.push({ t: hist[i].t, p: unitsAt(hist[i - 1].t) * (hist[i].price - hist[i - 1].price), n: 0 })
+  return bucketize(items, state.range)
 }
 
 function walletCard() {
@@ -828,6 +903,7 @@ document.addEventListener('click', (ev) => {
   if (t.dataset.tab) { location.hash = t.dataset.tab; return }
   const a = t.dataset.action
   if (a === 'logout') { sb.auth.signOut(); document.querySelectorAll('.modal').forEach((m) => m.remove()); return }
+  if (a === 'range') { state.range = t.dataset.range; try { localStorage.setItem('range', state.range) } catch { /* optional */ } render(); return }
   if (a === 'reload') return load()
   if (a === 'close-modal') return t.closest('.modal').remove()
   if (a === 'copy') { navigator.clipboard?.writeText(t.dataset.value); t.textContent = 'Copied'; return }
