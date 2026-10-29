@@ -247,7 +247,9 @@ function vAdmin() {
         <div><span>Is the vault's operator</span><span>${k.keeper ? (same(k.keeper, d.operator) ? 'yes' : `no: the operator is ${esc(vMask(d.operator))}`) : '—'}</span></div>
         <div><span>Last run</span><span>${k.last_run_at ? stamp(k.last_run_at) : 'never'}</span></div>
       </div>
-      ${k.last_result ? `<p class="note" style="margin-bottom:0">${esc(k.last_result)}</p>` : ''}
+      ${k.last_result ? `<p class="note">${esc(k.last_result)}</p>` : ''}
+      <div class="row" style="margin-top:12px"><button class="btn" data-vault="settle-now" ${VS.busy ? 'disabled' : ''}>Settle now</button></div>
+      <p class="note" style="margin-bottom:0">Settles the ${d.queueLengths[0]} waiting deposit(s) and ${d.queueLengths[1]} redemption(s) now instead of at 20:07 UTC. Use it only when the bot is not in a trade.</p>
     </div>
   </div>
   <div class="grid two" style="margin-top:12px">
@@ -431,6 +433,32 @@ async function vSend(label, fn, args, address = vcfg().address) {
     throw e
   } finally { VS.busy = false; await vRefresh() }
 }
+// Early settlement: the manager signs a short message (no transaction, no gas); the keeper checks it on the server
+async function vSettleNow() {
+  const d = VS.d
+  if (!d.queueLengths[0] && !d.queueLengths[1]) { VS.msg = 'Nothing is waiting to settle.'; return vRender() }
+  if (!(await ask(`Settle ${d.queueLengths[0]} deposit(s) and ${d.queueLengths[1]} redemption(s) now, at the fund's current value? Only do this when the bot is not in a trade.`))) return
+  VS.busy = true; VS.msg = 'Settle now: sign the message in your wallet (it costs nothing)…'; vRender()
+  try {
+    const message = `Midas × Kiyoshi Fund: settle now\nVault: ${vcfg().address}\nTime: ${new Date().toISOString()}`
+    const signature = await vWalletClient().signMessage({ message })
+    VS.msg = 'Settle now: the keeper is settling (about 30 seconds)…'; vRender()
+    const c = window.FUND_CONFIG
+    const r = await fetch(`${c.supabaseUrl}/functions/v1/vault-keeper`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', apikey: c.supabaseAnonKey, Authorization: `Bearer ${c.supabaseAnonKey}` },
+      body: JSON.stringify({ settle: { message, signature } }),
+    })
+    const j = await r.json().catch(() => ({}))
+    VS.msg = j.error || (j.notes || []).filter((n) => !n.startsWith('season')).join(' · ') || 'Sent.'
+  } catch (e) {
+    const m = String(e.shortMessage || e.message || e)
+    VS.msg = /rejected|denied/i.test(m) ? 'Cancelled in the wallet.' : m.split('\n')[0]
+  } finally {
+    VS.busy = false
+    await loadPublic()
+    await vRefresh()
+  }
+}
 const vFail = (e) => { if (!e?.shown) VS.msg = e?.message || String(e); vRender() }
 
 document.addEventListener('click', async (ev) => {
@@ -478,6 +506,7 @@ document.addEventListener('click', async (ev) => {
     if (a === 'unpause') return await vSend('Unpause the fund', 'setPaused', [false])
     if (a === 'exec') return await vSend(`Apply the ${CHANGE_NAMES[b.dataset.i].toLowerCase()} change`, 'executeChange', [Number(b.dataset.i)])
     if (a === 'cancel-change') return await vSend(`Cancel the ${CHANGE_NAMES[b.dataset.i].toLowerCase()} change`, 'cancelChange', [Number(b.dataset.i)])
+    if (a === 'settle-now') return await vSettleNow()
     if (a === 'approve' || a === 'remove') return await vSend(`${a === 'approve' ? 'Approve' : 'Remove'} ${vMask(b.dataset.who)}`, 'setAllowed', [b.dataset.who, a === 'approve'])
   } catch (e) { vFail(e) }
 })

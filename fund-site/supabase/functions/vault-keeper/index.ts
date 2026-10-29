@@ -1,5 +1,5 @@
 // Keeper, run by the database every hour (pg_cron). Anyone may call it: it only ever does the right thing, at
-// most once every 50 minutes.
+// most once every 50 minutes. The Admin page's "Settle now" posts a message signed by the manager wallet.
 //   1. Off-chain season: records the pool wallet's value (what sync-value does when someone opens the site).
 //   2. On-chain fund (FundVault): posts the treasury's value; once a day after 20:00 UTC it settles the queued
 //      deposits and redemptions, when the bot wallet holds enough USDT to pay the redemptions.
@@ -81,7 +81,7 @@ async function walletValue(wallet: `0x${string}`) {
 
 const vaultAbi = parseAbi([
   'function nav() view returns (uint256)', 'function totalSupply() view returns (uint256)', 'function paused() view returns (bool)',
-  'function operator() view returns (address)', 'function treasury() view returns (address)', 'function totalPendingDeposits() view returns (uint256)',
+  'function operator() view returns (address)', 'function manager() view returns (address)', 'function owner() view returns (address)', 'function treasury() view returns (address)', 'function totalPendingDeposits() view returns (uint256)',
   'function queueLengths() view returns (uint256, uint256)', 'function balanceOf(address) view returns (uint256)', 'function sharePrice() view returns (uint256)',
   'function reportValue(uint256 newNav)', 'function settle(uint256 newNav)',
 ])
@@ -90,9 +90,30 @@ const fmt = (v: bigint) => '$' + Number(formatUnits(v, 6)).toFixed(2)
 Deno.serve(async (req) => {
   const force = new URL(req.url).searchParams.get('force') === '1'
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const reply = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } })
+  const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
+  const reply = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json', ...cors } })
   const { data: cfg } = await db.from('vault_config').select('*').eq('id', 1).single()
   if (!cfg) return reply({ error: 'vault_config missing' })
+  // "Settle now" from the site's Admin page: a message signed by the vault's manager or owner, at most 10 minutes old
+  const ask = req.method === 'POST' ? await req.json().catch(() => null) : null
+  if (ask?.settle) {
+    try {
+      const { message, signature } = ask.settle
+      const m = /^Midas × Kiyoshi Fund: settle now\nVault: (0x[0-9a-fA-F]{40})\nTime: (\S+)$/.exec(String(message))
+      if (!m || m[1].toLowerCase() !== String(cfg.vault_address).toLowerCase()) throw new Error('the request is not for this fund')
+      if (!(Math.abs(Date.now() - Date.parse(m[2])) < 10 * 60_000)) throw new Error('the request is too old; try again')
+      const net = NETS[cfg.network]
+      const pub = createPublicClient({ chain: net.chain, transport: http(net.rpc) })
+      const vault = cfg.vault_address as `0x${string}`
+      const [manager, owner] = await Promise.all(['manager', 'owner'].map((f) => pub.readContract({ address: vault, abi: vaultAbi, functionName: f as any }) as Promise<`0x${string}`>))
+      let by = ''
+      for (const a of [manager, owner]) if (!by && await pub.verifyMessage({ address: a, message: String(message), signature }).catch(() => false)) by = a
+      if (!by) throw new Error('only the fund manager or the bot wallet can do this')
+      await db.from('vault_config').update({ settle_now: true }).eq('id', 1)
+      cfg.settle_now = true
+    } catch (e) { return reply({ error: `settle now: ${(e as Error).message.split('\n')[0]}` }) }
+  }
   if (!force && !cfg.settle_now && cfg.last_run_at && Date.now() - Date.parse(cfg.last_run_at) < MIN_GAP_MS) return reply({ skipped: 'ran recently' })
   await db.from('vault_config').update({ last_run_at: new Date().toISOString() }).eq('id', 1)
   const notes: string[] = []

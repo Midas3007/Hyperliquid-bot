@@ -83,7 +83,7 @@ Open it inside MetaMask or Rabby, then tap **Join with your wallet**.
 |---|---|---|
 | Member | Dashboard | Deposit, redeem, cancel a waiting request, collect a payout |
 | Member | Account | Wallet, history, P&L card (download / share), disconnect |
-| You (personal wallet) | Admin | Pause / unpause, approve or remove wallets, deposit limits, queue a fee change (48 h), holders list, keeper status |
+| You (personal wallet) | Admin | Pause / unpause, **Settle now** (early settlement when the bot is not in a trade), approve or remove wallets, deposit limits, queue a fee change (48 h), holders list, keeper status |
 | You (admin sign-in, bottom of Admin) | Admin | Vault address, fund name, slots, pool wallet |
 
 Automatic: the keeper posts the value every hour (at :07) and settles deposits and redemptions once a day at
