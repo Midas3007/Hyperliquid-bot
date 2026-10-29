@@ -1,0 +1,279 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070707}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// Midas × Kiyoshi Fund — 36 s promo. draw(t) is deterministic so frames can be captured one by one.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1080), H = +(P.get('h') || 1920)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const V = H > W
+const S = Math.min(W, H) / 1080
+const BG = '#070707', WHITE = '#F4F4F0', GREY = '#8C8C88', GOLD = '#D4AF37', GOLD2 = '#F3D77A'
+const STATS = { trips: 216, win: 98, volume: 39073.79, pnl: 197.71 }
+const DUR = 37
+
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const ease = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2 }
+const lerp = (a, b, k) => a + (b - a) * k
+const fade = (t, a, b, f = .6) => clamp((t - a) / f) * clamp((b - t) / f)
+const noise = (x, s) => Math.sin(x * 1.7 + s) * .5 + Math.sin(x * 3.1 + s * 2.3) * .3 + Math.sin(x * 7.3 + s * .7) * .2
+const mix = (c1, c2, k) => { const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16)
+  const ch = (s) => Math.round(lerp((a >> s) & 255, (b >> s) & 255, clamp(k))); return `rgb(${ch(16)},${ch(8)},${ch(0)})` }
+
+function glowLine(pts, color, width, alpha) {
+  g.save(); g.strokeStyle = color; g.lineJoin = g.lineCap = 'round'
+  for (const [w, a] of [[width * 6, .06], [width * 3, .12], [width, 1]]) {
+    g.globalAlpha = alpha * a; g.lineWidth = w; g.beginPath()
+    pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke()
+  }
+  g.restore()
+}
+const FONT = (size, weight = 300, mono) => `${weight} ${size}px ${mono ? '"DejaVu Sans Mono", monospace' : 'Inter, sans-serif'}`
+function text(s, x, y, size, color, alpha = 1, opts = {}) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.fillStyle = color; g.font = FONT(size, opts.weight, opts.mono)
+  g.textAlign = opts.align || 'center'; g.textBaseline = opts.base || 'middle'
+  if (opts.spacing) g.letterSpacing = opts.spacing + 'px'
+  g.fillText(s, x, y); g.restore()
+}
+function caption(s, t, a, b, y, size = 34) {
+  const shown = Math.floor(clamp((t - a) / 1.1) * s.length)
+  text(s.slice(0, Math.max(shown, 0)), W / 2, y, size * S, WHITE, fade(t, a, b, .4) * .92)
+}
+
+// ---------- Kiyoshi's fan (as in the original): ~13 wedge blades from a pivot, a dark hole near the top
+// right, and a small fan below the pivot. p = how far it has unfolded (0 = closed, one thin blade on the left).
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fanBlades(cx, cy, r, p) {
+  const w = (A1 - A0) / NB, gap = .011, q = []
+  for (let i = 0; i < NB; i++) {
+    const gp = gap * Math.min(1, p * 2.2), s = A0 + i * w * p + gp, e = A0 + (i + 1) * w * p - gp + (1 - p) * .03
+    const ri = r * .06
+    q.push([[cx + Math.cos(s) * ri, cy + Math.sin(s) * ri], [cx + Math.cos(s) * r, cy + Math.sin(s) * r],
+            [cx + Math.cos(e) * r, cy + Math.sin(e) * r], [cx + Math.cos(e) * ri, cy + Math.sin(e) * ri]])
+  }
+  return q
+}
+function quad(pts, color, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.fillStyle = color; g.beginPath()
+  pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill(); g.restore()
+}
+// The small fan under the pivot (opening downward) with the pivot ring.
+function lowerFan(cx, cy, r, color, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.translate(cx, cy); g.fillStyle = color
+  const n = 6
+  for (let i = 0; i < n; i++) {
+    const s = Math.PI * (.12 + .76 * i / n) + .04, e = Math.PI * (.12 + .76 * (i + 1) / n) - .04
+    g.beginPath(); g.moveTo(Math.cos(s) * r * .35, Math.sin(s) * r * .35); g.arc(0, 0, r, s, e); g.arc(0, 0, r * .35, e, s, true); g.closePath(); g.fill()
+  }
+  g.strokeStyle = color; g.lineWidth = r * .14; g.beginPath(); g.arc(0, 0, r * .3, 0, Math.PI * 2); g.stroke()
+  g.fillStyle = BG; g.beginPath(); g.arc(0, 0, r * .16, 0, Math.PI * 2); g.fill()
+  g.restore()
+}
+function drawFan(cx, cy, r, p, color, alpha, blades = true) {
+  if (blades) for (const qd of fanBlades(cx, cy, r, p)) quad(qd, color, alpha)
+  if (blades && p > .75) { // the dark hole near the top right
+    const ha = A0 + (A1 - A0) * .82 * p
+    g.save(); g.globalAlpha = alpha * clamp((p - .75) * 6); g.fillStyle = BG
+    g.beginPath(); g.arc(cx + Math.cos(ha) * r * .76, cy + Math.sin(ha) * r * .76, r * .075, 0, Math.PI * 2); g.fill(); g.restore()
+  }
+  lowerFan(cx, cy + r * .03, r * .13, color, alpha)
+}
+
+// ---------- the wordmark in Kiyoshi's monospace: [巾-style M] I D A S  ×  K I Y [fan] S H I ----------
+const CHARS = ['M', 'I', 'D', 'A', 'S', ' ', '×', ' ', 'K', 'I', 'Y', 'O', 'S', 'H', 'I']
+function wordmarkLayout(cy) {
+  // Cell widths in letters: the 巾-style M is a little wider, the fan O is much wider (as in Kiyoshi's mark).
+  const UNITS = CHARS.map((ch, i) => (i === 0 ? 1.15 : i === 11 ? 1.9 : ch === ' ' ? .55 : 1))
+  const layout = (F) => {
+    g.font = FONT(F, 400, 1); const cw = g.measureText('M').width, sp = cw * .2
+    const total = UNITS.reduce((a, u) => a + u * cw, 0) + (CHARS.length - 1) * sp
+    return { cw, sp, total }
+  }
+  let F = (V ? 96 : 108) * S, m = layout(F)
+  if (m.total > W * .9) { F *= (W * .9) / m.total; m = layout(F) }
+  let x = W / 2 - m.total / 2; const xs = [], ws = []
+  UNITS.forEach((u) => { xs.push(x); ws.push(u * m.cw); x += u * m.cw + m.sp })
+  return { F, cw: m.cw, sp: m.sp, xs, ws, base: cy + F * .36, top: cy - F * .37 }
+}
+// The 巾-style M built from fan blades: every piece is a long truncated triangle (narrow end -> wide end),
+// like the blades it came from. MV picks the style (?m=1|2|3):
+//   1 one bold tapered blade per stroke (several blades merge into each)
+//   2 each stroke split into slim tapered blades with hairline gaps, like an open fan
+//   3 like 1, sharper: blades taper almost to a point
+const MV = 1
+function taper([ax, ay], [bx, by], wa, wb) { // narrow end at a, wide end at b
+  const len = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / len, uy = (by - ay) / len, nx = -uy, ny = ux
+  return [[ax + nx * wa / 2, ay + ny * wa / 2], [bx + nx * wb / 2, by + ny * wb / 2], [bx - nx * wb / 2, by - ny * wb / 2], [ax - nx * wa / 2, ay - ny * wa / 2]]
+}
+function mPieces(L) {
+  const x = L.xs[0], w = L.ws[0], top = L.top, bot = L.base, h = bot - top
+  const P2 = (u, v) => [x + w * u, top + h * v]
+  const bold = L.F * (MV === 3 ? .2 : .17), tip = L.F * (MV === 3 ? .012 : .05)
+  // strokes as [narrow end, wide end]: blades taper toward where the fan's pivot was
+  const strokes = [
+    [P2(.20, .24), P2(.05, 1.02)],  // left leg, sweeping out to the bottom left
+    [P2(.86, .24), P2(.14, .24)],   // top bar, wide at the left where it meets the leg
+    [P2(.50, 1.06), P2(.50, -.08)], // centre stroke, wide at the top
+    [P2(.86, 1.0), P2(.86, .20)],   // right leg, wide at the top corner
+  ]
+  const groups = [3, 3, 4, 3] // 13 blades
+  const out = []
+  strokes.forEach(([a, b], si) => {
+    const n = groups[si]
+    if (MV !== 2) { for (let k = 0; k < n; k++) out.push(taper(a, b, tip, bold)); return }
+    // style 2: n slim blades side by side across the stroke, hairline gaps between them
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len
+    const total = L.F * .19, gapw = L.F * .012, bw = (total - gapw * (n - 1)) / n
+    for (let k = 0; k < n; k++) {
+      const off = -total / 2 + bw / 2 + k * (bw + gapw), lenK = 1 - Math.abs(k - (n - 1) / 2) * .08 // middle blades a bit longer
+      const aa = [a[0] + nx * off * .25 + (b[0] - a[0]) * (1 - lenK), a[1] + ny * off * .25 + (b[1] - a[1]) * (1 - lenK)]
+      const bb = [b[0] + nx * off, b[1] + ny * off]
+      out.push(taper(aa, bb, tip * .5, bw))
+    }
+  })
+  return out
+}
+// t0 + 0-0.6 s: Kiyoshi's closed fan appears (white). 0.6-1.4 s it starts to unfold. 1.4-3 s the blades fly
+// into a gold 巾-style M, while the pivot (with its small fan) travels into KIYOSHI and opens as a gold fan O.
+function logoSequence(t, t0, cy) {
+  const L = wordmarkLayout(cy)
+  const fr = (V ? 300 : 260) * S, fcx = W / 2, fcy = cy + fr * .5
+  const appear = clamp((t - t0) / .5), p = .02 + .4 * ease((t - t0 - .5) / .9)
+  const from = fanBlades(fcx, fcy, fr, p), to = mPieces(L)
+  from.forEach((qd, i) => {
+    const k = ease((t - t0 - 1.4 - i * .045) / 1.2)
+    quad(qd.map(([x, y], j) => [lerp(x, to[i][j][0], k), lerp(y, to[i][j][1], k)]), mix(WHITE, GOLD, k), appear)
+  })
+  const kf = ease((t - t0 - 1.6) / 1.3), po = ease((t - t0 - 2.5) / .9)
+  const ox = L.xs[11] + L.ws[11] / 2, oy = L.base - L.F * .04, or = lerp(fr, L.ws[11] * .52, kf)
+  const cx = lerp(fcx, ox, kf), cyy = lerp(fcy, oy, kf), col = mix(WHITE, GOLD, kf)
+  if (po > 0) drawFan(cx, cyy, or, po, col, appear)   // the O opens once it has arrived
+  else lowerFan(cx, cyy + or * .03, or * .13, col, appear)
+  const la = clamp((t - t0 - 2.8) / .8)
+  if (la > 0) {
+    g.save(); g.textBaseline = 'alphabetic'; g.textAlign = 'center'; g.font = FONT(L.F, 400, 1)
+    g.filter = `blur(${((1 - la) * 10 * S).toFixed(1)}px)`; g.globalAlpha = la
+    CHARS.forEach((ch, i) => {
+      if (i === 0 || i === 11 || ch === ' ') return
+      const slide = (1 - la) * (i < 8 ? -40 : 40) * S
+      g.fillStyle = i < 5 ? GOLD : i === 6 ? GREY : WHITE
+      if (i === 6) g.font = FONT(L.F * .8, 300, 1); else g.font = FONT(L.F, 400, 1)
+      g.fillText(ch, L.xs[i] + L.ws[i] / 2 + slide, L.base)
+    })
+    g.restore()
+  }
+  return L
+}
+
+// Cumulative profit: quiet stretches and bursts (gaps open in bursts).
+const BURSTS = [[.05, .04], [.12, .03], [.22, .30], [.27, .12], [.41, .05], [.55, .06], [.63, .22], [.70, .08], [.84, .04], [.93, .06]]
+const TOTAL = BURSTS.reduce((a, b) => a + b[1], 0)
+const curve = (u) => { let y = 0; for (const [at, h] of BURSTS) y += h * ease(clamp((u - at) / .035)); return (y / TOTAL) * .97 + u * .03 }
+
+function draw(t) {
+  g.fillStyle = BG; g.fillRect(0, 0, W, H)
+  const vg = g.createRadialGradient(W / 2, H * .42, 0, W / 2, H * .42, Math.max(W, H) * .7)
+  vg.addColorStop(0, 'rgba(60,52,30,0.22)'); vg.addColorStop(1, 'rgba(0,0,0,0)')
+  g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  const midY = V ? H * .44 : H * .40, capY = V ? H * .62 : H * .74
+
+  // 0-16 s: two markets, the gap, Kiyoshi's fan, trades crossing
+  if (t < 16.5) {
+    const gap = (V ? 120 : 90) * S * (t < 4 ? .2 : t < 8 ? .2 + ease((t - 4) / 2) * .8 : 1 - ease((t - 12) / 4) * .5)
+    const al = fade(t, 0, 16.2, .9)
+    const line = (off, seed) => { const pts = []; for (let i = 0; i <= 120; i++) pts.push([(i / 120) * W, midY + off + noise(i / 18 + t * .35, seed) * 10 * S]); return pts }
+    glowLine(line(-gap, 1), WHITE, 2.2 * S, al * .9); glowLine(line(gap, 4), WHITE, 2.2 * S, al * .9)
+    const la = al * fade(t, 1.5, 16)
+    text('TEXTILE FX', 60 * S, midY - gap - 28 * S, 15 * S, GREY, la, { mono: 1, align: 'left', spacing: 3 })
+    text('UNISWAP V3', 60 * S, midY + gap + 28 * S, 15 * S, GREY, la, { mono: 1, align: 'left', spacing: 3 })
+    const pa = al * fade(t, 5, 16)
+    text('4.9770', W - 60 * S, midY - gap - 28 * S, 22 * S, WHITE, pa, { mono: 1, align: 'right' })
+    text('4.9719', W - 60 * S, midY + gap + 28 * S, 22 * S, WHITE, pa, { mono: 1, align: 'right' })
+    if (t > 8.2 && t < 12.4) { const fa = fade(t, 8.4, 12.2, .5), fr = 170 * S; drawFan(W / 2, midY + gap * .75, fr, ease((t - 8.9) / 1.6), WHITE, fa) }
+    if (t > 12) for (let k = 0; k < 9; k++) {
+      const tt = t - 12 - k * .4; if (tt < 0 || tt > 1.4) continue
+      const p = ease(tt / 1.1), x = W * (.12 + .09 * k), y = midY + gap - p * gap * 2
+      g.save(); g.globalAlpha = al * (1 - clamp((tt - 1.1) / .3)); g.fillStyle = GOLD2; g.shadowColor = GOLD; g.shadowBlur = 18 * S
+      g.beginPath(); g.arc(x, y, 5 * S, 0, Math.PI * 2); g.fill(); g.restore()
+    }
+    caption('Two markets. One currency.', t, .8, 4.3, capY)
+    caption('Sometimes, they disagree.', t, 4.6, 8.2, capY)
+    caption('Kiyoshi lives in the gap.', t, 8.5, 12.1, capY)
+    caption('It buys where it is cheaper, and sells where it is not.', t, 12.3, 16, capY, V ? 30 : 34)
+  }
+
+  // 16-20 s: many members, one pool
+  if (t > 15.8 && t < 20.4) {
+    const al = fade(t, 16, 20.2, .6), cy = midY
+    for (let k = 0; k < 18; k++) {
+      const ang = (k / 18) * Math.PI * 2 + 1.3, p = ease(clamp((t - 16.2 - (k % 6) * .12) / 2.2)), rr = (V ? 420 : 360) * S * (1 - p)
+      g.save(); g.globalAlpha = al * (1 - p * .6); g.fillStyle = k % 3 ? WHITE : GOLD2
+      g.beginPath(); g.arc(W / 2 + Math.cos(ang) * rr, cy + Math.sin(ang) * rr * .7, 5 * S, 0, Math.PI * 2); g.fill(); g.restore()
+    }
+    const pr = 70 * S * ease((t - 17.4) / 1.2)
+    if (pr > 0) { g.save(); g.globalAlpha = al; g.strokeStyle = GOLD; g.lineWidth = 2.5 * S; g.shadowColor = GOLD; g.shadowBlur = 30 * S
+      g.beginPath(); g.arc(W / 2, cy, pr, 0, Math.PI * 2); g.stroke(); g.restore() }
+    caption('The Midas × Kiyoshi Fund pools that edge', t, 16.3, 20.2, capY, V ? 32 : 34)
+    caption('for its members.', t, 17.3, 20.2, capY + 50 * S, V ? 32 : 34)
+  }
+
+  // 20-24 s: a share that grows
+  if (t > 19.8 && t < 24.4) {
+    const al = fade(t, 20, 24.2, .6), cy = midY, k = ease((t - 20.6) / 2.6)
+    const bw = 120 * S, bh = (90 + 230 * k) * S
+    g.save(); g.globalAlpha = al
+    const gr = g.createLinearGradient(0, cy + 160 * S, 0, cy + 160 * S - bh); gr.addColorStop(0, '#6E5A1C'); gr.addColorStop(1, GOLD2)
+    g.fillStyle = gr; g.fillRect(W / 2 - bw / 2, cy + 160 * S - bh, bw, bh); g.restore()
+    text('1 SHARE', W / 2, cy + 195 * S, 16 * S, GREY, al, { mono: 1, spacing: 4 })
+    caption('Every member owns shares.', t, 20.3, 24.2, capY + 60 * S)
+    caption('Every profitable trade grows them.', t, 21.5, 24.2, capY + 110 * S)
+  }
+
+  // 24-29 s: the record
+  if (t > 23.8 && t < 29.4) {
+    const al = fade(t, 24, 29.2, .6)
+    const x0 = 70 * S, x1 = W - 70 * S, yb = V ? H * .5 : H * .62, yt = V ? H * .30 : H * .36
+    const p = ease((t - 24.2) / 3), pts = []
+    for (let i = 0; i <= 200 * p; i++) { const u = i / 200; pts.push([x0 + (x1 - x0) * u, yb - (yb - yt) * curve(u)]) }
+    if (pts.length > 1) {
+      glowLine(pts, GOLD, 2.6 * S, al)
+      const [hx, hy] = pts[pts.length - 1]
+      g.save(); g.globalAlpha = al; g.fillStyle = GOLD2; g.shadowColor = GOLD; g.shadowBlur = 24 * S
+      g.beginPath(); g.arc(hx, hy, 7 * S, 0, Math.PI * 2); g.fill(); g.restore()
+    }
+    const k = ease((t - 24.4) / 2.8)
+    const stats = [[String(Math.round(STATS.trips * k)), 'ROUND TRIPS'], [Math.round(STATS.win * k) + '%', 'PROFITABLE'],
+      ['$' + Math.round(STATS.volume * k).toLocaleString('en-US'), 'VOLUME TRADED'], ['+$' + (STATS.pnl * k).toFixed(2), 'PROFIT']]
+    const sy = V ? H * .62 : H * .80
+    stats.forEach(([v, l], i) => {
+      const cx = V ? W * (i % 2 ? .72 : .28) : W * (.16 + .225 * i), yy = V ? sy + Math.floor(i / 2) * 170 * S : sy
+      text(v, cx, yy, (V ? 64 : 54) * S, i === 3 ? GOLD2 : WHITE, al * clamp((t - 24.6 - i * .25) / .5), { weight: 200 })
+      text(l, cx, yy + 52 * S, 14 * S, GREY, al * clamp((t - 24.8 - i * .25) / .5), { mono: 1, spacing: 3 })
+    })
+    caption('Only when both sides win.', t, 26.8, 29.2, V ? H * .88 : H * .93)
+  }
+
+  // 29-32 s: terms
+  if (t > 28.8 && t < 32.4) {
+    const al = fade(t, 29, 32.2, .5)
+    ;['Fees only on profit.', 'Members only.', 'Limited seats.'].forEach((s, i) =>
+      text(s, W / 2, midY - 70 * S + i * 80 * S, 44 * S, i === 2 ? GOLD2 : WHITE, al * clamp((t - 29.2 - i * .5) / .5), { weight: 300 }))
+  }
+
+  // 32-36 s: Kiyoshi's fan becomes MIDAS × KIY◠SHI
+  if (t > 31.9) {
+    const cy = V ? H * .44 : H * .42
+    const L = logoSequence(t, 32, cy)
+    text('F U N D', W / 2, L.base + 70 * S, 24 * S, GOLD, clamp((t - 35.2) / .6), { weight: 400, spacing: 8, mono: 1 })
+    text('Autonomous FX arbitrage on Celo', W / 2, L.base + 140 * S, 26 * S, GREY, clamp((t - 35.6) / .5))
+    text('Built on Kiyoshi by Mel Okoye  ·  Not financial advice', W / 2, H - 80 * S, 16 * S, GREY, clamp((t - 35.9) / .5) * .7)
+  }
+}
+window.draw = draw; window.DUR = DUR
+draw(0)
+</script></body></html>
