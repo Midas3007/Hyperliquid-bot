@@ -11,5 +11,5 @@ window.FUND_CONFIG = {
     { symbol: 'USDC', address: '0xcebA9300f2b948710d2653dD7B07f33A8B32118C', decimals: 6 },
   ],
   // On-chain fund (fund-vault). Fill in after `npm run deploy`; empty = the section stays hidden.
-  vault: { network: 'testnet', address: '', usdt: '' },
+  vault: { network: 'testnet', address: '0xd91374cb5ae00c2365d4b2680b12b8db19a7db67', usdt: '0x3c69e9a55eb1ccea9f8c3ed2c94db355d3a1018d' },
 }
