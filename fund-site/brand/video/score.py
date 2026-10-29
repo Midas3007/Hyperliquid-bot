@@ -3,12 +3,14 @@
 #   python3 score.py out.wav
 # Timing follows the video: guitar alone 0-3.8 s, band from 3.8 s, melody from 7.5 s, strings from 18.8 s,
 # a quiet turnaround under the terms (30-32 s) and the final chord as the logo forms at 32 s.
+import os
 import sys
 import numpy as np
 from scipy.signal import fftconvolve
 
 SR = 44100
-DUR = 37.0
+LONG = os.environ.get('SCORE_LONG') == '1'  # the 60 s version for the explainer: the theme twice
+DUR = 60.0 if LONG else 37.0
 BPM = 127.5
 BEAT = 60 / BPM
 BAR = 4 * BEAT
@@ -138,7 +140,11 @@ PROG = ['Fmaj9', 'Fmaj9',
         'Fmaj9', 'Bb13', 'Fmaj9', 'Ab13', 'Gm9', 'C13', ['Am7', 'D7b9'], ['Gm9', 'C7b9'],
         'Fmaj9', 'Bb13', 'Fmaj9', 'Ab13', 'Dbmaj7', ['Gm9', 'C13'],
         'C9sus']
-FINAL_BAR = len(PROG)  # 17 -> 32.0 s
+TURN = 16  # the quiet turnaround bar before the final chord
+if LONG:  # A A' (bars 2-15), then A and half of A' again (bars 16-27), turnaround, final chord at 54.6 s
+    PROG = PROG[:16] + PROG[2:14] + [PROG[16]]
+    TURN = 28
+FINAL_BAR = len(PROG)  # 17 -> 32.0 s (29 -> 54.6 s long)
 
 
 def chords_in(bar):
@@ -149,7 +155,7 @@ def chords_in(bar):
 # ---------- guitar comping (bossa pattern on an eighth-note grid) ----------
 PAT = [[0, 3, 5], [2, 5, 7]]  # chord hits, alternating bars (3-3-2 feel)
 for bar in range(FINAL_BAR):
-    soft = 0.55 if bar < 2 else 0.45 if bar == 16 else 0.75
+    soft = 0.55 if bar < 2 else 0.45 if bar == TURN else 0.75
     for name, b0, blen in chords_in(bar):
         root, voic = CH[name]
         # thumb: root on the chord's first beat, fifth two beats later
@@ -164,7 +170,7 @@ for bar in range(FINAL_BAR):
 
 # ---------- upright bass (from bar 2) ----------
 for bar in range(2, FINAL_BAR):
-    v = 0.6 if bar == 16 else 0.85
+    v = 0.6 if bar == TURN else 0.85
     for name, b0, blen in chords_in(bar):
         root = CH[name][0] - 12 if CH[name][0] > 45 else CH[name][0]
         fifth = root + 7
@@ -176,7 +182,7 @@ for bar in range(2, FINAL_BAR):
 # ---------- brushes and rim (from bar 2, lighter in the turnaround) ----------
 CLAVE = [[0, 6, 12], [4, 10]]  # sixteenths, 3-2 over two bars
 for bar in range(2, FINAL_BAR):
-    lvl = 0.5 if bar == 16 else 1.0
+    lvl = 0.5 if bar == TURN else 1.0
     for s16 in range(16):
         acc = 1.0 if s16 in (4, 12) else 0.55 if s16 % 2 == 0 else 0.35
         add(brush(BEAT * 0.45, acc * lvl), at(bar, s16 / 4), pan=0.35, gain=0.17)
@@ -199,9 +205,11 @@ MEL = [
     (15, 0, 1.5, 81), (15, 1.5, .5, 79), (15, 2, 2, 76),
     (16, 2, 2, 74),
 ]
+if LONG:  # the turnaround note moves to the new turnaround; bars 4-13 come back 14 bars later
+    MEL = [m for m in MEL if m[0] != 16] + [(b + 14, bt, d, m) for b, bt, d, m in MEL if 4 <= b <= 13] + [(TURN, 2, 2, 74)]
 for bar, beat, d, m in MEL:
     add(vibes(m, BEAT * d, 0.9), at(bar, beat), pan=0.3, gain=0.17)
-    if 10 <= bar <= 15:
+    if 10 <= bar <= 15 or (LONG and 18 <= bar < TURN):
         add(flute(m, BEAT * d * 0.95, 0.8), at(bar, beat) + 0.01, pan=-0.15, gain=0.1)
 
 # ---------- strings (from bar 10, swelling into the record scene) ----------

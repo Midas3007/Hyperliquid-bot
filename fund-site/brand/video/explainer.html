@@ -1,0 +1,358 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070707}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// Midas × Kiyoshi Fund — how the fund works (60 s explainer). draw(t) is deterministic, captured frame by frame.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1080), H = +(P.get('h') || 1920)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const V = H > W
+const S = Math.min(W, H) / 1080
+const BG = '#070707', WHITE = '#F4F4F0', GREY = '#8C8C88', GOLD = '#D4AF37', GOLD2 = '#F3D77A'
+const DUR = 60
+
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const ease = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2 }
+const lerp = (a, b, k) => a + (b - a) * k
+const fade = (t, a, b, f = .6) => clamp((t - a) / f) * clamp((b - t) / f)
+const noise = (x, s) => Math.sin(x * 1.7 + s) * .5 + Math.sin(x * 3.1 + s * 2.3) * .3 + Math.sin(x * 7.3 + s * .7) * .2
+const mix = (c1, c2, k) => { const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16)
+  const ch = (s) => Math.round(lerp((a >> s) & 255, (b >> s) & 255, clamp(k))); return `rgb(${ch(16)},${ch(8)},${ch(0)})` }
+
+function glowLine(pts, color, width, alpha) {
+  g.save(); g.strokeStyle = color; g.lineJoin = g.lineCap = 'round'
+  for (const [w, a] of [[width * 6, .06], [width * 3, .12], [width, 1]]) {
+    g.globalAlpha = alpha * a; g.lineWidth = w; g.beginPath()
+    pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke()
+  }
+  g.restore()
+}
+const FONT = (size, weight = 300, mono) => `${weight} ${size}px ${mono ? '"DejaVu Sans Mono", monospace' : 'Inter, sans-serif'}`
+function text(s, x, y, size, color, alpha = 1, opts = {}) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.fillStyle = color; g.font = FONT(size, opts.weight, opts.mono)
+  g.textAlign = opts.align || 'center'; g.textBaseline = opts.base || 'middle'
+  if (opts.spacing) g.letterSpacing = opts.spacing + 'px'
+  g.fillText(s, x, y); g.restore()
+}
+// A caption that types itself out, wrapped to the frame's width.
+function caption(s, t, a, b, y, size = 34) {
+  const px = size * S, al = fade(t, a, b, .4) * .92
+  if (al <= 0) return
+  g.font = FONT(px, 300)
+  const lines = [], max = W * .84
+  let line = ''
+  for (const w of s.split(' ')) { const tst = line ? line + ' ' + w : w; if (g.measureText(tst).width > max && line) { lines.push(line); line = w } else line = tst }
+  lines.push(line)
+  let shown = Math.floor(clamp((t - a) / 1.4) * s.length)
+  lines.forEach((l, i) => {
+    const part = l.slice(0, Math.max(0, shown)); shown -= l.length + 1
+    if (part) text(part, W / 2, y + (i - (lines.length - 1) / 2) * px * 1.35, px, WHITE, al)
+  })
+}
+
+// ---------- Kiyoshi's fan (as in the original): ~13 wedge blades from a pivot, a dark hole near the top
+// right, and a small fan below the pivot. p = how far it has unfolded (0 = closed, one thin blade on the left).
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fanBlades(cx, cy, r, p) {
+  const w = (A1 - A0) / NB, gap = .011, q = []
+  for (let i = 0; i < NB; i++) {
+    const gp = gap * Math.min(1, p * 2.2), s = A0 + i * w * p + gp, e = A0 + (i + 1) * w * p - gp + (1 - p) * .03
+    const ri = r * .06
+    q.push([[cx + Math.cos(s) * ri, cy + Math.sin(s) * ri], [cx + Math.cos(s) * r, cy + Math.sin(s) * r],
+            [cx + Math.cos(e) * r, cy + Math.sin(e) * r], [cx + Math.cos(e) * ri, cy + Math.sin(e) * ri]])
+  }
+  return q
+}
+function quad(pts, color, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.fillStyle = color; g.beginPath()
+  pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill(); g.restore()
+}
+// The small fan under the pivot (opening downward) with the pivot ring.
+function lowerFan(cx, cy, r, color, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.translate(cx, cy); g.fillStyle = color
+  const n = 6
+  for (let i = 0; i < n; i++) {
+    const s = Math.PI * (.12 + .76 * i / n) + .04, e = Math.PI * (.12 + .76 * (i + 1) / n) - .04
+    g.beginPath(); g.moveTo(Math.cos(s) * r * .35, Math.sin(s) * r * .35); g.arc(0, 0, r, s, e); g.arc(0, 0, r * .35, e, s, true); g.closePath(); g.fill()
+  }
+  g.strokeStyle = color; g.lineWidth = r * .14; g.beginPath(); g.arc(0, 0, r * .3, 0, Math.PI * 2); g.stroke()
+  g.fillStyle = BG; g.beginPath(); g.arc(0, 0, r * .16, 0, Math.PI * 2); g.fill()
+  g.restore()
+}
+function drawFan(cx, cy, r, p, color, alpha, blades = true) {
+  if (blades) for (const qd of fanBlades(cx, cy, r, p)) quad(qd, color, alpha)
+  if (blades && p > .75) { // the dark hole near the top right
+    const ha = A0 + (A1 - A0) * .82 * p
+    g.save(); g.globalAlpha = alpha * clamp((p - .75) * 6); g.fillStyle = BG
+    g.beginPath(); g.arc(cx + Math.cos(ha) * r * .76, cy + Math.sin(ha) * r * .76, r * .075, 0, Math.PI * 2); g.fill(); g.restore()
+  }
+  lowerFan(cx, cy + r * .03, r * .13, color, alpha)
+}
+
+// ---------- the wordmark in Kiyoshi's monospace: [巾-style M] I D A S  ×  K I Y [fan] S H I ----------
+const CHARS = ['M', 'I', 'D', 'A', 'S', ' ', '×', ' ', 'K', 'I', 'Y', 'O', 'S', 'H', 'I']
+function wordmarkLayout(cy) {
+  // Cell widths in letters: the 巾-style M is a little wider, the fan O is much wider (as in Kiyoshi's mark).
+  const UNITS = CHARS.map((ch, i) => (i === 0 ? 1.15 : i === 11 ? 1.9 : ch === ' ' ? .55 : 1))
+  const layout = (F) => {
+    g.font = FONT(F, 400, 1); const cw = g.measureText('M').width, sp = cw * .2
+    const total = UNITS.reduce((a, u) => a + u * cw, 0) + (CHARS.length - 1) * sp
+    return { cw, sp, total }
+  }
+  let F = (V ? 96 : 108) * S, m = layout(F)
+  if (m.total > W * .9) { F *= (W * .9) / m.total; m = layout(F) }
+  let x = W / 2 - m.total / 2; const xs = [], ws = []
+  UNITS.forEach((u) => { xs.push(x); ws.push(u * m.cw); x += u * m.cw + m.sp })
+  return { F, cw: m.cw, sp: m.sp, xs, ws, base: cy + F * .36, top: cy - F * .37 }
+}
+// The 巾-style M built from fan blades: every piece is a long truncated triangle (narrow end -> wide end),
+// like the blades it came from. MV picks the style (?m=1|2|3):
+//   1 one bold tapered blade per stroke (several blades merge into each)
+//   2 each stroke split into slim tapered blades with hairline gaps, like an open fan
+//   3 like 1, sharper: blades taper almost to a point
+const MV = 1
+function taper([ax, ay], [bx, by], wa, wb) { // narrow end at a, wide end at b
+  const len = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / len, uy = (by - ay) / len, nx = -uy, ny = ux
+  return [[ax + nx * wa / 2, ay + ny * wa / 2], [bx + nx * wb / 2, by + ny * wb / 2], [bx - nx * wb / 2, by - ny * wb / 2], [ax - nx * wa / 2, ay - ny * wa / 2]]
+}
+function mPieces(L) {
+  const x = L.xs[0], w = L.ws[0], top = L.top, bot = L.base, h = bot - top
+  const P2 = (u, v) => [x + w * u, top + h * v]
+  const bold = L.F * (MV === 3 ? .2 : .17), tip = L.F * (MV === 3 ? .012 : .05)
+  // strokes as [narrow end, wide end]: blades taper toward where the fan's pivot was
+  const strokes = [
+    [P2(.20, .24), P2(.05, 1.02)],  // left leg, sweeping out to the bottom left
+    [P2(.86, .24), P2(.14, .24)],   // top bar, wide at the left where it meets the leg
+    [P2(.50, 1.06), P2(.50, -.08)], // centre stroke, wide at the top
+    [P2(.86, 1.0), P2(.86, .20)],   // right leg, wide at the top corner
+  ]
+  const groups = [3, 3, 4, 3] // 13 blades
+  const out = []
+  strokes.forEach(([a, b], si) => {
+    const n = groups[si]
+    if (MV !== 2) { for (let k = 0; k < n; k++) out.push(taper(a, b, tip, bold)); return }
+    // style 2: n slim blades side by side across the stroke, hairline gaps between them
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]), nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len
+    const total = L.F * .19, gapw = L.F * .012, bw = (total - gapw * (n - 1)) / n
+    for (let k = 0; k < n; k++) {
+      const off = -total / 2 + bw / 2 + k * (bw + gapw), lenK = 1 - Math.abs(k - (n - 1) / 2) * .08 // middle blades a bit longer
+      const aa = [a[0] + nx * off * .25 + (b[0] - a[0]) * (1 - lenK), a[1] + ny * off * .25 + (b[1] - a[1]) * (1 - lenK)]
+      const bb = [b[0] + nx * off, b[1] + ny * off]
+      out.push(taper(aa, bb, tip * .5, bw))
+    }
+  })
+  return out
+}
+// t0 + 0-0.6 s: Kiyoshi's closed fan appears (white). 0.6-1.4 s it starts to unfold. 1.4-3 s the blades fly
+// into a gold 巾-style M, while the pivot (with its small fan) travels into KIYOSHI and opens as a gold fan O.
+function logoSequence(t, t0, cy) {
+  const L = wordmarkLayout(cy)
+  const fr = (V ? 300 : 260) * S, fcx = W / 2, fcy = cy + fr * .5
+  const appear = clamp((t - t0) / .5), p = .02 + .4 * ease((t - t0 - .5) / .9)
+  const from = fanBlades(fcx, fcy, fr, p), to = mPieces(L)
+  from.forEach((qd, i) => {
+    const k = ease((t - t0 - 1.4 - i * .045) / 1.2)
+    quad(qd.map(([x, y], j) => [lerp(x, to[i][j][0], k), lerp(y, to[i][j][1], k)]), mix(WHITE, GOLD, k), appear)
+  })
+  const kf = ease((t - t0 - 1.6) / 1.3), po = ease((t - t0 - 2.5) / .9)
+  const ox = L.xs[11] + L.ws[11] / 2, oy = L.base - L.F * .04, or = lerp(fr, L.ws[11] * .52, kf)
+  const cx = lerp(fcx, ox, kf), cyy = lerp(fcy, oy, kf), col = mix(WHITE, GOLD, kf)
+  if (po > 0) drawFan(cx, cyy, or, po, col, appear)   // the O opens once it has arrived
+  else lowerFan(cx, cyy + or * .03, or * .13, col, appear)
+  const la = clamp((t - t0 - 2.8) / .8)
+  if (la > 0) {
+    g.save(); g.textBaseline = 'alphabetic'; g.textAlign = 'center'; g.font = FONT(L.F, 400, 1)
+    g.filter = `blur(${((1 - la) * 10 * S).toFixed(1)}px)`; g.globalAlpha = la
+    CHARS.forEach((ch, i) => {
+      if (i === 0 || i === 11 || ch === ' ') return
+      const slide = (1 - la) * (i < 8 ? -40 : 40) * S
+      g.fillStyle = i < 5 ? GOLD : i === 6 ? GREY : WHITE
+      if (i === 6) g.font = FONT(L.F * .8, 300, 1); else g.font = FONT(L.F, 400, 1)
+      g.fillText(ch, L.xs[i] + L.ws[i] / 2 + slide, L.base)
+    })
+    g.restore()
+  }
+  return L
+}
+
+// ---------- small drawings ----------
+function rrect(x, y, w, h, r, fill, stroke, alpha = 1, lw = 3) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.beginPath(); g.roundRect(x, y, w, h, r)
+  if (fill) { g.fillStyle = fill; g.fill() }
+  if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw * S; g.stroke() }
+  g.restore()
+}
+function coin(x, y, r, alpha, label = '$') {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha
+  const gr = g.createRadialGradient(x - r * .3, y - r * .3, r * .1, x, y, r); gr.addColorStop(0, GOLD2); gr.addColorStop(1, GOLD)
+  g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill()
+  g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = r * .08; g.beginPath(); g.arc(x, y, r * .78, 0, Math.PI * 2); g.stroke()
+  g.restore()
+  text(label, x, y + r * .04, r * 1.0, '#2a2006', alpha, { weight: 700 })
+}
+function share(x, y, r, alpha) { // a fund share: a small gold fan in a ring
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = GOLD; g.lineWidth = r * .1; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke(); g.restore()
+  drawFan(x, y + r * .28, r * .78, 1, GOLD2, alpha)
+}
+function wallet(x, y, w, alpha, label) {
+  const h = w * .68
+  rrect(x - w / 2, y - h / 2, w, h, w * .1, '#121212', GREY, alpha)
+  rrect(x + w * .18, y - h * .14, w * .36, h * .28, h * .12, '#1c1c1c', GREY, alpha, 2)
+  g.save(); g.globalAlpha = alpha; g.fillStyle = GOLD; g.beginPath(); g.arc(x + w * .3, y, h * .05, 0, Math.PI * 2); g.fill(); g.restore()
+  if (label) text(label, x, y + h / 2 + 34 * S, 18 * S, GREY, alpha, { mono: 1, spacing: 3 })
+}
+function vault(x, y, w, alpha, label) {
+  const h = w * .9
+  rrect(x - w / 2, y - h / 2, w, h, w * .08, '#0f0f0f', GOLD, alpha, 3)
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = GOLD; g.lineWidth = 3 * S
+  g.beginPath(); g.arc(x, y, w * .22, 0, Math.PI * 2); g.stroke()
+  for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + .3; g.beginPath(); g.moveTo(x + Math.cos(a) * w * .08, y + Math.sin(a) * w * .08); g.lineTo(x + Math.cos(a) * w * .2, y + Math.sin(a) * w * .2); g.stroke() }
+  g.restore()
+  if (label) text(label, x, y + h / 2 + 34 * S, 18 * S, GOLD, alpha, { mono: 1, spacing: 3 })
+}
+function check(x, y, r, k, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = GOLD2; g.lineWidth = r * .16; g.lineCap = g.lineJoin = 'round'
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2 * clamp(k * 1.6)); g.stroke()
+  const p = clamp((k - .5) * 2)
+  if (p > 0) { g.beginPath(); g.moveTo(x - r * .45, y); g.lineTo(x - r * .1, y + r * .35); if (p > .5) g.lineTo(lerp(x - r * .1, x + r * .5, (p - .5) * 2), lerp(y + r * .35, y - r * .35, (p - .5) * 2)); g.stroke() }
+  g.restore()
+}
+function clockFace(x, y, r, t, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.strokeStyle = GOLD; g.lineWidth = r * .07
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke()
+  for (let k = 0; k < 12; k++) { const a = k * Math.PI / 6; g.beginPath(); g.moveTo(x + Math.cos(a) * r * .82, y + Math.sin(a) * r * .82); g.lineTo(x + Math.cos(a) * r * .92, y + Math.sin(a) * r * .92); g.stroke() }
+  const hand = (a, len, w) => { g.lineWidth = w; g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke() }
+  g.strokeStyle = WHITE; hand(-Math.PI / 2 + (20 + 7 / 60) / 12 * Math.PI * 2 + t * .02, r * .5, r * .08); hand(-Math.PI / 2 + 7 / 60 * Math.PI * 2 + t * .3, r * .75, r * .05)
+  g.restore()
+}
+// The step's number and title at the top.
+function stepHead(n, title, sub, t, a, b) {
+  const al = fade(t, a, b, .5), y = V ? H * .14 : H * .13
+  text(`0${n}`, W / 2, y, 22 * S, GOLD, al, { mono: 1, spacing: 6 })
+  text(title, W / 2, y + 62 * S, (V ? 66 : 58) * S, WHITE, al * clamp((t - a - .15) / .5), { weight: 200 })
+  if (sub) text(sub, W / 2, y + 122 * S, 24 * S, GREY, al * clamp((t - a - .4) / .5))
+}
+const along = (a, b, k) => [lerp(a[0], b[0], k), lerp(a[1], b[1], k)]
+
+function draw(t) {
+  g.fillStyle = BG; g.fillRect(0, 0, W, H)
+  const glow = g.createRadialGradient(W / 2, H * .45, 10, W / 2, H * .45, Math.max(W, H) * .7)
+  glow.addColorStop(0, 'rgba(212,175,55,0.07)'); glow.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = glow; g.fillRect(0, 0, W, H)
+  const midY = H * (V ? .5 : .55)
+  const L = V ? W * .27 : W * .3, R = W - L // left and right anchors
+  const Z = V ? 1.25 : 1 // drawings a little larger in the vertical frame
+
+  // 0-4 s: title
+  if (t < 4.4) {
+    const al = fade(t, 0, 4.2, .6)
+    drawFan(W / 2, midY - 40 * S, 150 * S, ease((t - .2) / 1.4), GOLD, al)
+    text('H O W   T H E   F U N D   W O R K S', W / 2, midY + 110 * S, 26 * S, GOLD, al * clamp((t - .9) / .6), { mono: 1 })
+    caption('Six steps. About a minute.', t, 1.8, 4.2, midY + 180 * S)
+  }
+
+  // 4-12 s: connect and get approved
+  if (t > 3.9 && t < 12.4) {
+    stepHead(1, 'Connect your wallet', 'MetaMask, Rabby, Valora or MiniPay', t, 4, 12.2)
+    const al = fade(t, 4.2, 12.2, .5)
+    wallet(L, midY, 230 * S * Z, al, 'YOUR WALLET')
+    rrect(R - 130 * S * Z, midY - 170 * S * Z, 260 * S * Z, 340 * S * Z, 26 * S, '#101010', GREY, al)
+    text('MANAGER', R, midY - 130 * S * Z, 18 * S, GREY, al, { mono: 1, spacing: 3 })
+    const k = ease((t - 6.2) / 1.6)
+    if (t > 6) { const [x, y] = along([L + 60 * S, midY], [R, midY - 80 * S * Z], k); text('0x7a3f…91c2', x, y, 22 * S, WHITE, al * clamp((t - 6) / .3), { mono: 1 }) }
+    check(R, midY + 30 * S * Z, 56 * S * Z, clamp((t - 8.2) / 1.2), al)
+    text('Approved', R, midY + 120 * S * Z, 26 * S, GOLD2, al * clamp((t - 9.3) / .5))
+    caption('Send your address to the manager. Once approved, you can deposit.', t, 8.6, 12.2, V ? H * .82 : H * .9, 30)
+  }
+
+  // 12-20 s: deposit
+  if (t > 11.9 && t < 20.4) {
+    stepHead(2, 'Deposit USDT', 'On Celo, straight from your wallet', t, 12, 20.2)
+    const al = fade(t, 12.2, 20.2, .5)
+    wallet(L, midY, 230 * S * Z, al, 'YOUR WALLET')
+    vault(R, midY, 230 * S * Z, al, 'FUND CONTRACT')
+    for (let i = 0; i < 4; i++) {
+      const k = ease((t - 13.6 - i * .35) / 1.3), [x, y] = along([L + 40 * S, midY], [R, midY], k)
+      coin(x, y - Math.sin(k * Math.PI) * 140 * S, 34 * S * Z, al * clamp((t - 13.4 - i * .35) / .3) * (1 - clamp((k - .92) / .08) * .85))
+    }
+    text('$100 waiting', R, midY - 175 * S * Z, 26 * S, WHITE, al * clamp((t - 15.6) / .5), { mono: 1 })
+    caption('It waits safely in the contract until the next settlement. Cancel any time before then.', t, 16, 20.2, V ? H * .82 : H * .9, 30)
+  }
+
+  // 20-29 s: settlement
+  if (t > 19.9 && t < 29.4) {
+    stepHead(3, 'Settled once a day', '20:07 UTC · 9:07 pm in Lagos', t, 20, 29.2)
+    const al = fade(t, 20.2, 29.2, .5)
+    clockFace(W / 2, midY - (V ? 180 : 120) * S, 80 * S * Z, t - 20, al)
+    const k = ease((t - 22.4) / 1.4)
+    for (let i = 0; i < 4; i++) coin(lerp(W / 2 - 220 * S + i * 40 * S, W / 2, k), midY + 90 * S, 30 * S * Z, al * (1 - k))
+    for (let i = 0; i < 5; i++) {
+      const kk = ease((t - 23.4 - i * .18) / .9)
+      share(lerp(W / 2, W / 2 - 180 * S * Z + i * 90 * S * Z, kk), midY + 90 * S, 32 * S * Z, al * kk)
+    }
+    text('$100  →  100 shares at $1.00', W / 2, midY + (V ? 210 : 190) * S, (V ? 40 : 36) * S, WHITE, al * clamp((t - 24.6) / .6), { mono: 1 })
+    caption('Everyone who joins that day buys in at the same share price, so nobody can time the bot.', t, 25.4, 29.2, V ? H * .82 : H * .9, 30)
+  }
+
+  // 29-38 s: the bot trades, the share price grows
+  if (t > 28.9 && t < 38.4) {
+    stepHead(4, 'The bot trades the gaps', 'Kiyoshi buys where a currency is cheap, sells where it is dearer', t, 29, 38.2)
+    const al = fade(t, 29.2, 38.2, .5)
+    const x0 = W * .14, x1 = W * .86, yb = midY + (V ? 180 : 170) * S, hh = (V ? 330 : 280) * S
+    const k = clamp((t - 30) / 6.5), n = 80, pts = []
+    for (let i = 0; i <= n * k; i++) { const u = i / n; pts.push([lerp(x0, x1, u), yb - hh * (u * .82 + noise(u * 9, 2) * .03 + .04)]) }
+    g.save(); g.globalAlpha = al * .5; g.strokeStyle = '#2a2a2a'; g.lineWidth = 1 * S; g.beginPath(); g.moveTo(x0, yb); g.lineTo(x1, yb); g.stroke(); g.restore()
+    if (pts.length > 1) glowLine(pts, GOLD2, 4 * S, al)
+    const price = 1 + .2 * ease(k)
+    text(`share price  $${price.toFixed(2)}`, W / 2, yb - hh - 70 * S, (V ? 48 : 44) * S, GOLD2, al * clamp((t - 30) / .5), { mono: 1 })
+    if (t > 31) drawFan(pts[pts.length - 1][0], pts[pts.length - 1][1] - 10 * S, 40 * S, 1, WHITE, al * .9)
+    caption('Profits stay in the fund, so every share is worth more. Your $100 is now $120.', t, 34, 38.2, V ? H * .82 : H * .9, 30)
+  }
+
+  // 38-48 s: redeem
+  if (t > 37.9 && t < 48.4) {
+    stepHead(5, 'Redeem whenever you like', 'Paid at the next settlement, to your own wallet', t, 38, 48.2)
+    const al = fade(t, 38.2, 48.2, .5)
+    const rows = [['Value of your shares', '$120.00', WHITE], ['Your profit', '$20.00', WHITE], ['Fee: 10% of the profit', '−$2.00', GREY], ['You receive', '$118.00', GOLD2]]
+    const top = midY - (V ? 150 : 140) * S, gap = (V ? 86 : 74) * S, lx = W / 2 - (V ? 380 : 360) * S, rx = W / 2 + (V ? 380 : 360) * S
+    rows.forEach(([l, v, c], i) => {
+      const a = al * clamp((t - 39.4 - i * .8) / .5), y = top + i * gap
+      text(l, lx, y, (V ? 34 : 30) * S, i === 3 ? WHITE : GREY, a, { align: 'left' })
+      text(v, rx, y, (V ? 40 : 34) * S, c, a, { align: 'right', mono: 1, weight: i === 3 ? 700 : 400 })
+      if (i === 2) { g.save(); g.globalAlpha = a * .6; g.strokeStyle = '#333'; g.lineWidth = 2 * S; g.beginPath(); g.moveTo(lx, y + gap * .5); g.lineTo(rx, y + gap * .5); g.stroke(); g.restore() }
+    })
+    caption('No fee on a loss, and never on what you put in. The fee stays in the fund.', t, 43.4, 48.2, V ? H * .82 : H * .9, 30)
+  }
+
+  // 48-55 s: safety
+  if (t > 47.9 && t < 55.4) {
+    stepHead(6, 'Built to protect members', null, t, 48, 55.2)
+    const al = fade(t, 48.2, 55.2, .5)
+    const lines = ['Payouts go only to the wallet that holds the shares', 'Fee only on profit · never above 20% · 48 hours notice', 'Emergency pause · daily limit on value changes', 'Every share and every trade is on the blockchain']
+    lines.forEach((s, i) => {
+      const a = al * clamp((t - 49 - i * .8) / .5), y = midY - (V ? 150 : 120) * S + i * (V ? 100 : 82) * S
+      g.save(); g.globalAlpha = a; g.fillStyle = GOLD; g.beginPath(); g.arc(W / 2 - (V ? 440 : 460) * S, y, 7 * S, 0, Math.PI * 2); g.fill(); g.restore()
+      text(s, W / 2 - (V ? 410 : 430) * S, y, (V ? 30 : 30) * S, WHITE, a, { align: 'left' })
+    })
+  }
+
+  // 55-60 s: the mark
+  if (t > 54.9) {
+    const cy = V ? H * .44 : H * .42
+    const Lw = logoSequence(t, 55, cy)
+    text('midas-kiyoshi-fund.vercel.app', W / 2, Lw.base + 90 * S, 26 * S, GOLD2, clamp((t - 58.2) / .6), { mono: 1 })
+    text('Not financial advice · you can lose money', W / 2, H - 80 * S, 16 * S, GREY, clamp((t - 58.6) / .5) * .7)
+  }
+}
+window.draw = draw; window.DUR = DUR
+draw(0)
+</script></body></html>

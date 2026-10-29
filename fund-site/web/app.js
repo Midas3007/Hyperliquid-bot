@@ -242,6 +242,7 @@ function overviewView() {
     </div>
 
     <div class="section-title" id="how">How it works</div>
+    <video class="promo" style="margin:0 0 12px" src="media/how-it-works.mp4" poster="media/how-it-works.jpg" controls playsinline preload="none"></video>
     <div class="grid steps">
       <div class="card"><div class="step">01</div><b>Connect</b><p class="note">Connect your wallet on the Dashboard and send the fund manager your address. Once it is approved, deposit USDT on Celo.</p></div>
       <div class="card"><div class="step">02</div><b>The bot trades</b><p class="note">Kiyoshi buys a stablecoin where it is cheap and sells it where it is dearer, across Uniswap, Mento and RFQ desks, many times a day.</p></div>
