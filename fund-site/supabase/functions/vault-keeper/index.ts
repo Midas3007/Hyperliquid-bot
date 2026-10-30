@@ -160,10 +160,20 @@ Deno.serve(async (req) => {
     const hash = await wallet.writeContract(request)
     const r = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 })
     if (r.status !== 'success') throw new Error(`${fn} failed: ${hash}`)
-    // read at the receipt's block: a load-balanced RPC can otherwise answer from the block before
-    const at = (fn: string) => pub.readContract({ address: vault, abi: vaultAbi, functionName: fn as any, blockNumber: r.blockNumber }) as Promise<any>
-    const [nav, supply, price] = await Promise.all([at('nav'), at('totalSupply'), at('sharePrice')])
-    await db.from('vault_history').insert({ network: cfg.network, vault_address: vault, kind: fn === 'settle' ? 'settle' : 'report', nav: Number(nav) / 1e6, supply: Number(supply) / 1e18, price: Number(price) / 1e6, tx: hash })
+    // Record the result for the chart. The transaction has succeeded by now, so nothing below may throw.
+    // Read at the receipt's block (a load-balanced RPC can answer from the block before); the public node
+    // sometimes refuses reads at a given block, so retry, then fall back to the latest block.
+    try {
+      const read3 = (blockNumber?: bigint) => Promise.all(['nav', 'totalSupply', 'sharePrice'].map((f) =>
+        pub.readContract({ address: vault, abi: vaultAbi, functionName: f as any, ...(blockNumber ? { blockNumber } : {}) }) as Promise<bigint>))
+      let vals: bigint[] | null = null
+      for (let i = 0; i < 3 && !vals; i++) {
+        vals = await read3(r.blockNumber).catch(() => null)
+        if (!vals) await new Promise((ok) => setTimeout(ok, 2000))
+      }
+      const [nav, supply, price] = vals ?? (await read3())
+      await db.from('vault_history').insert({ network: cfg.network, vault_address: vault, kind: fn === 'settle' ? 'settle' : 'report', nav: Number(nav) / 1e6, supply: Number(supply) / 1e18, price: Number(price) / 1e6, tx: hash })
+    } catch (e) { notes.push(`history not recorded: ${String((e as any)?.shortMessage || (e as Error).message).split('\n')[0]}`) }
     return hash
   }
   try {
