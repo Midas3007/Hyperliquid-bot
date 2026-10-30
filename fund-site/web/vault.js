@@ -164,7 +164,7 @@ function vWallet() {
   const d = VS.d, me = d.me
   const after = vUsd(me.value) - vUsd(me.fee)
   const profit = Math.round((after - vUsd(me.cost)) * 100) / 100 || 0
-  return `${vNotice()}<div class="grid two">
+  return `${vNotice()}${vGoal()}<div class="grid two">
     <div class="card hero"><div class="label">Your position · ${vLink('address/' + VS.account, esc(vMask(VS.account)))}</div>
       <div class="big">${money(after)}</div>
       <div class="sub"><span class="${tone(profit)}">${money(profit, true)}</span> after the ${(Number(d.feeBps) / 100).toFixed(0)}% fee · ${vShares(me.shares + me.escrowed)} shares</div>
@@ -225,27 +225,30 @@ function vAccount() {
 }
 
 // The manager's own $1,000 goal: only drawn when the connected wallet is the fund manager or fee recipient.
-// Made = what the wallet holds now + everything paid out to it - everything it put in (deposits, opening shares);
-// fee shares count as profit. Pace = the wallet's share of the fund's gains over the last 7 days (or since the
-// first value update, if newer), per day.
+// Made = what the wallet's shares are worth now (fee shares included) minus their cost, plus profit already paid
+// out (from the wallet's history, once it has loaded). Pace = the wallet's shares times the share price's change
+// per day over the last 7 days (or since the first value update, if newer).
 const GOAL_USD = 1000
 function vGoal() {
   const d = VS.d
-  if (!d || !(d.isManager || same(VS.account, d.feeRecipient)) || !VS.myLogs) return ''
-  let putIn = 0, paidOut = 0
-  for (const l of VS.myLogs) {
-    if (l.eventName === 'Deposited' || l.eventName === 'OpeningShares') putIn += vUsd(l.args.assets)
-    if (l.eventName === 'Redeemed') paidOut += vUsd(l.args.paid)
+  if (!d?.me || !(d.isManager || same(VS.account, d.feeRecipient))) return ''
+  let made = vUsd(d.me.value) - vUsd(d.me.cost)
+  if (VS.myLogs) { // profit already taken out: paid out minus the cost of the shares redeemed
+    let putIn = 0, paidOut = 0
+    for (const l of VS.myLogs) {
+      if (l.eventName === 'Deposited' || l.eventName === 'OpeningShares') putIn += vUsd(l.args.assets)
+      if (l.eventName === 'Redeemed') paidOut += vUsd(l.args.paid)
+    }
+    if (putIn > 0) made = vUsd(d.me.value) + paidOut - putIn
   }
-  const made = vUsd(d.me.value) + paidOut - putIn
   const left = Math.max(0, GOAL_USD - made)
   const done = Math.min(100, Math.max(0, (made / GOAL_USD) * 100))
-  const items = window.vaultPersonalItems?.() || []
   const since = Date.now() - 7 * 86_400_000
-  const recent = items.filter((i) => i.t >= since)
-  const first = (state.pub?.vault_history || []).map((h) => new Date(h.t).getTime()).filter((t) => t >= since).sort((a, b) => a - b)[0]
-  const days = first ? (Date.now() - first) / 86_400_000 : 0
-  const perDay = days >= 0.25 ? recent.reduce((a, i) => a + i.p, 0) / days : null
+  const pts = (state.pub?.vault_history || []).map((h) => ({ t: new Date(h.t).getTime(), p: Number(h.unit_price) }))
+    .filter((x) => x.t >= since && x.p > 0).sort((a, b) => a.t - b.t)
+  const shares = Number(d.me.shares + d.me.escrowed) / 1e18
+  const days = pts.length > 1 ? (pts[pts.length - 1].t - pts[0].t) / 86_400_000 : 0
+  const perDay = days >= 0.25 ? (shares * (pts[pts.length - 1].p - pts[0].p)) / days : null
   let eta = 'Not enough history yet to estimate a pace.'
   if (left === 0) eta = 'Goal reached. 🎉'
   else if (perDay !== null && perDay > 0) {
@@ -256,7 +259,7 @@ function vGoal() {
     <div class="goal-head"><span class="big">${money(made)}</span><span class="muted">of ${money(GOAL_USD)}</span></div>
     <div class="goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${GOAL_USD}" aria-valuenow="${Math.max(0, made).toFixed(2)}" aria-label="Progress to $1,000"><span style="width:${done.toFixed(2)}%"></span></div>
     <div class="goal-legend"><span><i class="dot gold"></i>Made ${money(made)} · ${done.toFixed(1)}%</span><span><i class="dot"></i>Left ${money(left)}</span></div>
-    <p class="note" style="margin-bottom:0">${eta} Counts your shares' value, including fee shares, plus anything paid out to you, minus what you put in.</p>
+    <p class="note" style="margin-bottom:0">${eta} Counts your shares' value, including fee shares, minus what they cost you, plus profit already paid out to you.</p>
   </div>`
 }
 
