@@ -18,7 +18,7 @@ const REMIND_MS = 6 * 3_600_000
 const SILENT_MS = 20 * 60_000
 const PRICE_DROP = 0.05 // share price 5% below its 24-hour high
 const MIN_KEEPER_CELO = 0.1
-const MIN_BOT_CELO = 1 // the bot buys 5 CELO by itself below 0.5
+const MIN_BOT_CELO = 1 // the bot tops itself up below 0.5 (up to 5 CELO, at most $0.50 a time)
 const MIN_CHECK_GAP_MS = 2 * 60_000
 const LAGOS_MS = 3_600_000 // UTC+1, for "today"
 const celoSepolia = defineChain({
@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
   found.bot_silent = hb?.at && Date.now() - Date.parse(hb.at) > SILENT_MS
     ? `The bot has not reported for ${Math.round((Date.now() - Date.parse(hb.at)) / 60_000)} minutes. Check Render → kiyoshi → Logs (is it suspended or crashing?).` : null
   found.bot_gas = hb?.celo != null && Number(hb.celo) < MIN_BOT_CELO
-    ? `The bot wallet is down to ${Number(hb.celo).toFixed(3)} CELO for gas. Below 0.5 it buys 5 CELO with USDT by itself${hb.gas_error ? `, but the last try failed: ${hb.gas_error}. Send it a few CELO` : ''}.` : null
+    ? `The bot wallet is down to ${Number(hb.celo).toFixed(3)} CELO for gas. Below 0.5 it tops itself up with USDT (up to 5 CELO, at most $0.50 a time)${hb.gas_error ? `, but the last try failed: ${hb.gas_error}. Send it a few CELO` : ''}.` : null
   found.bot_error = hb?.error && hb.error_streak >= 3 ? `The bot has failed ${hb.error_streak} cycles in a row: ${hb.error}` : null
   if (vault) {
     const since = new Date(Date.now() - 24 * 3_600_000).toISOString()
@@ -238,7 +238,7 @@ Deno.serve(async (req) => {
       if (due) { await send(`⚠️ ${s?.active ? 'Still: ' : ''}${detail}`); sent.push(key) }
       await db.from('alert_state').upsert({ key, active: true, detail, since: s?.active ? s.since : now.toISOString(), last_sent_at: due ? now.toISOString() : s.last_sent_at })
     } else if (s?.active) {
-      await send(`✅ OK again: ${s.detail.split('.')[0]}.`)
+      await send(`✅ OK again: ${String(s.detail).split(/\.\s/)[0].replace(/\.$/, '')}.`)
       await db.from('alert_state').update({ active: false, detail: null }).eq('key', key)
       sent.push(key + ' ok')
     }

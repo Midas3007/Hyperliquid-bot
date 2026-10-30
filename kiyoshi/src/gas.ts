@@ -1,6 +1,6 @@
 // Midas's addition: keep the bot wallet's gas topped up. When its CELO falls below GAS_TOPUP_BELOW (0.5), it buys
 // GAS_TOPUP_CELO (5) with USDT on Uniswap v3: directly, or through USDm when that is cheaper. Every top-up spends at
-// most GAS_TOPUP_MAX_USD ($0.50) of USDT (if 5 CELO costs more, it buys what $0.50 gets), waits at least 6 hours after the previous one, and is skipped while the
+// most GAS_TOPUP_MAX_USD ($0.50) of USDT (if 5 CELO costs more, it buys what $0.50 gets), waits at least GAS_TOPUP_EVERY_MIN (60) minutes after the previous one, and is skipped while the
 // desk holds leftover inventory or the fund is settling. The USDT spent leaves the fund's value, so its cost is
 // shared by every shareholder in proportion to their shares. The transaction carries the attribution tag like
 // every other one (sendTaggedReceipt).
@@ -15,7 +15,7 @@ const USDM: Address = '0x765DE816845861e75A25fCA122bb6898B8B1282a'
 const BELOW = parseEther(process.env.GAS_TOPUP_BELOW ?? '0.5')
 const BUY = parseEther(process.env.GAS_TOPUP_CELO ?? '5')
 const MAX_USD = parseUnits(process.env.GAS_TOPUP_MAX_USD ?? '0.5', 6)
-const EVERY_MS = 6 * 3_600_000
+const EVERY_MS = Number(process.env.GAS_TOPUP_EVERY_MIN ?? '60') * 60_000
 const CHECK_MS = 10 * 60_000
 const SLIPPAGE_BPS = 100n // 1%
 

@@ -51,11 +51,12 @@ Suspend the Render service first, then `cd ~/kiyoshi && LIVE=1 npm run desk` as 
 
 The bot pays for every transaction in CELO from the bot wallet. When it drops below **1 CELO** you get a Telegram
 alert. Below **0.5 CELO** the bot buys **5 CELO** with USDT on Uniswap by itself. It spends at most **$0.50** per
-top-up (if 5 CELO costs more, it buys what $0.50 gets), at most once every 6 hours, and never while it holds leftover inventory or during the settlement pause.
+top-up (if 5 CELO costs more, it buys what $0.50 gets), at most once an hour, and never while it holds leftover inventory or during the settlement pause.
 Telegram tells you each time, with the transaction link. The USDT spent leaves the fund's value (CELO is not
 counted), so the cost is shared by every shareholder in proportion to their shares. `/status` shows the bot's
 gas. Settings (Render → Environment, all optional): `GAS_TOPUP_BELOW` (0.5), `GAS_TOPUP_CELO` (5),
-`GAS_TOPUP_MAX_USD` (0.5).
+`GAS_TOPUP_MAX_USD` (0.5), `GAS_TOPUP_EVERY_MIN` (60). At about 75 trades every 6 hours the bot uses roughly
+0.9 CELO an hour (about $1.50 a day at today's CELO price), well below its trading profit.
 
 ## Telegram alerts
 
