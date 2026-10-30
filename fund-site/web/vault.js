@@ -199,7 +199,7 @@ function vAccount() {
   const g = vGate('to see your account')
   if (g) return g
   const rows = VS.history
-  return `${vNotice()}<div class="grid two">
+  return `${vNotice()}${vGoal()}<div class="grid two">
     <div class="card"><div class="label">Wallet</div>
       <div class="addr">${esc(VS.account)}</div>
       <div class="row"><button class="btn plain small" data-action="copy" data-value="${esc(VS.account)}">Copy</button>
@@ -221,6 +221,42 @@ function vAccount() {
         <button class="btn plain small" data-vault="card-name">Wallet: ${state.card.name ? 'shown' : 'hidden'}</button>
       </div>
     </div>
+  </div>`
+}
+
+// The manager's own $1,000 goal: only drawn when the connected wallet is the fund manager or fee recipient.
+// Made = what the wallet holds now + everything paid out to it - everything it put in (deposits, opening shares);
+// fee shares count as profit. Pace = the wallet's share of the fund's gains over the last 7 days (or since the
+// first value update, if newer), per day.
+const GOAL_USD = 1000
+function vGoal() {
+  const d = VS.d
+  if (!d || !(d.isManager || same(VS.account, d.feeRecipient)) || !VS.myLogs) return ''
+  let putIn = 0, paidOut = 0
+  for (const l of VS.myLogs) {
+    if (l.eventName === 'Deposited' || l.eventName === 'OpeningShares') putIn += vUsd(l.args.assets)
+    if (l.eventName === 'Redeemed') paidOut += vUsd(l.args.paid)
+  }
+  const made = vUsd(d.me.value) + paidOut - putIn
+  const left = Math.max(0, GOAL_USD - made)
+  const done = Math.min(100, Math.max(0, (made / GOAL_USD) * 100))
+  const items = window.vaultPersonalItems?.() || []
+  const since = Date.now() - 7 * 86_400_000
+  const recent = items.filter((i) => i.t >= since)
+  const first = (state.pub?.vault_history || []).map((h) => new Date(h.t).getTime()).filter((t) => t >= since).sort((a, b) => a - b)[0]
+  const days = first ? (Date.now() - first) / 86_400_000 : 0
+  const perDay = days >= 0.25 ? recent.reduce((a, i) => a + i.p, 0) / days : null
+  let eta = 'Not enough history yet to estimate a pace.'
+  if (left === 0) eta = 'Goal reached. 🎉'
+  else if (perDay !== null && perDay > 0) {
+    const n = left / perDay, when = new Date(Date.now() + n * 86_400_000)
+    eta = `At the current pace (${money(perDay)}/day), about <b>${n < 1 ? `${Math.max(1, Math.round(n * 24))} hours` : n < 60 ? `${Math.round(n)} days` : n < 730 ? `${Math.round(n / 30.4)} months` : `${(n / 365).toFixed(1)} years`}</b> to go (around ${when.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}).`
+  } else if (perDay !== null) eta = `No progress over the last ${days >= 6.5 ? '7 days' : `${Math.max(1, Math.round(days * 24))} hours`} (${money(perDay)}/day), so no finish date yet.`
+  return `<div class="card goal" style="margin-bottom:12px"><div class="label">Your $1,000 goal · only you see this</div>
+    <div class="goal-head"><span class="big">${money(made)}</span><span class="muted">of ${money(GOAL_USD)}</span></div>
+    <div class="goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${GOAL_USD}" aria-valuenow="${Math.max(0, made).toFixed(2)}" aria-label="Progress to $1,000"><span style="width:${done.toFixed(2)}%"></span></div>
+    <div class="goal-legend"><span><i class="dot gold"></i>Made ${money(made)} · ${done.toFixed(1)}%</span><span><i class="dot"></i>Left ${money(left)}</span></div>
+    <p class="note" style="margin-bottom:0">${eta} Counts your shares' value, including fee shares, plus anything paid out to you, minus what you put in.</p>
   </div>`
 }
 
