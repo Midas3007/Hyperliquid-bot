@@ -18,7 +18,7 @@ const REMIND_MS = 6 * 3_600_000
 const SILENT_MS = 20 * 60_000
 const PRICE_DROP = 0.05 // share price 5% below its 24-hour high
 const MIN_KEEPER_CELO = 0.1
-const MIN_BOT_CELO = 1 // the bot tops itself up below 0.5 (up to 5 CELO, at most $0.50 a time)
+const MIN_BOT_CELO = 1 // below 0.5 the bot buys CELO with $0.50 of USDT by itself
 const MIN_CHECK_GAP_MS = 2 * 60_000
 const LAGOS_MS = 3_600_000 // UTC+1, for "today"
 const celoSepolia = defineChain({
@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
   found.bot_silent = hb?.at && Date.now() - Date.parse(hb.at) > SILENT_MS
     ? `The bot has not reported for ${Math.round((Date.now() - Date.parse(hb.at)) / 60_000)} minutes. Check Render → kiyoshi → Logs (is it suspended or crashing?).` : null
   found.bot_gas = hb?.celo != null && Number(hb.celo) < MIN_BOT_CELO
-    ? `The bot wallet is down to ${Number(hb.celo).toFixed(3)} CELO for gas. Below 0.5 it tops itself up with USDT (up to 5 CELO, at most $0.50 a time)${hb.gas_error ? `, but the last try failed: ${hb.gas_error}. Send it a few CELO` : ''}.` : null
+    ? `The bot wallet is down to ${Number(hb.celo).toFixed(3)} CELO for gas. Below 0.5 it buys CELO with $0.50 of USDT by itself${hb.gas_error ? `, but the last try failed: ${hb.gas_error}. Send it a few CELO` : ''}.` : null
   found.bot_error = hb?.error && hb.error_streak >= 3 ? `The bot has failed ${hb.error_streak} cycles in a row: ${hb.error}` : null
   if (vault) {
     const since = new Date(Date.now() - 24 * 3_600_000).toISOString()
