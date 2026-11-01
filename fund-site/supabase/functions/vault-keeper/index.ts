@@ -157,7 +157,10 @@ Deno.serve(async (req) => {
   const read = (fn: string, args: unknown[] = []) => pub.readContract({ address: vault, abi: vaultAbi, functionName: fn as any, args: args as any }) as Promise<any>
   const write = async (fn: 'reportValue' | 'settle', value: bigint) => {
     const { request } = await pub.simulateContract({ account, address: vault, abi: vaultAbi, functionName: fn, args: [value] })
-    const hash = await wallet.writeContract(request)
+    // Gas with a 50% margin: the node's estimate can come out a little short (a report once ran out of gas exactly
+    // at its estimate), and unused gas is not charged
+    const estimate = await pub.estimateContractGas({ account, address: vault, abi: vaultAbi, functionName: fn, args: [value] })
+    const hash = await wallet.writeContract({ ...request, gas: (estimate * 3n) / 2n })
     const r = await pub.waitForTransactionReceipt({ hash, timeout: 60_000 })
     if (r.status !== 'success') throw new Error(`${fn} failed: ${hash}`)
     // Record the result for the chart. The transaction has succeeded by now, so nothing below may throw.
