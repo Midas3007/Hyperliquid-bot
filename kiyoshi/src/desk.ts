@@ -12,6 +12,7 @@ import { convertStats, handleConvert } from './convert.js'
 import { settlePause } from './settle-pause.js'
 import { heartbeat } from './heartbeat.js'
 import { gasState, gasTopUp } from './gas.js'
+import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from './skip-reserved.js'
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { byEdge, candidateSizes, edgeUsd, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip } from './strategy.js'
 
@@ -162,6 +163,7 @@ async function scan(size: bigint): Promise<Opp[]> {
   return opps
 }
 
+let lastSkipped = false
 async function execute(o: Opp): Promise<number | null> {
   const X = o.X
   if (o.route === 'uni->textile') {
@@ -174,7 +176,15 @@ async function execute(o: Opp): Promise<number | null> {
     log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1, leg2: r.status, ...(filled ? { tx2: r.txHash, textileUsd: usd(r.received) } : {}), pnl })
     return pnl
   }
-  const r = await textileSwap('USDT', X, o.size, withSlippage(o.mid))
+  const skip = await skipReserved()
+  const r = await textileSwap('USDT', X, o.size, withSlippage(o.mid), { skipIfReserved: skip })
+  if (r.status === 'reserved') {
+    recordSkip()
+    lastSkipped = true
+    console.log(`  Textile still reserves our funds for ${Math.round(r.retryAfterMs / 1000)}s; skipping this trade instead of waiting (${skipSummary()})`)
+    log({ event: 'skip', X, route: o.route, sizeUsd: usd(o.size), reason: 'textile_reserved', retryAfterMs: r.retryAfterMs })
+    return null
+  }
   if (r.status !== 'filled') { log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), leg1: r.status, pnl: null }); return null }
   const q = await uniQuote(X, 'USDT', r.received)
   if (!q) {
@@ -184,7 +194,8 @@ async function execute(o: Opp): Promise<number | null> {
   }
   const { hash: tx2, out } = await uniSwap(X, 'USDT', r.received, q.fee, withSlippage(q.out))
   const pnl = usd(out) - usd(o.size)
-  log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, tx2, textileUsd: usd(o.size), pnl })
+  if (r.waited) { recordWaited(pnl); console.log(`  this trade waited for Textile (${skipSummary()})`) }
+  log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, tx2, textileUsd: usd(o.size), pnl, waited: r.waited })
   return pnl
 }
 
@@ -225,10 +236,11 @@ async function cycle() {
   if (watchOnly) { console.log(`  watch mode: edge of $${best.edge.toFixed(4)} available, fund the wallet to trade it`); return }
   console.log(`  >> ${LIVE ? 'TRADING' : 'would trade'}: ${best.X} ${best.route} at $${usd(best.size).toFixed(2)}, expected +$${best.edge.toFixed(4)}`)
   if (LIVE) {
+    lastSkipped = false
     const pnl = await execute(best)
     chase = pnl !== null && pnl > 0 ? { X: best.X, route: best.route } : null
     if (chase) console.log(`  chasing ${best.X} ${best.route}, next check in ${CHASE_MS / 1000}s`)
-    console.log(`  result: ${pnl === null ? 'incomplete (leftover held and managed by flatten)' : (pnl >= 0 ? '+' : '') + pnl.toFixed(4) + ' USDT'}`)
+    console.log(`  result: ${pnl === null ? (lastSkipped ? 'skipped (nothing bought)' : 'incomplete (leftover held and managed by flatten)') : (pnl >= 0 ? '+' : '') + pnl.toFixed(4) + ' USDT'}`)
   }
 }
 
@@ -297,6 +309,8 @@ while (true) {
     state.baselineEquity = resolveBaseline(net, state.baselineEquity)
     status.baselineEquity = state.baselineEquity
     status.capital = flowSummary()
+    status.skipReserved = skipTally()
+    status.skipSummary = skipSummary()
     const eq = await equity()
     status.equity = eq
     status.lastError = null

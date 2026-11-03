@@ -58,6 +58,16 @@ gas. Settings (Render → Environment, all optional): `GAS_TOPUP_BELOW` (0.5), `
 `GAS_TOPUP_CELO` (unset: spend the full $0.50), `GAS_TOPUP_EVERY_MIN` (60). At about 75 trades every 6 hours the bot uses roughly
 0.9 CELO an hour (about $1.50 a day at today's CELO price), well below its trading profit.
 
+## Skipping trades Textile makes wait for
+
+After a trade, Textile reserves the bot's USDT for about two minutes. A trade planned in that window used to wait
+the two minutes and then go ahead at whatever the prices had become, which often turned a small expected profit
+into a loss. Now the bot skips such a trade (nothing has been bought yet) and rescans with fresh prices. Selling
+tokens it already holds still waits as before. The logs show `skipping this trade instead of waiting`, with a running
+count. Switch it from Telegram: `/skipwait` shows the setting and the count, `/skipwait_off` goes back to waiting,
+`/skipwait_on` turns skipping on again. The bot picks up a change within 2 minutes, and stays on if it cannot read
+the setting.
+
 ## Telegram alerts
 
 The fund's `fund-alerts` function (Supabase) checks every 10 minutes and messages you on Telegram when:

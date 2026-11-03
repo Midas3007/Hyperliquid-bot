@@ -13,6 +13,8 @@ To run it on a new device, follow README.md, but clone this repository instead a
   until the fund's daily settlement is done. Only active when `FUND_SUPABASE_URL` / `FUND_SUPABASE_KEY` are set.
 - `src/heartbeat.ts` (+ 2 lines in `src/desk.ts`): a signed report to the fund's Telegram alerts every 5 minutes.
 - `src/gas.ts`, `src/gas-math.ts` (+ 4 lines in `src/desk.ts`): buys CELO with $0.50 of USDT when gas falls below 0.5 CELO.
+- `src/skip-reserved.ts` (+ a few lines in `src/desk.ts` and `src/swap.ts`): skip a Textile -> Uniswap trade when
+  Textile still reserves funds instead of waiting two minutes; switched on/off from Telegram (`/skipwait_on|off`).
 - `HOSTING.md` and `../render.yaml`: running the bot on Render, alerts, and updating from Mel's.
 
 To refresh the bot code from Mel's repo later, ask Claude to "update the bot from Mel's" (see HOSTING.md).

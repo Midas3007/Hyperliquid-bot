@@ -68,7 +68,7 @@ async function vInit() {
     VS.net = n
     VS.chain = VS.viem.defineChain({ id: n.id, name: n.name, nativeCurrency: { name: 'CELO', symbol: 'CELO', decimals: 18 }, rpcUrls: { default: { http: [n.rpc] } } })
     VS.pub = VS.viem.createPublicClient({ chain: VS.chain, transport: VS.viem.http(n.rpc) })
-    VS.logs = null
+    VS.logs = null; VS.rawLogs = null
   }
 }
 
@@ -90,26 +90,38 @@ async function vLoad() {
 }
 
 // Every event of the vault, fetched once and then incrementally (newest windows first, until the opening).
+// The vault's events, read in pieces: the public Celo node answers at most 5,000 blocks per request. The first read
+// starts at the vault's deployment block; the raw logs are cached in this browser, so later visits only read the
+// new blocks.
+const LOG_STEP = 5000n, LOG_PARALLEL = 8
 async function vLogs() {
   const c = vcfg(), latest = await VS.pub.getBlockNumber()
-  const get = (fromBlock, toBlock) => VS.pub.getLogs({ address: c.address, fromBlock, toBlock })
   const parse = (logs) => VS.viem.parseEventLogs({ abi: VS.abi, logs, strict: false })
-  if (!VS.logs) {
-    let all = []
-    try { all = await get(0n, latest) } catch {
-      const W = 50_000n
-      for (let to = latest, i = 0; i < 60 && to > 0n; i++, to -= W) {
-        const from = to > W ? to - W + 1n : 0n
-        const part = await get(from, to)
-        all = part.concat(all)
-        if (parse(part).some((l) => l.eventName === 'OpeningShares')) break
+  const key = 'vault-logs:' + String(c.address).toLowerCase()
+  if (!VS.rawLogs) {
+    VS.rawLogs = []
+    VS.logsTo = BigInt(c.fromBlock ?? (same(c.address, window.FUND_CONFIG.vault?.address) ? window.FUND_CONFIG.vault.fromBlock : 0) ?? 0) - 1n
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || 'null')
+      if (saved?.to) {
+        VS.rawLogs = saved.logs.map((l) => ({ ...l, blockNumber: BigInt(l.blockNumber), logIndex: Number(l.logIndex) }))
+        VS.logsTo = BigInt(saved.to)
       }
-    }
-    VS.logs = parse(all)
-  } else if (latest > VS.logsTo) {
-    VS.logs = VS.logs.concat(parse(await get(VS.logsTo + 1n, latest)))
+    } catch { /* no cache */ }
   }
-  VS.logsTo = latest
+  if (latest > VS.logsTo) {
+    const ranges = []
+    for (let from = VS.logsTo + 1n; from <= latest; from += LOG_STEP) ranges.push([from, from + LOG_STEP - 1n < latest ? from + LOG_STEP - 1n : latest])
+    for (let i = 0; i < ranges.length; i += LOG_PARALLEL) {
+      const parts = await Promise.all(ranges.slice(i, i + LOG_PARALLEL).map(([fromBlock, toBlock]) => VS.pub.getLogs({ address: c.address, fromBlock, toBlock })))
+      for (const p of parts) VS.rawLogs.push(...p.map((l) => ({ address: l.address, data: l.data, topics: l.topics, blockNumber: l.blockNumber, transactionHash: l.transactionHash, logIndex: l.logIndex })))
+      VS.logsTo = ranges[Math.min(i + LOG_PARALLEL, ranges.length) - 1][1]
+    }
+    try {
+      localStorage.setItem(key, JSON.stringify({ to: String(VS.logsTo), logs: VS.rawLogs.map((l) => ({ ...l, blockNumber: String(l.blockNumber) })) }))
+    } catch { /* storage full or blocked: read again next visit */ }
+  }
+  VS.logs = parse(VS.rawLogs)
   return VS.logs
 }
 async function vTime(block) {

@@ -3,7 +3,8 @@
 //     delivers chat messages here (webhook) with the command menu set.
 //   - Telegram, the moment someone messages the bot: carries a secret header derived from TELEGRAM_BOT_TOKEN
 //     (an Edge Function secret from @BotFather). The first private chat that sends /start gets the alerts;
-//     only that chat gets answers. Commands are read-only: nothing here can move money.
+//     only that chat gets answers. Commands are read-only, except /skipwait_on|off, a bot setting that cannot move
+//     money: nothing here can move money.
 //   - The Kiyoshi bot's heartbeat {heartbeat: {message, signature}}, signed by the bot wallet (the vault's
 //     treasury), so nobody can fake it.
 // Checks: bot silent or erroring, share price down sharply, settlement missed or waiting, keeper errors or low on
@@ -40,15 +41,17 @@ const COMMANDS = [
   { command: 'today', description: 'Trades and trading profit today' },
   { command: 'queue', description: 'Deposits and withdrawals waiting to settle' },
   { command: 'keeper', description: 'Keeper gas, last run and last settlement' },
+  { command: 'skipwait', description: 'Skipping trades Textile makes wait for: on/off' },
   { command: 'help', description: 'What this bot does' },
 ]
 const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, or the fund is paused. After each daily settlement you get a summary.
 
-Commands (read-only, nothing here moves money):
+Commands (nothing here moves money):
 /status: bot, fund value and keeper
 /today: trades and profit today (Lagos time)
 /queue: deposits and withdrawals waiting to settle
 /keeper: keeper gas, last run, last settlement (the bot's own gas is in /status)
+/skipwait: is the bot skipping trades Textile makes wait for? /skipwait_off and /skipwait_on switch it
 /help: this message
 
 Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
@@ -89,7 +92,7 @@ Deno.serve(async (req) => {
       const { data: last } = await db.from('bot_heartbeat').select('at').eq('id', 1).single()
       if (last?.at && Date.parse(hb.at) <= Date.parse(last.at)) throw new Error('replayed')
       await db.from('bot_heartbeat').update({ at: hb.at, equity: hb.equity ?? null, error: hb.error ?? null, error_streak: hb.errorStreak ?? 0, pause: hb.pause ?? null, holding: !!hb.holding,
-        celo: hb.celo ?? null, last_topup: hb.lastTopUp ?? null, gas_error: hb.gasError ?? null, received_at: new Date().toISOString() }).eq('id', 1)
+        celo: hb.celo ?? null, last_topup: hb.lastTopUp ?? null, gas_error: hb.gasError ?? null, skip_summary: hb.skipSummary ?? null, received_at: new Date().toISOString() }).eq('id', 1)
       return reply({ ok: true })
     } catch (e) { return reply({ error: `heartbeat: ${(e as Error).message.split('\n')[0]}` }) }
   }
@@ -123,10 +126,22 @@ Deno.serve(async (req) => {
     let text = ''
     try {
       text = cmd === '/status' ? await statusText() : cmd === '/today' ? await todayText() : cmd === '/queue' ? await queueText()
-        : cmd === '/keeper' ? await keeperText() : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
+        : cmd === '/keeper' ? await keeperText() : cmd === '/skipwait' ? await skipText()
+        : cmd === '/skipwait_on' || cmd === '/skipwait_off' ? await setSkip(cmd === '/skipwait_on')
+        : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
     } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
     await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
     return reply({ ok: true })
+  }
+
+  async function skipText() {
+    const [{ data: st }, { data: hb }] = await Promise.all([db.from('bot_settings').select('*').eq('id', 1).single(), db.from('bot_heartbeat').select('skip_summary').eq('id', 1).single()])
+    const on = st?.skip_reserved !== false
+    return `Skipping trades Textile makes wait for: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.updated_at)})\n${on ? 'When Textile still reserves funds from the last trade, the bot skips the trade and rescans with fresh prices.' : 'The bot waits up to two minutes for Textile, then trades at the new prices.'}${hb?.skip_summary ? `\nBot count ${hb.skip_summary}` : ''}\n${on ? '/skipwait_off to go back to waiting' : '/skipwait_on to skip again'}`
+  }
+  async function setSkip(on: boolean) {
+    await db.from('bot_settings').update({ skip_reserved: on, updated_at: new Date().toISOString() }).eq('id', 1)
+    return `Done: skipping is now ${on ? 'ON' : 'OFF'}. The bot picks this up within 2 minutes.`
   }
 
   async function statusText() {
@@ -191,10 +206,8 @@ Deno.serve(async (req) => {
   // Make sure Telegram delivers messages here, instantly, with the secret header; and set the "/" menu
   const hook = `${SUPA}/functions/v1/fund-alerts`
   const info = await tg('getWebhookInfo', {})
-  if (info.ok && info.result?.url !== hook) {
-    await tg('setWebhook', { url: hook, secret_token: secret, allowed_updates: ['message'] })
-    await tg('setMyCommands', { commands: COMMANDS })
-  }
+  if (info.ok && info.result?.url !== hook) await tg('setWebhook', { url: hook, secret_token: secret, allowed_updates: ['message'] })
+  await tg('setMyCommands', { commands: COMMANDS }) // keeps the "/" menu in step with COMMANDS
   if (!chat) return reply({ skipped: 'no chat linked yet: send /start to the Telegram bot' })
   const send = (text: string) => tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
 

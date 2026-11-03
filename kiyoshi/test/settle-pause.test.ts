@@ -24,3 +24,11 @@ test('gas top-up never spends more than the cap', () => {
   assert.equal(topUpSpend(2_550_001n, 500_000n), 500_000n)
   assert.equal(topUpSpend(400_000n, 500_000n), 400_000n)
 })
+
+import { settingFrom } from '../src/skip-reserved.js'
+test('skipping is on unless Telegram switched it off', () => {
+  assert.equal(settingFrom({ skip_reserved: false }), false)
+  assert.equal(settingFrom({ skip_reserved: true }), true)
+  assert.equal(settingFrom(null), true)
+  assert.equal(settingFrom({}), true)
+})

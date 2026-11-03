@@ -20,7 +20,9 @@ export async function ensureAllowance(token: Address, spender: Address, required
 
 // One tagged RFQ swap on Textile. sellAmount in atomic units.
 // minReceived: refuse the firm quote (send nothing) if it pays less than this.
-export async function swap(sell: TokenKey, buy: TokenKey, sellAmount: bigint, minReceived?: bigint) {
+// skipIfReserved: when Textile still reserves our funds for an earlier quote, give up at once (status 'reserved')
+// instead of waiting up to two minutes and then trading on stale prices. Only safe before anything was bought.
+export async function swap(sell: TokenKey, buy: TokenKey, sellAmount: bigint, minReceived?: bigint, opts: { skipIfReserved?: boolean } = {}) {
   const sellToken = TOKENS[sell].address
   const buyToken = TOKENS[buy].address
 
@@ -37,6 +39,7 @@ export async function swap(sell: TokenKey, buy: TokenKey, sellAmount: bigint, mi
 
   // Textile also checks our balance onchain and can briefly lag the same way; retry that case only.
   let q: any
+  let waited = false
   for (let i = 0; ; i++) {
     try {
       q = await requestQuote({ sellToken, buyToken, sellAmount: sellAmount.toString() })
@@ -46,8 +49,10 @@ export async function swap(sell: TokenKey, buy: TokenKey, sellAmount: bigint, mi
       if (i < 3 && msg.includes('insufficient_funds')) {
         // Either the RPC is a block behind, or Textile still reserves funds from an earlier quote.
         const m = msg.match(/"retryAfterMs":(\d+)/)
+        if (m && opts.skipIfReserved) return { status: 'reserved' as const, retryAfterMs: Number(m[1]) }
         const wait = m ? Math.min(Number(m[1]) + 2000, 120_000) : 3000
         console.log(`  Textile still sees those funds as reserved, waiting ${Math.round(wait / 1000)}s`)
+        if (m) waited = true
         await new Promise((r) => setTimeout(r, wait))
         continue
       }
@@ -73,6 +78,7 @@ export async function swap(sell: TokenKey, buy: TokenKey, sellAmount: bigint, mi
     status: 'filled' as const,
     rfqId,
     txHash,
+    waited,
     paid: BigInt(quote.takerPays),
     received: BigInt(quote.buyAmount),
     fee: BigInt(quote.feeAmount),
