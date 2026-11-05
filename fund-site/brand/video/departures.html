@@ -1,0 +1,175 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070b16}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "The desk never sleeps": 37 s at night. A split-flap departures board of Kiyoshi's corridors, a wireframe globe
+// with the routes between Lagos, Buenos Aires and São Paulo pulsing on the beat, a 24-hour clock sweeping to the
+// 13:00 Lagos peak, and the end card. Scenes change with a split-flap wipe. Timed to score-lagos.py (112 BPM).
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const main = c.getContext('2d')
+let g = main
+const DUR = 37, BEAT = 60 / 112, BAR = 4 * BEAT
+const NAVY = '#070b16', NAVY2 = '#0e1528', AMBER = '#ffb547', AMBER2 = '#ffd58a', ICE = '#cfe2ff', DIMC = '#2a3350', SOFT = '#c8cfe0', GREY = '#7d86a0'
+const SERIF = 'Caladea, "Liberation Serif", serif', SANS = 'Inter, sans-serif', MONO = '"JetBrains Mono", monospace'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const hash = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+function txt(s, x, y, size, color, alpha = 1, o = {}) { if (alpha <= .003) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore() }
+function dot(x, y, r, color, a = 1) { if (a <= 0) return; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha *= a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, a = 1, open = 1) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .012, e = A0 + (i + 1) * w * open - .012 + (1 - open) * .03; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .05; g.beginPath(); g.arc(cx, cy + r * .05, r * .06, 0, TAU); g.stroke(); g.restore() }
+function backdrop(t) {
+  g.fillStyle = NAVY; g.fillRect(0, 0, 1920, 1080)
+  const vg = g.createRadialGradient(960, 540, 80, 960, 540, 1100); vg.addColorStop(0, 'rgba(40,60,120,.35)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = vg; g.fillRect(0, 0, 1920, 1080)
+  for (let i = 0; i < 120; i++) { const x = hash(i) * 1920, y = hash(i + 500) * 1080, tw = .3 + .7 * Math.sin(t * (1 + hash(i + 9)) + i) ** 2; g.fillStyle = `rgba(207,226,255,${.18 * tw})`; g.fillRect(x, y, 2, 2) }
+}
+
+// ---------- split-flap board ----------
+const CH = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:>.+%-'
+const COLS = 33, CW = 50, CHH = 78
+// rows: [text, the time it starts flipping in]; later rows update their status
+const ROWS0 = ['KIYOSHI  DEPARTURES   01:00', '', 'USDT>CNGN  LAGOS       BOARDING', 'USDT>WARS  BUENOS AIRES BOARDING', 'USDT>WBRL  SAO PAULO   ON TIME', 'USDT>USDC  STABLE      ON TIME']
+const ROWS1 = ['KIYOSHI  DEPARTURES   13:00', '', 'USDT>CNGN  LAGOS       TRADING', 'USDT>WARS  BUENOS AIRES GAP 9 BPS', 'USDT>WBRL  SAO PAULO   TRADING', 'USDT>USDC  STABLE      SETTLED']
+function flapChar(target, t0, t, seed) { // flips through a few letters, then settles
+  const steps = 4 + Math.floor(hash(seed) * 6), dtS = .055, k = Math.floor((t - t0) / dtS)
+  if (t < t0) return { ch: ' ', flip: 0 }
+  if (k >= steps) return { ch: target, flip: 0 }
+  return { ch: CH[Math.floor(hash(seed * 7 + k) * CH.length)], flip: ((t - t0) / dtS) % 1 }
+}
+function cell(x, y, ch, flip, color) {
+  g.fillStyle = '#121a2e'; g.beginPath(); g.roundRect(x, y, CW - 6, CHH - 8, 6); g.fill()
+  g.fillStyle = 'rgba(255,255,255,.03)'; g.fillRect(x, y, CW - 6, (CHH - 8) / 2)
+  if (ch !== ' ') {
+    g.save(); g.beginPath(); g.rect(x, y, CW - 6, CHH - 8); g.clip()
+    const sy = flip > 0 ? Math.abs(Math.cos(flip * Math.PI)) : 1
+    g.translate(x + (CW - 6) / 2, y + (CHH - 8) / 2); g.scale(1, Math.max(.05, sy))
+    txt(ch, 0, 2, 50, color, 1, { font: MONO, weight: 700 }); g.restore()
+  }
+  g.fillStyle = '#05080f'; g.fillRect(x, y + (CHH - 8) / 2 - 1, CW - 6, 2)
+}
+function board(t) {
+  backdrop(t)
+  const x0 = 960 - COLS * CW / 2, y0 = 200
+  const upd = 4 * BAR // the board updates to 13:00 as the groove comes in
+  ROWS0.forEach((r0, ri) => {
+    const r1 = ROWS1[ri], start = .4 + ri * .55
+    for (let ci = 0; ci < COLS; ci++) {
+      const a = (r0[ci] || ' '), b = (r1[ci] || ' ')
+      const changed = a !== b, t1 = upd + ri * .25 + ci * .03
+      let f
+      if (changed && t >= t1) f = flapChar(b, t1, t, ri * 100 + ci + 7)
+      else f = flapChar(a, start + ci * .035, t, ri * 100 + ci)
+      const col = ri === 0 ? AMBER2 : ci >= 24 ? (b.startsWith('GAP') && t >= t1 ? '#7ee0a0' : AMBER) : AMBER
+      if (ri === 1) continue
+      cell(x0 + ci * CW, y0 + ri * (CHH + 10), f.ch, f.flip, col)
+    }
+  })
+  txt('Celo FX corridors · every one, every hour', 960, 860, 40, SOFT, smooth((t - 3.4) / .8), { italic: true })
+  txt('The desk never sleeps.', 960, 930, 56, ICE, smooth((t - 10) / .8), { weight: 700 })
+}
+
+// ---------- the globe ----------
+const CITIES = { LAGOS: [6.5, 3.4], 'BUENOS AIRES': [-34.6, -58.4], 'SAO PAULO': [-23.5, -46.6] }
+function proj(lat, lon, rot, R, cx, cy) {
+  const la = lat * Math.PI / 180, lo = (lon + rot) * Math.PI / 180, tilt = -.35
+  let x = Math.cos(la) * Math.sin(lo), y = Math.sin(la), z = Math.cos(la) * Math.cos(lo)
+  const y2 = y * Math.cos(tilt) - z * Math.sin(tilt), z2 = y * Math.sin(tilt) + z * Math.cos(tilt)
+  return { x: cx + x * R, y: cy - y2 * R, z: z2 }
+}
+function arc(a, b, rot, R, cx, cy, n = 60) { // great circle, lifted
+  const toV = ([la, lo]) => { la *= Math.PI / 180; lo *= Math.PI / 180; return [Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)] }
+  const A = toV(a), B = toV(b), pts = []
+  for (let k = 0; k <= n; k++) { const u = k / n, v = A.map((q, i) => q * (1 - u) + B[i] * u), L = Math.hypot(...v), lift = 1 + .22 * Math.sin(Math.PI * u)
+    const la = Math.asin(v[2] / L) * 180 / Math.PI, lo = Math.atan2(v[1], v[0]) * 180 / Math.PI, p = proj(la, lo, rot, R * lift, cx, cy); pts.push(p) }
+  return pts
+}
+function globe(t) {
+  backdrop(t)
+  const lt = t - 8 * BAR, rot = 20 + lt * 6, R = 380, cx = 960, cy = 560
+  dot(cx, cy, R * 1.5, 'rgba(60,100,200,.25)')
+  g.save(); g.beginPath(); g.arc(cx, cy, R, 0, TAU); g.fillStyle = '#0b1430'; g.fill(); g.strokeStyle = 'rgba(207,226,255,.35)'; g.lineWidth = 1.5; g.stroke(); g.restore()
+  g.save(); g.strokeStyle = 'rgba(207,226,255,.12)'; g.lineWidth = 1
+  for (let lat = -75; lat <= 75; lat += 15) { g.beginPath(); let on = false; for (let lon = -180; lon <= 180; lon += 4) { const p = proj(lat, lon, rot, R, cx, cy); if (p.z > 0) { on ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y); on = true } else on = false } g.stroke() }
+  for (let lon = -180; lon < 180; lon += 15) { g.beginPath(); let on = false; for (let lat = -90; lat <= 90; lat += 4) { const p = proj(lat, lon, rot, R, cx, cy); if (p.z > 0) { on ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y); on = true } else on = false } g.stroke() }
+  g.restore()
+  const routes = [['LAGOS', 'BUENOS AIRES'], ['LAGOS', 'SAO PAULO'], ['SAO PAULO', 'BUENOS AIRES']]
+  routes.forEach(([a, b], ri) => {
+    const pts = arc(CITIES[a], CITIES[b], rot, R, cx, cy), k = smooth((lt - .4 - ri * .5) / 1.2), n = Math.floor(pts.length * k)
+    g.save(); g.strokeStyle = AMBER; g.lineCap = 'round'
+    for (const [w, al] of [[8, .08], [3.5, .25], [1.8, 1]]) { g.globalAlpha = al; g.lineWidth = w; g.beginPath(); for (let i = 0; i < n; i++) { const p = pts[i]; i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y) } g.stroke() }
+    g.restore()
+    if (k >= 1) { const q = ((lt - ri * BEAT) / (2 * BEAT)) % 1, p = pts[Math.floor(q * (pts.length - 1))]; dot(p.x, p.y, 22, 'rgba(255,213,138,.95)'); dot(p.x, p.y, 5, '#fff') }
+  })
+  for (const [name, [la, lo]] of Object.entries(CITIES)) { const p = proj(la, lo, rot, R, cx, cy); if (p.z < 0) continue
+    const pulse = .5 + .5 * Math.cos((lt / BEAT) * TAU); dot(p.x, p.y, 26 + 10 * pulse, 'rgba(255,181,71,.6)'); dot(p.x, p.y, 5, '#fff')
+    txt(name, p.x + (name === 'LAGOS' ? 20 : -20), p.y - 22, 20, AMBER2, smooth((lt - .3) / .6), { font: MONO, weight: 600, align: name === 'LAGOS' ? 'left' : 'right', spacing: 3 }) }
+  txt('Lagos. Buenos Aires. São Paulo.', 960, 110, 52, ICE, smooth((lt - .2) / .7), { weight: 700 })
+  txt('One wallet, three corridors, settled on Celo.', 960, 1010, 34, SOFT, smooth((lt - 1.5) / .7), { italic: true })
+}
+
+// ---------- the clock ----------
+function clock(t) {
+  backdrop(t)
+  const lt = t - 12 * BAR, cx = 960, cy = 520, R = 330
+  const hour = lerp(1, 13.6, smooth(lt / 4.2)) // the hand sweeps from 01:00 to the peak
+  for (let h = 0; h < 24; h++) { const a0 = h / 24 * TAU - Math.PI / 2 + .012, a1 = (h + 1) / 24 * TAU - Math.PI / 2 - .012, pk = h === 13 || h === 14, lit = hour >= h + .5
+    g.save(); g.strokeStyle = pk ? AMBER : lit ? '#4a5a8a' : DIMC; g.lineWidth = pk ? 46 : 26; g.globalAlpha = pk && hour > 13 ? 1 : .9; g.beginPath(); g.arc(cx, cy, R, a0, a1); g.stroke(); g.restore()
+    if (h % 3 === 0) { const a = h / 24 * TAU - Math.PI / 2; txt(String(h).padStart(2, '0'), cx + Math.cos(a) * (R - 64), cy + Math.sin(a) * (R - 64), 22, GREY, 1, { font: MONO }) } }
+  if (hour > 13) dot(cx + Math.cos((13.5 / 24) * TAU - Math.PI / 2) * R, cy + Math.sin((13.5 / 24) * TAU - Math.PI / 2) * R, 160, 'rgba(255,181,71,.45)', smooth((hour - 13) / .5))
+  const a = hour / 24 * TAU - Math.PI / 2
+  g.save(); g.strokeStyle = ICE; g.lineWidth = 5; g.lineCap = 'round'; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * (R - 90), cy + Math.sin(a) * (R - 90)); g.stroke(); g.restore()
+  fan(cx, cy + 10, 56, AMBER)
+  txt(`${String(Math.floor(hour)).padStart(2, '0')}:${String(Math.floor((hour % 1) * 60)).padStart(2, '0')} LAGOS`, cx, cy + 92, 30, AMBER2, 1, { font: MONO, weight: 600, spacing: 4 })
+  txt('13:00 in Lagos. Buenos Aires wakes up.', 960, 950, 46, ICE, smooth((lt - 3.6) / .7), { weight: 700 })
+  txt('The gaps open. Kiyoshi is already there.', 960, 1012, 32, SOFT, smooth((lt - 4.4) / .7), { italic: true })
+}
+
+// ---------- end card ----------
+function endCard(t) {
+  backdrop(t)
+  const lt = t - 15 * BAR
+  fan(960, 420, 190, AMBER, smooth((lt + .2) / .6), smooth(lt / 1.2))
+  txt('MIDAS × KIYOSHI', 960, 610, 76, ICE, smooth((lt - .5) / .6), { weight: 700, spacing: 16 })
+  txt('THE DESK NEVER SLEEPS', 960, 690, 26, AMBER, smooth((lt - 1) / .6), { font: MONO, weight: 600, spacing: 10 })
+  txt('Past results don’t guarantee future returns.', 960, 820, 18, GREY, smooth((lt - 1.8) / .6), { font: SANS })
+}
+
+// ---------- scenes and split-flap wipes ----------
+const SCENES = [[board, 0], [globe, 8 * BAR], [clock, 12 * BAR], [endCard, 15 * BAR]]
+const WIPE = 1.0
+const off = [0, 1].map(() => { const cv = document.createElement('canvas'); cv.width = W; cv.height = H; return cv })
+function render(fn, t, cv) { const x = cv.getContext('2d'); x.setTransform(W / 1920, 0, 0, H / 1080, 0, 0); g = x; fn(t); g = main }
+function draw(t) {
+  let i = SCENES.length - 1; while (i > 0 && t < SCENES[i][1] - WIPE / 2) i--
+  const [fn, t0] = SCENES[i], inWipe = i > 0 && t < t0 + WIPE / 2
+  main.setTransform(1, 0, 0, 1, 0, 0)
+  if (!inWipe) { render(fn, t, off[0]); main.drawImage(off[0], 0, 0) }
+  else {
+    render(SCENES[i - 1][0], t, off[0]); render(fn, t, off[1])
+    main.drawImage(off[0], 0, 0)
+    const cols = 24, rows = 14, tw = W / cols, th = H / rows, p = (t - (t0 - WIPE / 2)) / WIPE
+    for (let r = 0; r < rows; r++) for (let cI = 0; cI < cols; cI++) {
+      const d = (cI / cols) * .55 + hash(r * 31 + cI) * .25, k = clamp((p - d) / .2)
+      if (k <= 0) continue
+      const x = cI * tw, y = r * th
+      if (k >= 1) { main.drawImage(off[1], x, y, tw, th, x, y, tw, th); continue }
+      // the flap: the old tile folds down to an edge, then the new one unfolds
+      const s = Math.abs(Math.cos(k * Math.PI)), src = k < .5 ? off[0] : off[1]
+      main.fillStyle = NAVY; main.fillRect(x, y, tw, th)
+      main.drawImage(src, x, y, tw, th, x, y + th * (1 - s) / 2, tw, th * s)
+      main.fillStyle = 'rgba(0,0,0,.35)'; main.fillRect(x, y + th / 2 - 1, tw, 2)
+    }
+  }
+  main.globalAlpha = clamp(1 - t / .5) + clamp((t - (DUR - 1)) / 1); main.fillStyle = '#000'; main.fillRect(0, 0, W, H); main.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = Promise.resolve()
+draw(+(P.get('t') || 6))
+</script>
+</body></html>
