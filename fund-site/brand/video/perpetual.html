@@ -117,6 +117,15 @@ function limb(ax, ay, bx, by, wa, wb, base, light, dark) {
   gr.addColorStop(0, dark); gr.addColorStop(.35, light); gr.addColorStop(.6, base); gr.addColorStop(1, dark)
   g.fillStyle = gr; g.beginPath(); g.moveTo(ax + nx * wa, ay + ny * wa); g.lineTo(bx + nx * wb, by + ny * wb); g.arc(bx, by, wb, Math.atan2(ny, nx), Math.atan2(-ny, -nx)); g.lineTo(ax - nx * wa, ay - ny * wa); g.arc(ax, ay, wa, Math.atan2(-ny, -nx), Math.atan2(ny, nx)); g.fill()
 }
+// a jointed limb as one continuous shaded stroke (no seam at the knee or elbow)
+function limb3(p0, p1, p2, w0, w2, base, light, dark) {
+  g.save(); g.lineCap = g.lineJoin = 'round'
+  const path = () => { g.beginPath(); g.moveTo(p0[0], p0[1]); g.quadraticCurveTo(p1[0], p1[1], (p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2); g.lineTo(p2[0], p2[1]) }
+  g.strokeStyle = dark; g.lineWidth = w0 * 2; path(); g.stroke()
+  g.strokeStyle = base; g.lineWidth = w0 * 1.62; path(); g.stroke()
+  g.strokeStyle = light; g.globalAlpha = .55; g.lineWidth = w0 * .55; g.translate(-w0 * .25, -w0 * .25); path(); g.stroke()
+  g.restore()
+}
 function hand(x, y, ang, s = 1) {
   g.save(); g.translate(x, y); g.rotate(ang)
   const gr = g.createLinearGradient(0, -9 * s, 0, 9 * s); gr.addColorStop(0, '#e2b896'); gr.addColorStop(1, '#b98663')
@@ -141,21 +150,33 @@ function man(cx, cy, w) {
   g.restore()
   // limbs, posed
   const SUIT = ['#5a5e66', '#7c818b', '#33363c'], SHOE = ['#1a1a1c', '#4a4a50', '#050506']
+  // legs: the thigh swings out from the hip and the shin bends back in, so each knee shows
   const legs = []
   for (const s of [-1, 1]) {
-    const a = s * lerp(.12, .55, sweep), hip = [18, s * 24], kn = [hip[0] + Math.cos(a) * 102, hip[1] + Math.sin(a) * 102], an = [kn[0] + Math.cos(a * .9) * 96, kn[1] + Math.sin(a * .9) * 96]
-    legs.push([hip, kn, an, a])
+    const a = s * lerp(.1, .5, sweep), b = a - s * .26, hip = [20, s * 26]
+    const kn = [hip[0] + Math.cos(a) * 104, hip[1] + Math.sin(a) * 104], an = [kn[0] + Math.cos(b) * 98, kn[1] + Math.sin(b) * 98]
+    legs.push([hip, kn, an, b, a])
   }
+  // arms: each stays on its own side, sweeping from down by his side (along the body) to up past his head,
+  // with the elbow a little bent
   const arms = []
   for (const s of [-1, 1]) {
-    const a = Math.PI + s * lerp(2.45, .75, sweep) // from down by his sides to up past his shoulders
-    const sh = [-92, s * 44], el = [sh[0] + Math.cos(a) * 80, sh[1] + Math.sin(a) * 80], b = a - s * .18, wr = [el[0] + Math.cos(b) * 74, el[1] + Math.sin(b) * 74]
+    const a = s * lerp(.38, 2.72, sweep), b = a + s * .28
+    const sh = [-92, s * 46], el = [sh[0] + Math.cos(a) * 78, sh[1] + Math.sin(a) * 78], wr = [el[0] + Math.cos(b) * 72, el[1] + Math.sin(b) * 72]
     arms.push([sh, el, wr, b])
   }
   // soft shadow under the whole figure
   g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 22; g.shadowOffsetX = 6; g.shadowOffsetY = 10; g.fillStyle = 'rgba(0,0,0,.35)'
   g.beginPath(); g.roundRect(-110, -56, 150, 112, 30); g.fill(); g.restore()
-  for (const [hip, kn, an] of legs) { limb(hip[0], hip[1], kn[0], kn[1], 21, 17, ...SUIT); limb(kn[0], kn[1], an[0], an[1], 17, 14, ...SUIT) }
+  for (const [hip, kn, an, sb, ta] of legs) {
+    limb3(hip, kn, an, 19, 14, ...SUIT)
+    // the knee: a soft highlight on the kneecap and the fold of the trousers behind it
+    g.save(); g.translate(kn[0], kn[1]); g.rotate((ta + sb) / 2)
+    const kg = g.createRadialGradient(-3, -3, 1, 0, 0, 14); kg.addColorStop(0, 'rgba(170,176,188,.55)'); kg.addColorStop(1, 'rgba(170,176,188,0)')
+    g.fillStyle = kg; g.beginPath(); g.ellipse(0, 0, 13, 15, 0, 0, TAU); g.fill()
+    g.strokeStyle = 'rgba(20,21,24,.45)'; g.lineWidth = 1.4; for (const d of [-8, 8]) { g.beginPath(); g.moveTo(8, d); g.quadraticCurveTo(13, d * .45, 19, d * .85); g.stroke() }
+    g.restore()
+  }
   for (const [, , an, a] of legs) { g.save(); g.translate(an[0], an[1]); g.rotate(a); const sg = g.createLinearGradient(0, -12, 0, 12); sg.addColorStop(0, SHOE[1]); sg.addColorStop(.5, SHOE[0]); sg.addColorStop(1, SHOE[2]); g.fillStyle = sg; g.beginPath(); g.ellipse(22, 0, 30, 13, 0, 0, TAU); g.fill(); g.fillStyle = 'rgba(255,255,255,.18)'; g.beginPath(); g.ellipse(30, -4, 10, 3, 0, 0, TAU); g.fill(); g.restore() }
   // torso: jacket with lapels, shirt and tie
   const jg = g.createLinearGradient(0, -60, 0, 60); jg.addColorStop(0, SUIT[2]); jg.addColorStop(.3, SUIT[1]); jg.addColorStop(.55, SUIT[0]); jg.addColorStop(1, SUIT[2])
@@ -167,7 +188,7 @@ function man(cx, cy, w) {
   g.fillStyle = '#1d1e22'; for (const bx of [-30, -6]) { g.beginPath(); g.arc(bx, 0, 3.2, 0, TAU); g.fill() }
   g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(-40, 0); g.lineTo(34, -6); g.moveTo(-40, 0); g.lineTo(34, 6); g.stroke()
   // arms over the jacket, white cuffs, hands
-  for (const [sh, el, wr, b] of arms) { limb(sh[0], sh[1], el[0], el[1], 17, 14, ...SUIT); limb(el[0], el[1], wr[0], wr[1], 14, 11, ...SUIT)
+  for (const [sh, el, wr, b] of arms) { limb3(sh, el, wr, 15, 11, ...SUIT)
     g.save(); g.translate(wr[0], wr[1]); g.rotate(b); g.fillStyle = '#efeee9'; g.fillRect(-2, -10, 8, 20); g.restore(); hand(wr[0] + Math.cos(b) * 6, wr[1] + Math.sin(b) * 6, b, 1.05) }
   // collar and the coin head
   g.fillStyle = '#ecebe6'; g.beginPath(); g.ellipse(-120, 0, 10, 20, 0, 0, TAU); g.fill()
