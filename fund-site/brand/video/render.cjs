@@ -9,6 +9,7 @@ const FPS = 30
   const page = await browser.newPage({ viewport: { width: +w, height: +h } })
   await page.goto('file://' + path.join(__dirname, process.env.SCENE || 'scene.html') + `?w=${w}&h=${h}`)
   await page.evaluate(() => document.fonts.ready)
+  await page.evaluate(() => window.READY || null) // scenes that load images
   const DUR = await page.evaluate(() => window.DUR || 30)
   const frame = (t) => page.evaluate((t) => { window.draw(t); return document.getElementById('c').toDataURL('image/jpeg', 0.93) }, t)
   if (mode === 'stills') {

@@ -1,0 +1,266 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070707}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script src="teaser-assets/assets.js"></script>
+<script>
+// Midas × Kiyoshi: "Coming soon". 44 s, one continuous camera through four chapters (the engine, the desk,
+// the fund, the pass) to the end card, timed to score-riviera.py (72 BPM: beat 0.833 s, bar 3.333 s).
+// Everything is drawn here; draw(t) is deterministic so render.cjs can capture it (SCENE=coming-soon.html).
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 44, BEAT = 60 / 72, BAR = 4 * BEAT
+const BG = '#070707', INK = '#0d0c0a', WHITE = '#F4F4F0', SOFT = '#cfc9bd', GREY = '#8C8C88', DIM = '#3a362e', GOLD = '#D4AF37', GOLD2 = '#F3D77A', GREEN = '#7fbf8f'
+const SERIF = 'Caladea, "Liberation Serif", serif', SANS = 'Inter, sans-serif', MONO = '"JetBrains Mono", "DejaVu Sans Mono", monospace'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const easeOut = (x) => 1 - Math.pow(1 - clamp(x), 3)
+const R = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+const inout = (lt, a, b, f = .5) => smooth((lt - a) / f) * (1 - smooth((lt - b) / f)) // fade in at a, out at b
+
+// ---------- images (the pass artwork, rendered from the pass page) ----------
+const IM = {}
+const load = (k, src) => new Promise((ok) => { const i = new Image(); i.onload = () => { IM[k] = i; ok() }; i.onerror = ok; i.src = src })
+window.READY = Promise.all(Object.entries(window.TEASER_IMG || {}).map(([k, src]) => load(k, src))) // data URIs, so frames can be exported
+
+// ---------- drawing helpers ----------
+function txt(s, x, y, size, color, alpha = 1, o = {}) {
+  if (alpha <= .003) return
+  g.save(); g.globalAlpha *= alpha; g.fillStyle = color
+  g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SANS}`
+  g.textAlign = o.align || 'center'; g.textBaseline = 'alphabetic'
+  if (o.spacing) g.letterSpacing = o.spacing + 'px'
+  g.fillText(s, x, y); g.restore()
+}
+function line(x1, y1, x2, y2, color, w, alpha = 1) { if (alpha <= 0) return; g.save(); g.globalAlpha *= alpha; g.strokeStyle = color; g.lineWidth = w; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.restore() }
+function glow(pts, color, width, alpha) {
+  if (alpha <= 0 || pts.length < 2) return
+  g.save(); g.strokeStyle = color; g.lineJoin = g.lineCap = 'round'
+  for (const [w, a] of [[width * 7, .06], [width * 3, .14], [width, 1]]) { g.globalAlpha = alpha * a; g.lineWidth = w; g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke() }
+  g.restore()
+}
+function dot(x, y, r, color, alpha) { if (alpha <= 0) return; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha *= alpha; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill(); g.restore() }
+function ring(x, y, r, color, w, alpha, a0 = 0, a1 = Math.PI * 2) { if (alpha <= 0) return; g.save(); g.globalAlpha *= alpha; g.strokeStyle = color; g.lineWidth = w; g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke(); g.restore() }
+function rosette(cx, cy, r, color, alpha, n = 14, a = 7, b = .6, lw = 1) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha *= alpha; g.strokeStyle = color; g.lineWidth = lw
+  for (let j = 0; j < n; j++) { g.beginPath(); const ph = (j / n) * Math.PI * 2 / a
+    for (let t = 0; t <= Math.PI * 2 + .02; t += .03) { const rr = r * (1 - b / 2 + (b / 2) * Math.cos(a * t + ph)); const x = cx + Math.cos(t) * rr, y = cy + Math.sin(t) * rr; t ? g.lineTo(x, y) : g.moveTo(x, y) }
+    g.stroke() }
+  g.restore()
+}
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, p, color, alpha) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha *= alpha; g.fillStyle = color
+  const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) {
+    const gp = .011 * Math.min(1, p * 2.2), s = A0 + i * w * p + gp, e = A0 + (i + 1) * w * p - gp + (1 - p) * .03, ri = r * .06
+    g.beginPath(); g.moveTo(cx + Math.cos(s) * ri, cy + Math.sin(s) * ri); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r)
+    g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * ri, cy + Math.sin(e) * ri); g.closePath(); g.fill()
+  }
+  if (p > .75) { const ha = A0 + (A1 - A0) * .82 * p; g.globalAlpha = alpha * clamp((p - .75) * 6); g.fillStyle = BG; g.beginPath(); g.arc(cx + Math.cos(ha) * r * .76, cy + Math.sin(ha) * r * .76, r * .075, 0, 7); g.fill() }
+  g.globalAlpha = alpha; g.fillStyle = color; const lr = r * .13, ly = cy + r * .03
+  for (let i = 0; i < 6; i++) { const s = Math.PI * (.12 + .76 * i / 6) + .04, e = Math.PI * (.12 + .76 * (i + 1) / 6) - .04
+    g.beginPath(); g.moveTo(cx + Math.cos(s) * lr * .35, ly + Math.sin(s) * lr * .35); g.arc(cx, ly, lr, s, e); g.arc(cx, ly, lr * .35, e, s, true); g.closePath(); g.fill() }
+  g.strokeStyle = color; g.lineWidth = lr * .14; g.beginPath(); g.arc(cx, ly, lr * .3, 0, 7); g.stroke()
+  g.restore()
+}
+// chapter label: "CHAPTER II", a title and a line, anchored in the world under each scene
+function chapter(x, y, num, title, sub, lt) {
+  const a = smooth((lt - .25) / .6)
+  txt(`CHAPTER ${num}`, x, y, 20, GOLD, a, { font: MONO, spacing: 7 })
+  txt(title, x, y + 64, 60, WHITE, smooth((lt - .45) / .6), { font: SERIF, weight: 700, spacing: 12 })
+  line(x - 220 * easeOut((lt - .6) / .9), y + 88, x + 220 * easeOut((lt - .6) / .9), y + 88, GOLD, 1.5, .8 * a)
+  txt(sub, x, y + 132, 30, SOFT, smooth((lt - .8) / .6), { font: SERIF, italic: true })
+}
+function caption(s, x, y, lt, a, b, size = 46) { txt(s, x, y, size, WHITE, inout(lt, a, b, .45), { font: SERIF, weight: 700 }) }
+
+// ---------- chapter I: the engine ----------
+function engine(lt) {
+  const prog = easeOut((lt - .2) / 2.4), x0 = -760, x1 = 760
+  const wave = (off, s) => { const a = []; for (let x = x0; x <= x0 + (x1 - x0) * prog; x += 6) a.push([x, off + Math.sin(x / 90 + s + lt * .6) * 12 + Math.sin(x / 37 + s * 2 + lt) * 5]); return a }
+  const gapOpen = smooth((lt - 1.8) / 1.4), A = wave(-70 - 26 * gapOpen, 0), B = wave(70 + 26 * gapOpen, 1.3)
+  if (A.length > 1) { g.save(); g.globalAlpha = .14 * gapOpen; g.fillStyle = GOLD; g.beginPath(); A.forEach(([x, y], j) => (j ? g.lineTo(x, y) : g.moveTo(x, y))); for (let j = B.length - 1; j >= 0; j--) g.lineTo(B[j][0], B[j][1]); g.closePath(); g.fill(); g.restore() }
+  glow(A, WHITE, 2.2, .9); glow(B, GOLD2, 2.2, .9)
+  txt('TEXTILE FX', x0, -150, 16, WHITE, smooth((lt - .4) / .5) * .8, { font: MONO, align: 'left', spacing: 4 })
+  txt('UNISWAP V3', x0, 186, 16, GOLD2, smooth((lt - .4) / .5) * .8, { font: MONO, align: 'left', spacing: 4 })
+  fan(0, 22, 92, smooth((lt - 3.2) / 1.4), GOLD, smooth((lt - 3) / .4))
+  // trades: a dot rises from the cheap side to the dear side on every beat
+  for (let k = 0; k < 6; k++) { const t0 = 4.6 + k * BEAT, q = (lt - t0) / .7; if (q < 0 || q > 1.3) continue
+    const x = -520 + k * 210, y = lerp(96, -96, smooth(q)); dot(x, y, 26, 'rgba(243,215,122,.9)', 1 - clamp((q - 1) / .3)); dot(x, y, 6, '#fff', 1 - clamp((q - 1) / .3)) }
+  caption('Two markets. One currency.', 0, -300, lt, .6, 2.8)
+  caption('Sometimes, they disagree.', 0, -300, lt, 3.1, 4.6)
+  caption('Kiyoshi lives in the gap.', 0, -300, lt, 4.9, 9.4)
+  chapter(0, 300, 'I', 'THE ENGINE', 'Celo FX arbitrage, built by Mel', lt - 5.4)
+}
+
+// ---------- chapter II: the desk ----------
+function medallion(x, y, r, lt, kind) {
+  const k = smooth(lt / .6)
+  if (k <= 0) return
+  g.save(); g.translate(x, y); g.scale(.85 + .15 * k, .85 + .15 * k)
+  dot(0, 0, r * 1.5, 'rgba(212,175,55,.16)', k)
+  g.fillStyle = INK; g.globalAlpha = k; g.beginPath(); g.arc(0, 0, r, 0, 7); g.fill(); g.restore()
+  g.save(); g.translate(x, y)
+  ring(0, 0, r, GOLD, 2, k); ring(0, 0, r - 10, GOLD, .8, .45 * k)
+  if (kind === 'cloud') {
+    for (let h = 0; h < 24; h++) { const a = h / 24 * Math.PI * 2; line(Math.cos(a) * (r - 34), Math.sin(a) * (r - 34), Math.cos(a) * (r - 22), Math.sin(a) * (r - 22), GOLD, h % 6 ? 1 : 2.5, .8 * k) }
+    const a = -Math.PI / 2 + lt * 1.6; glow([[0, 0], [Math.cos(a) * (r - 44), Math.sin(a) * (r - 44)]], GOLD2, 2.5, k)
+    txt('24/7', 0, 44, 22, WHITE, k, { font: MONO })
+  } else if (kind === 'pulse') {
+    const pts = [], n = easeOut((lt - .2) / 1.6) * 2 * (r - 30)
+    for (let x = 0; x <= n; x += 3) { const ph = ((x + lt * 60) % 90) / 90, yv = ph > .45 && ph < .53 ? -44 * Math.sin((ph - .45) / .08 * Math.PI) : ph > .53 && ph < .59 ? 18 * Math.sin((ph - .53) / .06 * Math.PI) : 0; pts.push([-(r - 30) + x, yv]) }
+    glow(pts, GOLD2, 2.2, k)
+  } else if (kind === 'gas') {
+    const lvl = lt < 1.4 ? lerp(.7, .07, smooth(lt / 1.4)) : lerp(.07, .92, smooth((lt - 1.4) / .8))
+    g.save(); g.beginPath(); g.arc(0, 0, r - 26, 0, 7); g.clip()
+    g.globalAlpha = .9 * k; g.fillStyle = lvl < .1 ? '#c8645a' : GOLD; const top = (r - 26) - 2 * (r - 26) * lvl
+    g.beginPath(); g.moveTo(-r, r); for (let x = -r; x <= r; x += 6) g.lineTo(x, top + Math.sin(x / 14 + lt * 4) * 3); g.lineTo(r, r); g.closePath(); g.fill(); g.restore()
+    txt('CELO', 0, 10, 26, lvl < .1 ? WHITE : INK, k, { font: MONO, weight: 600, spacing: 3 })
+  } else if (kind === 'clock') {
+    for (let h = 0; h < 24; h++) { const a0 = h / 24 * Math.PI * 2 - Math.PI / 2 + .02, a1 = (h + 1) / 24 * Math.PI * 2 - Math.PI / 2 - .02, pk = h === 13 || h === 14
+      ring(0, 0, r - 38, pk ? GOLD2 : DIM, pk ? 30 : 18, k * smooth((lt - h * .03) / .3), a0, a1) }
+    const a = (13.5 / 24) * Math.PI * 2 - Math.PI / 2; glow([[0, 0], [Math.cos(a) * (r - 62), Math.sin(a) * (r - 62)]], WHITE, 2.5, smooth((lt - .9) / .4))
+  }
+  g.restore()
+}
+function desk(lt) {
+  const items = [['cloud', 'ALWAYS ON', 'Runs 24/7 in the cloud'], ['pulse', 'REPORTS IN', 'Signed heartbeat, Telegram alerts'], ['gas', 'PAYS ITS GAS', 'Tops itself up, never runs dry'], ['clock', 'SMART SIZING', 'Trade size follows the clock']]
+  items.forEach(([kind, title, sub], i) => {
+    const x = -630 + i * 420, t0 = .5 + i * BEAT * 1.25
+    medallion(x, -70, 140, lt - t0, kind)
+    txt(title, x, 130, 20, GOLD, smooth((lt - t0 - .3) / .5), { font: MONO, spacing: 5 })
+    txt(sub, x, 170, 24, SOFT, smooth((lt - t0 - .45) / .5), { font: SANS })
+  })
+  caption('The Midas edition.', 0, -320, lt, .3, 9.4)
+  chapter(0, 260, 'II', 'THE DESK', 'Built for a fund, run like a trading desk', lt - 5.4)
+}
+
+// ---------- chapter III: the fund ----------
+function fundScene(lt) {
+  const vx = 0, vy = -40
+  rosette(vx, vy, 210, GOLD, .22 * smooth(lt / .8), 18, 9, .55, 1.2)
+  ring(vx, vy, 150, GOLD, 2.5, smooth((lt - .2) / .6)); ring(vx, vy, 132, GOLD, .8, .5 * smooth((lt - .3) / .6))
+  fan(vx, vy + 12, 82, smooth((lt - .4) / 1.2), GOLD, smooth((lt - .3) / .5))
+  // members: wallets on the left send coins in; shares go out to the right on every beat
+  const ys = [-190, -40, 110]
+  ys.forEach((y, i) => { const k = smooth((lt - .3 - i * .15) / .5); g.save(); g.globalAlpha = k; g.beginPath(); g.roundRect(-700, vy + y - 34, 120, 68, 12); g.fillStyle = INK; g.fill(); g.strokeStyle = GOLD; g.lineWidth = 1.5; g.stroke(); g.restore(); dot(-600, vy + y, 9, GOLD2, k) })
+  for (let k = 0; k < 9; k++) { const t0 = 1.2 + k * BEAT * .9, q = (lt - t0) / 1.1; if (q < 0 || q > 1) continue
+    const y0 = vy + ys[k % 3], x = lerp(-580, -150, smooth(q)), y = lerp(y0, vy, smooth(q)); dot(x, y, 18, 'rgba(243,215,122,.9)', 1 - smooth((q - .85) / .15)); dot(x, y, 5, '#fff', 1) }
+  // the share price rises as the bot trades
+  const px0 = 230, pw = 470, prog = easeOut((lt - 2.2) / 4.5), pts = []
+  for (let x = 0; x <= pw * prog; x += 5) pts.push([px0 + x, vy + 90 - x * .32 - Math.sin(x / 26) * 7 - Math.sin(x / 9) * 2])
+  glow(pts, GOLD2, 2.4, smooth((lt - 2.2) / .5))
+  if (pts.length) dot(pts[pts.length - 1][0], pts[pts.length - 1][1], 16, 'rgba(255,240,190,.9)', smooth((lt - 2.4) / .5))
+  txt('SHARE PRICE', px0, vy + 140, 18, GOLD, smooth((lt - 2.4) / .5), { font: MONO, align: 'left', spacing: 4 })
+  txt('MEMBERS', -640, vy + 200, 18, GOLD, smooth((lt - .6) / .5), { font: MONO, spacing: 4 })
+  caption('Members share one bot.', 0, -320, lt, .3, 3.3)
+  caption('One share price. Settled daily.', 0, -320, lt, 3.6, 6.6)
+  caption('Fees only on profit.', 0, -320, lt, 6.9, 9.4)
+  chapter(0, 260, 'III', 'THE FUND', 'The Midas × Kiyoshi Fund, on Celo', lt - 5.4)
+}
+
+// ---------- chapter IV: the pass ----------
+function img(k, x, y, w, h, alpha = 1, rot = 0) { const i = IM[k]; if (!i || alpha <= 0) return; g.save(); g.globalAlpha *= alpha; g.translate(x, y); g.rotate(rot); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 40; g.shadowOffsetY = 18; g.drawImage(i, -w / 2, -h / 2, w, h); g.restore() }
+function passScene(lt) {
+  // 0-3.3 s: the six cards fan out; 3.3-4.3 s: they gather into the frame; then passes shuffle on the beat; 6.7 s: the 1/1
+  const gather = smooth((lt - 3.1) / 1.1)
+  for (let i = 0; i < 6; i++) {
+    const k = smooth((lt - .2 - i * .14) / .9); if (k <= 0) continue
+    const ang = (i - 2.5) * .15 * k, fx = (i - 2.5) * 230 * k, fy = -40 + Math.abs(i - 2.5) * 30 * k
+    img('card' + i, lerp(fx, 0, gather), lerp(fy, -40, gather), lerp(400, 300, gather), lerp(250, 187, gather), k * (1 - gather), lerp(ang, 0, gather))
+  }
+  const fk = smooth((lt - 3.5) / .7)
+  if (fk > 0) {
+    const s = 500 * (.85 + .15 * fk), cy = -60
+    dot(0, cy, 520, 'rgba(212,175,55,.22)', fk)
+    g.save(); g.globalAlpha = fk; g.strokeStyle = GOLD; g.lineWidth = 2; g.strokeRect(-s / 2 - 16, cy - s / 2 - 16, s + 32, s + 32); g.restore()
+    const hero = lt >= 6.7, n = Math.min(6, Math.floor((lt - 4.2) / (BEAT * .62)))
+    const cur = hero ? 'tok7' : 'tok' + Math.max(0, n), prev = hero ? 'tok6' : 'tok' + Math.max(0, n - 1)
+    const since = hero ? lt - 6.7 : (lt - 4.2) - n * BEAT * .62, xk = hero ? smooth(since / .5) : smooth(since / .14)
+    const z = hero ? 1 + .04 * smooth((lt - 6.7) / 3) : 1
+    if (lt > 4.2 && xk < 1) img(prev, 0, cy, s, s, fk)
+    img(lt > 4.2 ? cur : 'tok0', 0, cy, s * z, s * z, fk * (lt > 4.2 ? xk : 1))
+    txt(hero ? 'GOLD LEAF · ONE OF ONE' : 'GENESIS · LIMITED SUPPLY · 7 TRAIT LAYERS', 0, cy + s / 2 + 58, 22, hero ? GOLD2 : GOLD, fk, { font: MONO, spacing: 6 })
+  }
+  caption('Six designs.', 0, -360, lt, .3, 3.2)
+  caption('One collection.', 0, -400, lt, 3.5, 6.5)
+  caption('Six one-of-ones.', 0, -400, lt, 6.8, 9.4)
+  chapter(0, 345, 'IV', 'THE PASS', 'Genesis: the members’ pass', lt - 5.4)
+}
+
+// ---------- end card ----------
+function endCard(lt) {
+  rosette(0, -40, 420, GOLD, .1 * smooth(lt / 1), 24, 13, .5)
+  fan(0, -120, 200, smooth((lt + .2) / 1.2), GOLD, smooth((lt + .3) / .5))
+  txt('MIDAS × KIYOSHI', 0, 110, 70, WHITE, smooth((lt - .4) / .6), { font: SERIF, weight: 700, spacing: 16 })
+  txt('THE ENGINE  ·  THE DESK  ·  THE FUND  ·  THE PASS', 0, 172, 22, GREY, smooth((lt - .8) / .6), { font: MONO, spacing: 5 })
+  txt('COMING SOON', 0, 300, 104, GOLD2, smooth((lt - 1.2) / .7), { font: SERIF, weight: 700, spacing: 26 })
+}
+
+// ---------- the world and the camera ----------
+const SCENES = [engine, desk, fundScene, passScene, endCard]
+const STEP = 2600, YS = [0, -260, 200, -220, 0]
+const POS = SCENES.map((_, i) => [i * STEP, YS[i]])
+const START = [0, 10, 20, 30, 40], TRAVEL = 1.1
+function rawCam(t) {
+  for (let i = SCENES.length - 1; i >= 0; i--) {
+    if (t < START[i] - TRAVEL / 2) continue
+    const [x, y] = POS[i]
+    if (i > 0 && t < START[i] + TRAVEL / 2) { const k = smooth((t - (START[i] - TRAVEL / 2)) / TRAVEL), [px, py] = POS[i - 1]
+      return { x: lerp(px + 60, x - 60, k), y: lerp(py, y, k), z: (1 - .16 * Math.sin(Math.PI * k)) * lerp(1.04, 1, k), r: .025 * Math.sin(Math.PI * k) * (i % 2 ? 1 : -1), tr: Math.sin(Math.PI * k) } }
+    const end = i < SCENES.length - 1 ? START[i + 1] - TRAVEL / 2 : DUR, k = clamp((t - (START[i] + (i ? TRAVEL / 2 : 0))) / (end - START[i]))
+    return { x: x - 60 + 120 * k, y: y + (i % 2 ? 8 : -8) * (k - .5), z: 1 + .04 * k, r: 0, tr: 0 }
+  }
+  return { x: 0, y: 0, z: 1, r: 0, tr: 0 }
+}
+function camera(t) { const n = 9, win = .3, o = { x: 0, y: 0, z: 0, r: 0, tr: 0 }; for (let j = 0; j < n; j++) { const q = rawCam(t + (j / (n - 1) - .5) * 2 * win); for (const k in o) o[k] += q[k] / n } return o }
+const rng = R(21)
+const FAR = Array.from({ length: 34 }, () => [rng() * STEP * 5 - STEP, (rng() - .5) * 2600, 180 + rng() * 420, 7 + Math.floor(rng() * 8)])
+const DUST = Array.from({ length: 200 }, () => [rng() * STEP * 8 - STEP, (rng() - .5) * 2200, 1 + rng() * 2.6, rng()])
+function layer(cam, f, fn) { const zoom = (Math.min(W / 1920, H / 1080)) * (1 + (cam.z - 1) * f) * (.6 + .4 * f); g.save(); g.translate(W / 2, H / 2); g.rotate(cam.r * f); g.scale(zoom, zoom); g.translate(-cam.x * f, -cam.y * f); fn(); g.restore() }
+const grainC = document.createElement('canvas'); grainC.width = grainC.height = 256
+{ const gx = grainC.getContext('2d'), id = gx.createImageData(256, 256), r2 = R(5); for (let i = 0; i < id.data.length; i += 4) { const v = r2() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 11 } gx.putImageData(id, 0, 0) }
+
+function draw(t) {
+  const cam = camera(t)
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = BG; g.fillRect(0, 0, W, H)
+  layer(cam, .3, () => {
+    for (const [x, y, r, a] of FAR) rosette(x, y, r, GOLD, .045, 10, a, .55, 1.2)
+    g.save(); g.strokeStyle = GOLD; g.globalAlpha = .035; g.lineWidth = 1.5
+    const x0 = Math.floor((cam.x * .3 - 3600) / 240) * 240
+    for (let x = x0; x < x0 + 7200; x += 240) { g.beginPath(); g.moveTo(x, -2600); g.lineTo(x, 2600); g.stroke() }
+    for (let y = -2640; y <= 2640; y += 240) { g.beginPath(); g.moveTo(x0, y); g.lineTo(x0 + 7200, y); g.stroke() }
+    g.restore()
+  })
+  layer(cam, 1, () => {
+    SCENES.forEach((fn, i) => {
+      const [x, y] = POS[i]; if (Math.abs(x - cam.x) > STEP * 1.2) return
+      const lt = t - START[i]; if (lt < -1.2) return
+      g.save(); g.translate(x, y)
+      g.globalAlpha = i === 0 ? 1 : smooth((lt + 1) / .9) // each scene settles in as the camera arrives
+      fn(lt); g.restore()
+    })
+    // the gold thread the camera follows
+    g.save(); g.globalAlpha = .28; g.strokeStyle = GOLD; g.lineWidth = 2; g.setLineDash([3, 16]); g.beginPath()
+    POS.forEach(([x, y], i) => { if (i) { const [px, py] = POS[i - 1]; g.moveTo(px + 900, py + 420); g.bezierCurveTo(px + 1500, py + 420, x - 1500, y + 420, x - 900, y + 420) } }); g.stroke(); g.restore()
+  })
+  layer(cam, 1.55, () => {
+    g.save(); g.fillStyle = GOLD2
+    for (const [x, y, r, a] of DUST) { if (Math.abs(x - cam.x * 1.55) > 2000) continue; g.globalAlpha = (.1 + .26 * cam.tr) * (.4 + .6 * Math.sin(t * 1.2 + a * 9) ** 2); g.beginPath(); g.arc(x, y + Math.sin(t * .5 + a * 6) * 26, r * (1 + cam.tr * 1.4), 0, 7); g.fill() }
+    g.restore()
+  })
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .32, W / 2, H / 2, Math.max(W, H) * .72)
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.8)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  const gp = g.createPattern(grainC, 'repeat'); g.save(); g.translate((t * 997) % 256, (t * 613) % 256); g.fillStyle = gp; g.fillRect(-256, -256, W + 512, H + 512); g.restore()
+  g.globalAlpha = clamp(1 - t / .7) + clamp((t - (DUR - .9)) / .9); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR
+window.READY.then(() => draw(+(P.get('t') || 6)))
+</script>
+</body></html>

@@ -109,7 +109,7 @@ for f in range(int(DUR * FPS)):
         a = ease((lt - 1.2) / 0.8)
         c = lambda col: tuple(int(BG[q] + (col[q] - BG[q]) * a) for q in range(3))
         spaced(d, (W // 2, 1060), 'GENESIS', F(SERIF, 84), c(WHITE), 14, 'ma')
-        spaced(d, (W // 2, 1170), '1,000 PASSES · 6 ONE-OF-ONES · 7 TRAIT LAYERS', fMono, c(GOLD), 3, 'ma')
+        spaced(d, (W // 2, 1170), 'LIMITED SUPPLY · 6 ONE-OF-ONES · 7 TRAIT LAYERS', fMono, c(GOLD), 3, 'ma')
         spaced(d, (W // 2, 1222), 'MIDAS × KIYOSHI', F(SERIF, 34), c(GOLD2), 8, 'ma')
     if t > DUR - 1.6: im = Image.blend(im, Image.new('RGB', (W, H), (0, 0, 0)), ease((t - (DUR - 1.6)) / 1.6))
     ff.stdin.write(im.tobytes())

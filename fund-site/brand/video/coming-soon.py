@@ -36,7 +36,7 @@ CH = {
     'I': ('I', 'THE ENGINE', 'Kiyoshi: Celo FX arbitrage, built by Mel'),
     'II': ('II', 'THE DESK', 'Midas edition: cloud, alerts, its own gas, smart sizing'),
     'III': ('III', 'THE FUND', 'Members share one bot. One share price, settled daily'),
-    'IV': ('IV', 'THE PASS', 'Genesis: 1,000 passes, six one-of-ones'),
+    'IV': ('IV', 'THE PASS', 'Genesis: a limited collection, six one-of-ones'),
 }
 shade = Image.new('L', (W, H), 0)
 sd = ImageDraw.Draw(shade)
@@ -82,7 +82,7 @@ def pass_scene(lt):  # 12 beats: the six cards fan out, tokens shuffle on the be
     elif lt < 8 * BEAT:  # tokens shuffle, one per beat
         n = min(5, int((lt - 4 * BEAT) / (BEAT * 0.67)))
         im.paste(TOKS[n], ((W - 720) // 2, (H - 720) // 2 - 10))
-        spaced(d, (W / 2, 70), 'GENESIS · 1,000 PASSES · 7 TRAIT LAYERS', F(MONO, 24), GOLD, 6, 'm')
+        spaced(d, (W / 2, 70), 'GENESIS · LIMITED SUPPLY · 7 TRAIT LAYERS', F(MONO, 24), GOLD, 6, 'm')
     else:  # the 1/1
         k = ease((lt - 8 * BEAT) / 0.6)
         z = 1 + 0.04 * ease((lt - 8 * BEAT) / (4 * BEAT))
