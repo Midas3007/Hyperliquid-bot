@@ -49,8 +49,8 @@ Then decide what to optimize and what to tone down.
 | until Nov 5 ~11:15 | 60 | 0.9 | as before |
 | Nov 5 ~11:15 | 20 | 0.9 | faster gap discovery; watch for rate-limit errors from forno or Textile |
 | Nov 5 ~12:00, rest of the day | 20 | 0.6 | two-slot sizing: first trade ≤ 60% of the wallet, and Textile-first trades only try what fits beside Textile's hold. Textile's 4-quote limit was hit from 12:57 Lagos; Midas chose to keep the test running to collect data (option 2) |
-| Nov 6, one day | 45 | 0.9 | middle ground for the scan; sizing back to normal |
-| Nov 7 onward | 60 | 0.9 | back to the original, unless the review decides otherwise |
+| Nov 5 afternoon (Render dashboard, by Midas) | 30 | 0.8 | set by hand; written into render.yaml and pushed the same evening |
+| rest of the trial week, to the Nov 12 review | 30 | 0.8 | Midas: leave it running all week. The 45 s (Nov 6) and back-to-60 s (Nov 7) switches are cancelled |
 
 The Textile-hold tracking (code) stays in all along: with 0.9 it only stops the bot from asking Textile for trades
 that cannot fit, which it used to skip anyway.
