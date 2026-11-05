@@ -1,0 +1,184 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070707}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script src="teaser-assets/hands.js"></script>
+<script>
+// Kiyoshi's perpetual motion machine: a seamless 4 s loop. Michelangelo's hands pass a gold coin across the gap
+// through Kiyoshi's fan; it rolls down a chute into a money printer (BRRR); the bills rain onto a pile where a
+// coin-headed suit makes money angels; the pile mints a coin that rides the lift back up to Adam's hand. The
+// engraved coin at the centre is the flywheel. Everything is periodic in T, so frame 0 follows the last frame.
+const P = new URLSearchParams(location.search)
+const S = +(P.get('s') || 1000)
+const c = document.getElementById('c'); c.width = c.height = S
+const g = c.getContext('2d')
+const T = 4, TAU = Math.PI * 2
+const BG = '#080706', INK = '#0e0c09', GOLD = '#D4AF37', GOLD2 = '#F3D77A', DEEP = '#8a6216', WHITE = '#F4F4F0', GREY = '#8C8C88'
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * (3 - 2 * x) }
+const fr = (x) => x - Math.floor(x)
+const R = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+
+// ---------- gold hands (from the pass artwork) ----------
+const GEO = { W: 2000, H: 506, adamTip: [993, 270], godTip: [1015, 247], split: 1004 }
+let HANDS = null
+window.READY = new Promise((ok) => {
+  const i = new Image(); i.onload = () => {
+    const cv = document.createElement('canvas'); cv.width = GEO.W; cv.height = GEO.H
+    const x = cv.getContext('2d', { willReadFrequently: true }); x.drawImage(i, 0, 0)
+    const d = x.getImageData(0, 0, GEO.W, GEO.H), p = d.data
+    const stops = [[0, 34, 20, 4], [.32, 128, 86, 18], [.6, 214, 168, 70], [.82, 246, 218, 132], [1, 255, 247, 214]]
+    for (let k = 0; k < p.length; k += 4) {
+      let t = clamp(((.299 * p[k] + .587 * p[k + 1] + .114 * p[k + 2]) / 255 - .12) / .74)
+      let j = 1; while (j < stops.length - 1 && t > stops[j][0]) j++
+      const a = stops[j - 1], b = stops[j], f = (t - a[0]) / (b[0] - a[0])
+      p[k] = a[1] + (b[1] - a[1]) * f; p[k + 1] = a[2] + (b[2] - a[2]) * f; p[k + 2] = a[3] + (b[3] - a[3]) * f
+    }
+    x.putImageData(d, 0, 0); HANDS = cv; ok()
+  }; i.src = IMG.hands
+})
+
+// ---------- helpers ----------
+function txt(s, x, y, size, color, o = {}) { g.save(); g.fillStyle = color; g.font = `${o.weight || 700} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore() }
+function dot(x, y, r, color, a = 1) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha = a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, open = 1) {
+  g.save(); g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .012, e = A0 + (i + 1) * w * open - .012; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .04; g.beginPath(); g.arc(cx, cy + r * .04, r * .05, 0, TAU); g.stroke(); g.restore()
+}
+// a gold coin seen at an angle (spin: 0..1 turns), with the fan on its face
+function coin(x, y, r, spin = 0, face = true) {
+  const sx = Math.cos(spin * TAU), w = Math.max(.08, Math.abs(sx))
+  g.save(); g.translate(x, y); g.scale(w, 1)
+  const gr = g.createRadialGradient(-r * .35, -r * .4, r * .1, 0, 0, r); gr.addColorStop(0, '#fff1bf'); gr.addColorStop(.45, '#e6bd5c'); gr.addColorStop(.85, '#a8751c'); gr.addColorStop(1, '#5e3e08')
+  g.fillStyle = gr; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill()
+  g.strokeStyle = 'rgba(80,50,6,.8)'; g.lineWidth = Math.max(1, r * .06); g.beginPath(); g.arc(0, 0, r * .8, 0, TAU); g.stroke()
+  if (face && w > .35) fan(0, r * .18, r * .55, 'rgba(110,72,10,.9)')
+  g.restore()
+}
+function bill(x, y, w, rot, alpha = 1) {
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.rotate(rot); g.scale(1, .55 + .45 * Math.abs(Math.cos(rot * 2.3)))
+  g.fillStyle = '#c9c3a0'; g.fillRect(-w / 2, -w * .22, w, w * .44)
+  g.strokeStyle = '#3d6a4e'; g.lineWidth = 1.4; g.strokeRect(-w / 2 + 3, -w * .22 + 3, w - 6, w * .44 - 6)
+  g.fillStyle = '#3d6a4e'; g.beginPath(); g.ellipse(0, 0, w * .13, w * .14, 0, 0, TAU); g.fill()
+  g.restore()
+}
+function gear(cx, cy, r, teeth, ang, color, a = 1) {
+  g.save(); g.globalAlpha = a; g.translate(cx, cy); g.rotate(ang); g.fillStyle = color; g.beginPath()
+  for (let i = 0; i < teeth * 2; i++) { const t = i / (teeth * 2) * TAU, rr = i % 2 ? r : r * .84; g.lineTo(Math.cos(t) * rr, Math.sin(t) * rr) }
+  g.closePath(); g.fill(); g.fillStyle = BG; g.beginPath(); g.arc(0, 0, r * .45, 0, TAU); g.fill()
+  g.strokeStyle = color; g.lineWidth = r * .08; for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(k * TAU / 4) * r * .45, Math.sin(k * TAU / 4) * r * .45); g.stroke() }
+  g.restore()
+}
+
+// ---------- the machine (1000 x 1000 design space) ----------
+const HX = 500, HY = 205, HW = 860, HK = HW / GEO.W, GAP = 120
+const ADAM = [HX - (GEO.W / 2 - GEO.adamTip[0]) * HK - GAP / 2, HY - (GEO.H / 2 - GEO.adamTip[1]) * HK]
+const GOD = [HX + (GEO.godTip[0] - GEO.W / 2) * HK + GAP / 2, HY - (GEO.H / 2 - GEO.godTip[1]) * HK]
+const PRINTER = { x: 640, y: 650, w: 250, h: 190 }
+const PILE = { x: 330, y: 840 }
+// the coins' closed route: lift up (left), across the hands (top), chute down (right), into the printer (hidden),
+// out as bills (hidden coin), back through the pile into the lift
+const ROUTE = [[95, 860], [95, 300], [150, ADAM[1] + 40], [ADAM[0] - 6, ADAM[1] + 6], [GOD[0] + 6, GOD[1] + 6], [905, GOD[1] + 60], [905, 470], [PRINTER.x + PRINTER.w / 2 - 20, PRINTER.y - 30], [PRINTER.x, PRINTER.y + 60], [PILE.x, PILE.y + 20], [95, 860]]
+const VISIBLE = (seg) => seg <= 6 // segments inside the printer and the pile are hidden
+const LEN = ROUTE.slice(1).map((p, i) => Math.hypot(p[0] - ROUTE[i][0], p[1] - ROUTE[i][1]))
+const TOTAL = LEN.reduce((a, b) => a + b, 0)
+function along(u) { let d = fr(u) * TOTAL; for (let i = 0; i < LEN.length; i++) { if (d <= LEN[i]) { const k = d / LEN[i]; return { x: lerp(ROUTE[i][0], ROUTE[i + 1][0], k), y: lerp(ROUTE[i][1], ROUTE[i + 1][1], k), seg: i, k } } d -= LEN[i] } return { x: ROUTE[0][0], y: ROUTE[0][1], seg: 0, k: 0 } }
+const NCOIN = 5
+
+const rng = R(7)
+const BILLS = Array.from({ length: 22 }, (_, i) => ({ ph: i / 22, x1: 150 + rng() * 260, y1: 790 + rng() * 60, spin: rng() * 4 - 2, w: 44 + rng() * 14 }))
+const PILEB = Array.from({ length: 70 }, () => ({ x: PILE.x + (rng() - .5) * 360, y: PILE.y + (rng() - .3) * 70, r: rng() * TAU, w: 40 + rng() * 14 }))
+
+function draw(t) {
+  const ph = fr(t / T), w = ph * TAU // w: one full turn per loop
+  g.setTransform(S / 1000, 0, 0, S / 1000, 0, 0)
+  g.fillStyle = BG; g.fillRect(0, 0, 1000, 1000)
+  const vg = g.createRadialGradient(500, 520, 60, 500, 520, 640); vg.addColorStop(0, 'rgba(90,70,20,.35)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = vg; g.fillRect(0, 0, 1000, 1000)
+
+  // the route, engraved
+  g.save(); g.strokeStyle = 'rgba(212,175,55,.35)'; g.lineWidth = 3; g.setLineDash([2, 10]); g.beginPath(); ROUTE.slice(0, 8).forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke(); g.restore()
+  // the lift on the left: a rail with turning gears top and bottom
+  g.save(); g.strokeStyle = DEEP; g.lineWidth = 6; g.beginPath(); g.moveTo(80, 870); g.lineTo(80, 300); g.moveTo(110, 870); g.lineTo(110, 300); g.stroke(); g.restore()
+  gear(95, 880, 42, 12, w * 2, GOLD); gear(95, 290, 30, 10, -w * 3, GOLD)
+  // the chute on the right
+  g.save(); g.strokeStyle = DEEP; g.lineWidth = 6; g.beginPath(); g.moveTo(890, GOD[1] + 50); g.lineTo(890, 470); g.lineTo(PRINTER.x + PRINTER.w / 2 - 30, PRINTER.y - 44); g.moveTo(920, GOD[1] + 50); g.lineTo(920, 490); g.lineTo(PRINTER.x + PRINTER.w / 2 + 6, PRINTER.y - 30); g.stroke(); g.restore()
+
+  // the flywheel: an engraved coin with circuit traces, spinning slowly, gears either side
+  gear(330, 520, 56, 14, -w, DEEP, .9); gear(670, 520, 56, 14, w, DEEP, .9)
+  g.save(); g.translate(500, 500)
+  g.save(); g.rotate(w * .25)
+  const gr = g.createRadialGradient(-60, -70, 20, 0, 0, 175); gr.addColorStop(0, '#f6dc8e'); gr.addColorStop(.55, '#c99a3c'); gr.addColorStop(1, '#5e3e08')
+  g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 170, 0, TAU); g.fill()
+  g.strokeStyle = 'rgba(70,44,6,.85)'; g.lineWidth = 3; for (const r of [160, 128, 70]) { g.beginPath(); g.arc(0, 0, r, 0, TAU); g.stroke() }
+  for (let i = 0; i < 18; i++) { const a = i / 18 * TAU; g.beginPath(); g.moveTo(Math.cos(a) * 74, Math.sin(a) * 74); g.lineTo(Math.cos(a) * 100, Math.sin(a) * 100); g.lineTo(Math.cos(a + .12) * 118, Math.sin(a + .12) * 118); g.stroke(); g.beginPath(); g.arc(Math.cos(a + .12) * 118, Math.sin(a + .12) * 118, 4, 0, TAU); g.stroke() }
+  g.font = `700 20px ${SERIF}`; g.fillStyle = 'rgba(70,44,6,.9)'; g.textAlign = 'center'
+  const legend = 'DIGITAL · DECENTRALIZED · ARBITRAGE · KIYOSHI · '
+  for (let i = 0; i < legend.length; i++) { const a = -Math.PI / 2 + i / legend.length * TAU; g.save(); g.translate(Math.cos(a) * 144, Math.sin(a) * 144); g.rotate(a + Math.PI / 2); g.fillText(legend[i], 0, 7); g.restore() }
+  g.restore()
+  fan(0, 24, 58, 'rgba(70,44,6,.92)')
+  g.restore()
+
+  // the money printer: shakes, rollers turn, BRRR
+  const shake = Math.sin(t * 90) * 2.2
+  g.save(); g.translate(PRINTER.x + shake, PRINTER.y)
+  g.fillStyle = '#1b1814'; g.strokeStyle = GOLD; g.lineWidth = 3; g.beginPath(); g.roundRect(0, 0, PRINTER.w, PRINTER.h, 14); g.fill(); g.stroke()
+  g.beginPath(); g.moveTo(PRINTER.w / 2 - 60, 0); g.lineTo(PRINTER.w / 2 - 30, -40); g.lineTo(PRINTER.w / 2 + 30, -40); g.lineTo(PRINTER.w / 2 + 60, 0); g.closePath(); g.fillStyle = '#25211b'; g.fill(); g.stroke()
+  for (const [rx, dir] of [[70, 1], [180, -1]]) { g.save(); g.translate(rx, 95); g.rotate(w * 6 * dir); g.fillStyle = DEEP; g.beginPath(); g.arc(0, 0, 34, 0, TAU); g.fill(); g.strokeStyle = GOLD2; g.lineWidth = 3; for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(k * TAU / 6) * 30, Math.sin(k * TAU / 6) * 30); g.stroke() } g.restore() }
+  g.fillStyle = '#0b0a08'; g.fillRect(-8, 150, 70, 18) // the slot the bills come out of
+  g.restore()
+  const pulse = .5 + .5 * Math.sin(w * 8)
+  g.save(); g.translate(PRINTER.x + PRINTER.w / 2 + shake * 2, PRINTER.y + PRINTER.h + 56); g.rotate(-.04 + .03 * Math.sin(w * 8)); g.scale(1 + .06 * pulse, 1 + .06 * pulse)
+  txt('BRRR', 0, 0, 64, GOLD2, { spacing: 10 }); g.restore()
+
+  // the money pile and the coin-headed suit making money angels
+  for (const b of PILEB) bill(b.x, b.y, b.w, b.r, .95)
+  const angel = Math.sin(w * 2) // arms and legs sweep twice per loop
+  g.save(); g.translate(PILE.x, PILE.y - 10)
+  g.lineCap = 'round'
+  g.strokeStyle = '#4a4d55'; g.lineWidth = 26
+  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(60, 0 + s * 16); g.lineTo(150, s * (40 + 26 * angel)); g.stroke() } // legs
+  g.strokeStyle = '#111'; g.lineWidth = 22; for (const s of [-1, 1]) { g.beginPath(); g.moveTo(150, s * (40 + 26 * angel)); g.lineTo(166, s * (44 + 28 * angel)); g.stroke() } // shoes
+  g.strokeStyle = '#4a4d55'; g.lineWidth = 22
+  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(-50, s * 30); g.lineTo(-90 + 30 * angel, s * (90 - 10 * angel)); g.stroke() } // arms
+  g.fillStyle = '#4a4d55'; g.beginPath(); g.roundRect(-70, -36, 140, 72, 20); g.fill() // jacket
+  g.fillStyle = '#e9e6de'; g.beginPath(); g.moveTo(-70, -14); g.lineTo(-20, 0); g.lineTo(-70, 14); g.fill()
+  g.fillStyle = '#b03a32'; g.beginPath(); g.moveTo(-68, -5); g.lineTo(-10, 0); g.lineTo(-68, 5); g.fill() // tie
+  g.restore()
+  coin(PILE.x - 112, PILE.y - 10, 44, .5 * Math.sin(w), true) // the coin head, turning to look about
+
+  // bills flying from the printer slot to the pile
+  for (const b of BILLS) {
+    const k = fr(ph * 2 + b.ph), x0 = PRINTER.x - 10, y0 = PRINTER.y + 158
+    const x = lerp(x0, b.x1, k), y = lerp(y0, b.y1, k) - Math.sin(k * Math.PI) * 140
+    bill(x, y, b.w, b.spin * k * TAU * .5 + k * 2, k < .08 ? k / .08 : k > .9 ? (1 - k) / .1 : 1)
+  }
+
+  // the hands, with the fan in the gap
+  if (HANDS) {
+    const hh = GEO.H * HK, x0 = HX - HW / 2, sp = GEO.split
+    g.drawImage(HANDS, 0, 0, sp, GEO.H, x0 - GAP / 2, HY - hh / 2, sp * HK, hh)
+    g.drawImage(HANDS, sp, 0, GEO.W - sp, GEO.H, x0 + sp * HK + GAP / 2, HY - hh / 2, (GEO.W - sp) * HK, hh)
+  }
+  const mid = [(ADAM[0] + GOD[0]) / 2, (ADAM[1] + GOD[1]) / 2]
+  dot(mid[0], mid[1], 70, 'rgba(243,215,122,.35)', .6 + .4 * Math.sin(w * 4) ** 2)
+  fan(mid[0], mid[1] + 36, 46, GOLD)
+
+  // the coins on their route
+  for (let i = 0; i < NCOIN; i++) {
+    const p = along(ph + i / NCOIN)
+    if (!VISIBLE(p.seg)) continue
+    const inGap = p.seg === 3, glow = inGap ? Math.sin(p.k * Math.PI) : 0
+    if (glow > 0) dot(p.x, p.y, 60, 'rgba(255,240,190,.8)', glow)
+    coin(p.x, p.y, inGap ? 26 + 8 * glow : 24, fr(ph * 4 + i * .37), true)
+  }
+
+  txt('KIYOSHI · PERPETUAL', 500, 965, 22, GREY, { font: MONO, weight: 500, spacing: 8 })
+}
+window.draw = draw; window.DUR = T
+window.READY.then(() => draw(+(P.get('t') || 1)))
+</script>
+</body></html>
