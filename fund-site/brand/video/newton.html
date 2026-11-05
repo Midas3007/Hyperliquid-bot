@@ -1,0 +1,149 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070707}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Newton's 4th Law": 37.5 s, one continuous camera. The three laws on an engraved Principia page, a Newton's
+// cradle of gold Kiyoshi coins that never stops (every click lands on the beat of score-possible.py, 84 BPM),
+// the fourth law, and the end card. draw(t) is deterministic; render with SCENE=newton.html.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 37.5, BEAT = 60 / 84, BAR = 4 * BEAT
+const BG = '#070706', INK = '#0e0c09', GOLD = '#D4AF37', GOLD2 = '#F3D77A', DEEP = '#8a6216', WHITE = '#F4F4F0', SOFT = '#d4cec2', GREY = '#8C8C88'
+const SERIF = 'Caladea, "Liberation Serif", serif', SANS = 'Inter, sans-serif', MONO = '"JetBrains Mono", monospace'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const inout = (t, a, b, f = .6) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+const R = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+
+function txt(s, x, y, size, color, alpha = 1, o = {}) {
+  if (alpha <= .003) return
+  g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`
+  g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore()
+}
+function dot(x, y, r, color, a = 1) { if (a <= 0) return; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha *= a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+function line(x1, y1, x2, y2, color, w, a = 1) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.strokeStyle = color; g.lineWidth = w; g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2); g.stroke(); g.restore() }
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, a = 1, open = 1) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha *= a; g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .012, e = A0 + (i + 1) * w * open - .012 + (1 - open) * .03; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .05; g.beginPath(); g.arc(cx, cy + r * .05, r * .06, 0, TAU); g.stroke(); g.restore()
+}
+function coin(x, y, r, a = 1) {
+  g.save(); g.globalAlpha *= a; g.translate(x, y)
+  g.shadowColor = 'rgba(0,0,0,.55)'; g.shadowBlur = 26; g.shadowOffsetY = 12
+  const gr = g.createRadialGradient(-r * .35, -r * .4, r * .1, 0, 0, r); gr.addColorStop(0, '#fff1bf'); gr.addColorStop(.45, '#e6bd5c'); gr.addColorStop(.85, '#a8751c'); gr.addColorStop(1, '#5e3e08')
+  g.fillStyle = gr; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill(); g.shadowBlur = 0; g.shadowOffsetY = 0
+  g.strokeStyle = 'rgba(80,50,6,.8)'; g.lineWidth = r * .05; g.beginPath(); g.arc(0, 0, r * .82, 0, TAU); g.stroke()
+  for (let i = 0; i < 72; i++) { const q = i / 72 * TAU; line(Math.cos(q) * r * .9, Math.sin(q) * r * .9, Math.cos(q) * r, Math.sin(q) * r, 'rgba(80,50,6,.7)', 1) }
+  g.restore()
+  fan(x, y + r * .18, r * .55, 'rgba(110,72,10,.9)', a)
+}
+// Principia-style engraving: an orbit with its foci, tangents and a falling apple's parabola
+function diagram(x, y, s, a, rot = 0) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha *= a; g.translate(x, y); g.rotate(rot); g.strokeStyle = GOLD; g.lineWidth = 1.2
+  g.beginPath(); g.ellipse(0, 0, 220 * s, 140 * s, 0, 0, TAU); g.stroke()
+  const fx = Math.sqrt(220 * 220 - 140 * 140) * s
+  for (const f of [-fx, fx]) { g.beginPath(); g.arc(f, 0, 5, 0, TAU); g.stroke() }
+  g.beginPath(); g.moveTo(-fx, 0); g.lineTo(150 * s, 102 * s); g.lineTo(fx, 0); g.stroke()
+  g.setLineDash([4, 8]); g.beginPath(); g.moveTo(-60 * s, 190 * s); g.lineTo(360 * s, 14 * s); g.stroke(); g.setLineDash([])
+  g.beginPath(); for (let k = 0; k <= 40; k++) { const u = k / 40; g.lineTo(-300 * s + u * 220 * s, -160 * s + u * u * 260 * s) } g.stroke()
+  g.font = `italic 18px ${SERIF}`; g.fillStyle = GOLD; for (const [l, px, py] of [['S', -fx - 18, -10], ['H', fx + 10, -10], ['P', 150 * s + 10, 102 * s + 18], ['A', -300 * s, -172 * s]]) g.fillText(l, px, py)
+  g.restore()
+}
+
+// ---------- scenes (world y) ----------
+const Y_PAGE = 0, Y_CRADLE = 1320, Y_END = 2760
+function page(t) { // 0-5.7 s: the three laws
+  const a = smooth(t / 1)
+  diagram(-560, 40, 1, .22 * a, -.08); diagram(600, -60, .8, .18 * a, .12)
+  txt('PHILOSOPHIÆ NATURALIS', 0, -300, 30, GOLD, smooth((t - .2) / .7), { spacing: 14 })
+  txt('Principia Pecuniæ', 0, -238, 70, WHITE, smooth((t - .4) / .8), { weight: 700 })
+  line(-260 * smooth((t - .6) / 1), -192, 260 * smooth((t - .6) / 1), -192, GOLD, 1.5, .8)
+  const laws = ['I.  A coin at rest stays at rest.', 'II.  Force equals mass times acceleration.', 'III.  To every action, an equal and opposite reaction.']
+  laws.forEach((s, i) => txt(s, 0, -110 + i * 66, 36, SOFT, smooth((t - 1.1 - i * .9) / .6), { italic: i !== 1 }))
+  txt('And then there was a fourth.', 0, 130, 40, GOLD2, smooth((t - 4) / .7), { italic: true })
+}
+const PIV = -250, LEN = 380, CR = 54, A = .58
+function cradle(t) {
+  // perpetual swing: the end coins take turns, a click (on the beat) each time they meet
+  const ph = (t - 2 * BAR) / (2 * BEAT), s = Math.sin(ph * TAU)
+  const ang = [s < 0 ? A * s : 0, 0, 0, 0, s > 0 ? A * s : 0]
+  const near = Math.max(0, 1 - Math.abs(s) * 6) // flash as they meet
+  // frame
+  const bw = 520
+  g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 30; g.shadowOffsetY = 14
+  const fg = g.createLinearGradient(0, PIV - 14, 0, PIV + 14); fg.addColorStop(0, '#f6dc8e'); fg.addColorStop(1, '#8a6216')
+  g.fillStyle = fg; g.beginPath(); g.roundRect(-bw / 2, PIV - 12, bw, 24, 12); g.fill()
+  for (const x of [-bw / 2 + 12, bw / 2 - 12]) { g.fillRect(x - 7, PIV, 14, LEN + 140) }
+  g.beginPath(); g.roundRect(-bw / 2 - 60, PIV + LEN + 130, bw + 120, 26, 10); g.fill(); g.restore()
+  for (let i = 0; i < 5; i++) {
+    const px = (i - 2) * (CR * 2 + 2), a = ang[i]
+    const x = px + Math.sin(a) * LEN, y = PIV + Math.cos(a) * LEN
+    line(px - 22, PIV, x, y - CR * .9, 'rgba(243,215,122,.65)', 1.6); line(px + 22, PIV, x, y - CR * .9, 'rgba(243,215,122,.65)', 1.6)
+    dot(x, PIV + LEN + 124, CR * 1.3, 'rgba(0,0,0,.55)', .8)
+    coin(x, y, CR)
+  }
+  if (near > 0) { const side = Math.cos(ph * TAU) > 0 ? 1 : -1; dot(side * (CR + 1) * 3, PIV + LEN, 80, 'rgba(255,240,190,.9)', near * .8) }
+  txt('Energy passes from coin to coin. Nothing is lost.', 0, PIV + LEN + 230, 34, SOFT, inout(t, 7.4, 12.6), { italic: true })
+  txt('Kiyoshi does the same with price gaps, around the clock.', 0, PIV + LEN + 230, 34, SOFT, inout(t, 13.2, 19.2), { italic: true })
+  // the fourth law, above the cradle as the camera pulls back
+  txt('IV.', 0, PIV - 250, 120, GOLD2, smooth((t - 20.4) / .8), { weight: 700 })
+  txt('Money in motion stays in motion.', 0, PIV - 140, 58, WHITE, smooth((t - 21.4) / .8), { weight: 700 })
+  txt('NEWTON’S FOURTH LAW · AS KIYOSHI PRACTISES IT', 0, PIV + LEN + 230, 22, GOLD, smooth((t - 23.2) / .7) * (1 - smooth((t - 28) / .6)), { font: MONO, spacing: 6 })
+}
+function endCard(t) {
+  const lt = t - 28.8
+  fan(0, -120, 170, GOLD, smooth((lt + .2) / .6), smooth(lt / 1.3))
+  txt('MIDAS × KIYOSHI', 0, 70, 72, WHITE, smooth((lt - .5) / .7), { weight: 700, spacing: 16 })
+  txt('Celo FX arbitrage, around the clock', 0, 140, 34, SOFT, smooth((lt - 1) / .7), { italic: true })
+  txt('MONEY IN MOTION STAYS IN MOTION', 0, 220, 22, GOLD, smooth((lt - 1.6) / .7), { font: MONO, spacing: 8 })
+  txt('Past results don’t guarantee future returns.', 0, 330, 18, GREY, smooth((lt - 2.2) / .7), { font: SANS })
+}
+
+// ---------- camera: one continuous move ----------
+const KEYS = [ // [time, x, y, zoom]
+  [0, 0, -20, 1.06], [5.0, 0, 30, 1.0], [6.4, 0, Y_CRADLE + 40, 1.14], [19.6, 0, Y_CRADLE + 30, 1.22],
+  [21.2, 0, Y_CRADLE - 90, .92], [28.2, 0, Y_CRADLE - 80, .96], [29.6, 0, Y_END, 1.0], [37.5, 0, Y_END, 1.06],
+]
+const TRAVEL = new Set([1, 3, 5]) // segments that are moves (eased); the rest are slow drifts
+function rawCam(t) {
+  for (let i = 0; i < KEYS.length - 1; i++) { const [t0, x0, y0, z0] = KEYS[i], [t1, x1, y1, z1] = KEYS[i + 1]
+    if (t <= t1 || i === KEYS.length - 2) { const k0 = clamp((t - t0) / (t1 - t0)), k = TRAVEL.has(i + 1 - 1) && (i === 1 || i === 3 || i === 5) ? smooth(k0) : k0
+      const arc = (i === 1 || i === 5) ? Math.sin(Math.PI * k0) : 0
+      return { x: lerp(x0, x1, k), y: lerp(y0, y1, k), z: lerp(z0, z1, k) * (1 - .1 * arc), r: .012 * arc * (i === 1 ? 1 : -1), tr: arc } } }
+}
+function camera(t) { const n = 9, win = .28, o = { x: 0, y: 0, z: 0, r: 0, tr: 0 }; for (let j = 0; j < n; j++) { const q = rawCam(clamp(t + (j / (n - 1) - .5) * 2 * win, 0, DUR)); for (const k in o) o[k] += q[k] / n } return o }
+const rng = R(31)
+const BACK = Array.from({ length: 16 }, () => [(rng() - .5) * 3000, rng() * 3600 - 600, .5 + rng() * .9, rng() * TAU])
+const DUST = Array.from({ length: 180 }, () => [(rng() - .5) * 2600, rng() * 4200 - 800, 1 + rng() * 2.4, rng()])
+function layer(cam, f, fn) { const z = Math.min(W / 1920, H / 1080) * (1 + (cam.z - 1) * f) * (.6 + .4 * f); g.save(); g.translate(W / 2, H / 2); g.rotate(cam.r * f); g.scale(z, z); g.translate(-cam.x * f, -cam.y * f); fn(); g.restore() }
+const grainC = document.createElement('canvas'); grainC.width = grainC.height = 256
+{ const gx = grainC.getContext('2d'), id = gx.createImageData(256, 256), r2 = R(5); for (let i = 0; i < id.data.length; i += 4) { const v = r2() * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 11 } gx.putImageData(id, 0, 0) }
+
+function draw(t) {
+  const cam = camera(t)
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = BG; g.fillRect(0, 0, W, H)
+  layer(cam, .35, () => { for (const [x, y, s, r] of BACK) diagram(x, y, s, .07, r) })
+  layer(cam, 1, () => {
+    const vis = (y) => Math.abs(y - cam.y) < 1500
+    if (vis(Y_PAGE)) { g.save(); g.translate(0, Y_PAGE); page(t); g.restore() }
+    if (vis(Y_CRADLE)) { g.save(); g.translate(0, Y_CRADLE); g.globalAlpha = smooth((t - 4.6) / 1.2); cradle(t); g.restore() }
+    if (vis(Y_END)) { g.save(); g.translate(0, Y_END); endCard(t); g.restore() }
+  })
+  layer(cam, 1.5, () => { g.save(); g.fillStyle = GOLD2; for (const [x, y, r, a] of DUST) { if (Math.abs(y - cam.y * 1.5) > 1400) continue; g.globalAlpha = (.08 + .24 * cam.tr) * (.4 + .6 * Math.sin(t * 1.1 + a * 9) ** 2); g.beginPath(); g.arc(x, y + Math.sin(t * .4 + a * 6) * 24, r, 0, TAU); g.fill() } g.restore() })
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .32, W / 2, H / 2, Math.max(W, H) * .72); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.8)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  const gp = g.createPattern(grainC, 'repeat'); g.save(); g.translate((t * 997) % 256, (t * 613) % 256); g.fillStyle = gp; g.fillRect(-256, -256, W + 512, H + 512); g.restore()
+  g.globalAlpha = clamp(1 - t / .6) + clamp((t - (DUR - 1)) / 1); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = Promise.resolve()
+draw(+(P.get('t') || 8))
+</script>
+</body></html>
