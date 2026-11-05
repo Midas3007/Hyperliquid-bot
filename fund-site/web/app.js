@@ -11,6 +11,7 @@ const state = {
   session: null, me: null, fund: null, admin: null, // admin sign-in (off-chain tools)
   pub: null, trades: null, wallet: null, flash: null, adminTab: false,
   card: { amounts: true, name: 1 },
+  page: 0, // charts: how many windows back from now (the ‹ › arrows)
 }
 
 // ---------- formatting ----------
@@ -288,7 +289,7 @@ function dashboardView() {
 function myPnlView() {
   const items = window.vaultPersonalItems?.()
   if (!items) return `<div class="label">Your P&amp;L</div><p class="note">Connect your wallet to see your P&amp;L. It appears after the fund's next value update.</p>`
-  return barChart('Your P&amp;L', bucketize(items, state.range), 'p', { money: true, cumulative: true, personal: true }) +
+  return barChart('Your P&amp;L', bucketize(items, state.range, windowEnd()), 'p', { money: true, cumulative: true, personal: true, earliest: items.length ? Math.min(...items.map((i) => i.t)) : Date.now() }) +
     '<p class="note" style="margin-bottom:0">Your shares times the change in share price, before the fee. Deposits and redemptions are not counted as profit.</p>'
 }
 
@@ -461,7 +462,8 @@ function tradeStatsView() {
 
   const wins = trades.filter((x) => x.profit > 0).length
   const volume = trades.reduce((s, x) => s + x.size, 0) * 2 // every trade is a buy and a sell
-  const fundBuckets = bucketize(trades.map((x) => ({ t: x.t, p: x.profit, n: 1 })), state.range, T.now)
+  const fundBuckets = bucketize(trades.map((x) => ({ t: x.t, p: x.profit, n: 1 })), state.range, windowEnd(T.now))
+  const earliest = trades.length ? trades[0].t : T.since
 
   return `
   <div class="grid">
@@ -472,8 +474,8 @@ function tradeStatsView() {
     ${stat('Avg profit per trade', trades.length ? money(total / trades.length, true) : '—', trades.length ? `on an average trade of ${money(trades.reduce((s, x) => s + x.size, 0) / trades.length)}` : 'no trades yet', tone(total))}
   </div>
   <div class="grid two" style="margin-top:12px">
-    <div class="card">${barChart('Fund P&amp;L', fundBuckets, 'p', { money: true, cumulative: true })}</div>
-    <div class="card">${barChart('Number of trades', fundBuckets, 'n', {})}</div>
+    <div class="card">${barChart('Fund P&amp;L', fundBuckets, 'p', { money: true, cumulative: true, earliest })}</div>
+    <div class="card">${barChart('Number of trades', fundBuckets, 'n', { earliest })}</div>
   </div>
   <p class="note">Read from the pool wallet's transactions on the Celo blockchain. A trade is one buy and the sale that follows it; profit is the USDT that came back minus the USDT that went out, before gas. Times are in your device's time zone.</p>`
 }
@@ -499,6 +501,15 @@ function bucketize(items, range, now = Date.now()) {
   const index = new Map(buckets.map((b, i) => [b.start, i]))
   for (const it of items) { const i = index.get(bucketStart(it.t, R.unit)); if (i !== undefined) { buckets[i].p += it.p; buckets[i].n += it.n } }
   return buckets
+}
+// The end of the window the charts show: now, or whole windows earlier after tapping ‹
+function windowEnd(now = Date.now()) {
+  const R = RANGES[state.range] || RANGES.day
+  return state.page ? stepBack(bucketStart(now, R.unit), R.unit, R.count * state.page) : now
+}
+function pageArrows(buckets, earliest) {
+  const older = earliest !== undefined && buckets[0].start > earliest
+  return `<div class="seg pager"><button data-action="page" data-dir="1" ${older ? '' : 'disabled'} aria-label="Earlier">‹</button><button data-action="page" data-dir="-1" ${state.page ? '' : 'disabled'} aria-label="Later">›</button></div>`
 }
 function rangeToggle() {
   return `<div class="seg">${Object.entries(RANGES).map(([k, r]) => `<button class="${k === state.range ? 'on' : ''}" data-action="range" data-range="${k}">${r.label}</button>`).join('')}</div>`
@@ -527,8 +538,8 @@ function barChart(title, buckets, key, opts) {
   const every = Math.ceil(buckets.length / 4)
   const ticks = buckets.map((b, i) => (i % every === 0 ? `<span style="position:absolute;left:${((pad + i * bw) / W) * 100}%;white-space:nowrap">${bucketLabel(b.start, false)}</span>` : '')).join('')
   return `
-  <div class="chart-head"><div class="label">${title} · ${RANGES[state.range].label.toLowerCase()}</div>${rangeToggle()}</div>
-  <div class="sub" style="margin:-4px 0 8px">${fmt(opts.money ? Math.round(total * 100) / 100 : total)} over the last ${RANGES[state.range].count} ${RANGES[state.range].unit}s${opts.cumulative ? ' · line = running total' : ''}</div>
+  <div class="chart-head"><div class="label">${title} · ${RANGES[state.range].label.toLowerCase()}</div><div class="row" style="gap:6px;margin:0">${pageArrows(buckets, opts.earliest)}${rangeToggle()}</div></div>
+  <div class="sub" style="margin:-4px 0 8px">${fmt(opts.money ? Math.round(total * 100) / 100 : total)} ${state.page ? `from ${bucketLabel(buckets[0].start)} to ${bucketLabel(buckets[buckets.length - 1].start)}` : `over the last ${RANGES[state.range].count} ${RANGES[state.range].unit}s`}${opts.cumulative ? ' · line = running total' : ''}</div>
   <div class="readout" id="${id}-r"><span class="muted">Tap or drag across the bars for exact numbers</span></div>
   <div class="scrub" data-chart="${id}">
   <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:170px" role="img" aria-label="${title}">
@@ -676,7 +687,12 @@ document.addEventListener('click', (ev) => {
   if (a === 'scroll') { document.getElementById(t.dataset.to)?.scrollIntoView({ behavior: 'smooth' }); return }
   if (a === 'range') {
     state.range = t.dataset.range
+    state.page = 0
     try { localStorage.setItem('range', state.range) } catch { /* optional */ }
+    const y = window.scrollY; render(); window.scrollTo(0, y); return
+  }
+  if (a === 'page') {
+    state.page = Math.max(0, state.page + Number(t.dataset.dir))
     const y = window.scrollY; render(); window.scrollTo(0, y); return
   }
   if (a === 'copy') { navigator.clipboard?.writeText(t.dataset.value); t.textContent = 'Copied'; return }

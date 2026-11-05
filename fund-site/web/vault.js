@@ -26,6 +26,9 @@ const VAULT_ABI_SRC = [
   'event Redeemed(address indexed member, uint256 shares, uint256 gross, uint256 fee, uint256 paid, uint256 settlement)',
   'event Claimed(address indexed member, uint256 assets)', 'event OpeningShares(address indexed to, uint256 assets, uint256 shares)',
   'event Allowed(address indexed member, bool allowed)',
+  'event ValueReported(uint256 nav, uint256 supply, uint256 at)',
+  'event Settled(uint256 indexed settlement, uint256 nav, uint256 supply, uint256 deposits, uint256 payouts)',
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]
 const VS = { viem: null, abi: null, pub: null, chain: null, net: null, account: null, chainId: null, d: null, msg: null, loadErr: null, busy: false, logs: null, logsTo: 0n, times: {}, hidden: false }
 const vcfg = () => (state.pub?.vault?.address ? state.pub.vault : window.FUND_CONFIG.vault || {})
@@ -33,6 +36,8 @@ const vnet = () => VNETS[vcfg().network] || VNETS.mainnet
 const vOn = () => !!vcfg().address
 const vUsd = (v) => Number(v) / 1e6
 const vShares = (v) => (Number(v) / 1e18).toLocaleString('en-US', { maximumFractionDigits: 4 })
+// A share count as a part of the whole fund, e.g. "95.38%"
+const vPct = (shares) => (VS.d && VS.d.totalSupply > 0n ? `${((Number(shares) / Number(VS.d.totalSupply)) * 100).toFixed(2)}%` : '—')
 const vLink = (path, text) => `<a href="${vnet().explorer}/${path}" target="_blank" rel="noopener">${text}</a>`
 const vMask = (a) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '')
 const same = (a, b) => !!a && !!b && a.toLowerCase() === b.toLowerCase()
@@ -94,8 +99,16 @@ async function vLoad() {
 // starts at the vault's deployment block; the raw logs are cached in this browser, so later visits only read the
 // new blocks.
 const LOG_STEP = 5000n, LOG_PARALLEL = 8
-async function vLogs() {
-  const c = vcfg(), latest = await VS.pub.getBlockNumber()
+// One read at a time: the page asks for the events from several places at once, and two overlapping reads used to
+// add the same new blocks twice (double-counted deposits made the $1,000 goal negative and the P&L chart wrong).
+function vLogs() {
+  VS.logsBusy = VS.logsBusy || vLogsRead().finally(() => { VS.logsBusy = null })
+  return VS.logsBusy
+}
+async function vLogsRead() {
+  const c = vcfg(), tip = await VS.pub.getBlock()
+  const latest = tip.number
+  VS.tip = { block: latest, t: Number(tip.timestamp) * 1000 }
   const parse = (logs) => VS.viem.parseEventLogs({ abi: VS.abi, logs, strict: false })
   const key = 'vault-logs:' + String(c.address).toLowerCase()
   if (!VS.rawLogs) {
@@ -121,13 +134,15 @@ async function vLogs() {
       localStorage.setItem(key, JSON.stringify({ to: String(VS.logsTo), logs: VS.rawLogs.map((l) => ({ ...l, blockNumber: String(l.blockNumber) })) }))
     } catch { /* storage full or blocked: read again next visit */ }
   }
+  const seen = new Set()
+  VS.rawLogs = VS.rawLogs.filter((l) => { const k = l.transactionHash + ':' + l.logIndex; return !seen.has(k) && seen.add(k) })
   VS.logs = parse(VS.rawLogs)
   return VS.logs
 }
-async function vTime(block) {
-  const k = String(block)
-  if (!VS.times[k]) VS.times[k] = Number((await VS.pub.getBlock({ blockNumber: block })).timestamp) * 1000
-  return VS.times[k]
+// A block's time without a request per block: Celo makes exactly one block per second, counted back from the newest
+// block read by vLogs.
+function vTime(block) {
+  return VS.tip ? VS.tip.t - Number(VS.tip.block - BigInt(block)) * 1000 : 0
 }
 
 // ---------- views ----------
@@ -179,7 +194,7 @@ function vWallet() {
   return `${vNotice()}${vGoal()}<div class="grid two">
     <div class="card hero"><div class="label">Your position · ${vLink('address/' + VS.account, esc(vMask(VS.account)))}</div>
       <div class="big">${money(after)}</div>
-      <div class="sub"><span class="${tone(profit)}">${money(profit, true)}</span> after the ${(Number(d.feeBps) / 100).toFixed(0)}% fee · ${vShares(me.shares + me.escrowed)} shares</div>
+      <div class="sub"><span class="${tone(profit)}">${money(profit, true)}</span> after the ${(Number(d.feeBps) / 100).toFixed(0)}% fee · ${vShares(me.shares + me.escrowed)} shares · ${vPct(me.shares + me.escrowed)} of the fund</div>
       <div class="preview" style="margin-top:12px;border-style:solid;border-color:var(--line)">
         <div><span>Value before fee</span><span>${money(vUsd(me.value))}</span></div>
         <div><span>You put in</span><span>${money(vUsd(me.cost))}</span></div>
@@ -326,11 +341,11 @@ function vAdmin() {
     </div>
   </div>
   <div class="section-title">Holders</div>
-  <div class="table-wrap"><table><thead><tr><th>Wallet</th><th class="num">Shares</th><th class="num">Value</th><th class="num">Put in</th><th class="num">Waiting</th><th>Approved</th><th></th></tr></thead><tbody>
-  ${holders === undefined ? '<tr><td colspan="7" class="muted">Reading…</td></tr>' : holders.length ? holders.map((h) => `<tr><td>${vLink('address/' + h.a, esc(vMask(h.a)))}${same(h.a, d.feeRecipient) ? ' <span class="pill gold">you</span>' : ''}</td>
-    <td class="num">${vShares(h.shares + h.escrowed)}</td><td class="num">${money(vUsd(h.value))}</td><td class="num">${money(vUsd(h.cost))}</td>
+  <div class="table-wrap"><table><thead><tr><th>Wallet</th><th class="num">Shares</th><th class="num">% of fund</th><th class="num">Value</th><th class="num">Put in</th><th class="num">Waiting</th><th>Approved</th><th></th></tr></thead><tbody>
+  ${holders === undefined ? '<tr><td colspan="8" class="muted">Reading…</td></tr>' : holders.length ? holders.map((h) => `<tr><td>${vLink('address/' + h.a, esc(vMask(h.a)))}${same(h.a, d.feeRecipient) ? ' <span class="pill gold">you</span>' : ''}</td>
+    <td class="num">${vShares(h.shares + h.escrowed)}</td><td class="num">${vPct(h.shares + h.escrowed)}</td><td class="num">${money(vUsd(h.value))}</td><td class="num">${money(vUsd(h.cost))}</td>
     <td class="num">${h.queued ? money(vUsd(h.queued)) + ' in' : ''}${h.escrowed ? ` ${vShares(h.escrowed)} out` : ''}</td><td>${h.allowed ? 'yes' : 'no'}</td>
-    <td class="num"><button class="btn plain small" data-vault="${h.allowed ? 'remove' : 'approve'}" data-who="${h.a}">${h.allowed ? 'Remove' : 'Approve'}</button></td></tr>`).join('') : '<tr><td colspan="7" class="muted">No wallets yet</td></tr>'}
+    <td class="num"><button class="btn plain small" data-vault="${h.allowed ? 'remove' : 'approve'}" data-who="${h.a}">${h.allowed ? 'Remove' : 'Approve'}</button></td></tr>`).join('') : '<tr><td colspan="8" class="muted">No wallets yet</td></tr>'}
   </tbody></table></div>`
 }
 
@@ -376,8 +391,7 @@ async function vExtras() {
   if (!needHistory && !needHolders && !needMine) return
   try {
     const logs = await vLogs()
-    const mine = VS.account ? logs.filter((l) => same(l.args?.member || l.args?.to, VS.account)) : []
-    await Promise.all(mine.slice(-60).map((l) => vTime(l.blockNumber).catch(() => 0)))
+    const mine = VS.account ? logs.filter((l) => l.eventName !== 'Transfer' && same(l.args?.member || l.args?.to, VS.account)) : []
     VS.myLogs = mine
     if (needHistory) {
       const label = { DepositRequested: 'Deposit queued', DepositCancelled: 'Deposit cancelled', RedeemRequested: 'Redemption queued', RedeemCancelled: 'Redemption cancelled', Deposited: 'Deposit settled', Redeemed: 'Redemption paid', Claimed: 'Payout collected', OpeningShares: 'Opening shares', Allowed: 'Members list' }
@@ -389,7 +403,7 @@ async function vExtras() {
         if (l.eventName === 'Allowed') return a.allowed ? 'approved' : 'removed'
         return money(vUsd(a.assets))
       }
-      VS.history = mine.slice(-60).reverse().map((l) => ({ t: VS.times[String(l.blockNumber)] || 0, tx: l.transactionHash, what: label[l.eventName] || l.eventName, amount: amt(l) }))
+      VS.history = mine.slice(-60).reverse().map((l) => ({ t: vTime(l.blockNumber), tx: l.transactionHash, what: label[l.eventName] || l.eventName, amount: amt(l) }))
     }
     if (needHolders) {
       const addrs = [...new Set(logs.map((l) => l.args?.member || l.args?.to).filter(Boolean).map((a) => a.toLowerCase()))]
@@ -402,17 +416,34 @@ async function vExtras() {
   window.onVaultExtras?.()
 }
 
-// Personal P&L items for the bar chart: the wallet's shares at each value update times the change in price.
+// Personal P&L items for the bar chart: the wallet's shares between two value updates times the change in the share
+// price. Both come from the contract's own events: ValueReported and Settled give the share price after every
+// update (no gaps), and the wallet's opening shares, deposits, redemptions and fee shares give its shares over time.
 window.vaultPersonalItems = () => {
-  const hist = (state.pub?.vault_history || []).map((h) => ({ t: new Date(h.t).getTime(), price: n(h.unit_price) })).sort((a, b) => a.t - b.t)
-  if (!VS.myLogs || hist.length < 2) return null
+  if (!VS.myLogs || !VS.logs || !VS.tip) return null
+  const price = (nav, supply) => (Number(supply) > 0 ? Number(nav) / 1e6 / (Number(supply) / 1e18) : null)
+  const hist = []
+  for (const l of VS.logs) {
+    if (l.eventName === 'ValueReported') hist.push({ t: Number(l.args.at) * 1000, price: price(l.args.nav, l.args.supply) })
+    else if (l.eventName === 'Settled') hist.push({ t: vTime(l.blockNumber), price: price(l.args.nav, l.args.supply) })
+    else if (l.eventName === 'OpeningShares') hist.push({ t: vTime(l.blockNumber), price: price(l.args.assets, l.args.shares) })
+  }
+  const pts = hist.filter((h) => h.price !== null).sort((x, y) => x.t - y.t)
+  if (pts.length < 2) return null
   const moves = VS.myLogs.map((l) => ({
-    t: VS.times[String(l.blockNumber)] || 0,
+    t: vTime(l.blockNumber),
     s: l.eventName === 'Deposited' || l.eventName === 'OpeningShares' ? Number(l.args.shares) / 1e18 : l.eventName === 'Redeemed' ? -Number(l.args.shares) / 1e18 : 0,
   })).filter((m) => m.s)
-  const sharesAt = (t) => moves.reduce((s, m) => (m.t && m.t <= t ? s + m.s : s), 0)
+  // Fee shares: minted to the fee recipient when members redeem with a profit (no Deposited event of its own)
+  if (VS.d && same(VS.account, VS.d.feeRecipient)) {
+    const ownTx = new Set(VS.myLogs.filter((l) => l.eventName === 'Deposited' || l.eventName === 'OpeningShares').map((l) => l.transactionHash))
+    for (const l of VS.logs) {
+      if (l.eventName === 'Transfer' && /^0x0+$/.test(l.args.from) && same(l.args.to, VS.account) && !ownTx.has(l.transactionHash)) moves.push({ t: vTime(l.blockNumber), s: Number(l.args.value) / 1e18 })
+    }
+  }
+  const sharesAt = (t) => moves.reduce((s, m) => (m.t <= t ? s + m.s : s), 0)
   const items = []
-  for (let i = 1; i < hist.length; i++) items.push({ t: hist[i].t, p: sharesAt(hist[i - 1].t) * (hist[i].price - hist[i - 1].price), n: 0 })
+  for (let i = 1; i < pts.length; i++) items.push({ t: pts[i].t, p: sharesAt(pts[i - 1].t) * (pts[i].price - pts[i - 1].price), n: 0 })
   return items
 }
 

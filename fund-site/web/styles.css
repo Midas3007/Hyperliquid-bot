@@ -167,3 +167,7 @@ footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px;
 .goal-legend { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; font-family: var(--mono); font-size: 12px; color: var(--grey-2); }
 .goal-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--panel-2); border: 1px solid var(--line); vertical-align: 0; }
 .goal-legend .dot.gold { background: var(--gold); border-color: var(--gold); }
+
+/* chart paging arrows */
+.seg.pager button { padding: 5px 9px; font-size: 13px; }
+.seg button:disabled { opacity: .3; cursor: default; }
