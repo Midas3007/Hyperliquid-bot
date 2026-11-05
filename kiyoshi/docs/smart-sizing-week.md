@@ -47,4 +47,4 @@ Then decide what to optimize and what to tone down.
 | Date | Raised by | Issue or idea | Notes |
 |---|---|---|---|
 | Nov 5 | Claude | Base max trade is $500, not $330; peak sizes are bigger than the analysis assumed | Check whether the extra size helped or hurt |
-| Nov 5 | Midas asked, Claude proposed | Finer candidate sizes (¾, ⅜) and a best-size candidate from gap × $1.72M ÷ 2 | Offered, not built; decide at the review |
+| Nov 5 | Midas asked, Claude proposed | Finer candidate sizes (¾, ⅜) and a best-size candidate from gap × $1.72M ÷ 2 | Offered, not built; decide at the review. Cost corrected: each extra size in the full scan adds ~16 quotes (4 corridors × 2 routes × 2 legs), so ¾ + ⅜ would make each scan about two-thirds slower. Cheaper version: after the normal scan, re-quote only the best opportunity at its formula size: 2 extra quotes, about a second |
