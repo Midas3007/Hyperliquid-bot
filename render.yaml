@@ -32,6 +32,8 @@ services:
         value: "800"
       - key: INTERVAL_SEC # seconds between full scans; one-day tests: 20 (Nov 5), 45 (Nov 6), then back to 60
         value: "20"
+      - key: FIRST_TRADE_SHARE # share of the wallet's USDT a trade may use; 0.6 on Nov 5 only, normally 0.9
+        value: "0.6"
       - key: MAX_FLATTEN_LOSS_BPS
         value: "50"
       - key: MAX_HOLD_MIN

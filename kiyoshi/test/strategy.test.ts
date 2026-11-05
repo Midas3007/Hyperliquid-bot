@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseUnits } from 'viem'
-import { candidateSizes, edgeUsd, flattenFloor, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, withSlippage } from '../src/strategy.js'
+import { candidateSizes, edgeUsd, flattenFloor, freeForTextile, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, withSlippage } from '../src/strategy.js'
 
 const $ = (n: string) => parseUnits(n, 6)
 const MIN = 60_000
@@ -20,6 +20,14 @@ test('flatten guard sells at or above the floor', () => {
 test('live sizing: capped by MAX_TRADE', () => assert.deepEqual(tradeSize($('100'), $('20'), true), { size: $('20'), watchOnly: false }))
 test('live sizing: 90% of cash when below the cap', () => assert.deepEqual(tradeSize($('10'), $('20'), true), { size: $('9'), watchOnly: false }))
 test('live sizing: unfunded wallet scans at the cap in watch mode', () => assert.deepEqual(tradeSize($('1'), $('20'), true), { size: $('20'), watchOnly: true }))
+test('live sizing: a smaller share of cash leaves room for a follow-up', () => assert.deepEqual(tradeSize($('376'), $('500'), true, 60n), { size: $('225.6'), watchOnly: false }))
+test('Textile hold: a follow-up must fit in the USDT Textile is not holding', () => {
+  const hold = { amount: $('225.6'), until: 1000 }
+  assert.equal(freeForTextile($('376'), hold, 500), $('150.4'))
+  assert.equal(freeForTextile($('376'), hold, 1000), $('376')) // the hold has ended
+  assert.equal(freeForTextile($('100'), hold, 500), 0n)
+  assert.equal(freeForTextile($('376'), null, 500), $('376'))
+})
 test('dry run always scans at the cap', () => assert.deepEqual(tradeSize(0n, $('20'), false), { size: $('20'), watchOnly: false }))
 
 test('candidate sizes: full, half, quarter', () => assert.deepEqual(candidateSizes($('20')), [$('20'), $('10'), $('5')]))

@@ -16,13 +16,19 @@ import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from '
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { botSettings } from './settings.js'
 import { describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
-import { byEdge, candidateSizes, edgeUsd, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip } from './strategy.js'
+import { byEdge, candidateSizes, edgeUsd, freeForTextile, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip, type TextileHold } from './strategy.js'
 
 const LIVE = process.env.LIVE === '1'
 const MAX_TRADE_USD = Number(process.env.MAX_TRADE_USD ?? '20')
 const MIN_EDGE_USD = Number(process.env.MIN_EDGE_USD ?? '0.01')
 // Smart sizing (Telegram /smart_on): peak-hour trades may grow up to this, never more
 const SMART_PEAK_MAX_USD = Number(process.env.SMART_PEAK_MAX_USD ?? '800')
+// Share of the wallet's USDT a trade may use (0.9 before Nov 5). Below 0.9 a half-size trade still fits while
+// Textile holds the last one (see textileHold).
+const FIRST_TRADE_SHARE = Math.min(0.9, Math.max(0.1, Number(process.env.FIRST_TRADE_SHARE ?? '0.9')))
+// What Textile still holds from our last Textile-first trade; Textile-first trades must fit in the rest
+let textileHold: TextileHold | null = null
+const TEXTILE_HOLD_MS = 125_000
 const INTERVAL_MS = Number(process.env.INTERVAL_SEC ?? '60') * 1000
 const CHASE_MS = Number(process.env.CHASE_SEC ?? '5') * 1000
 // After a profitable trade, re-check only that corridor and direction quickly until the gap closes
@@ -184,6 +190,7 @@ async function execute(o: Opp): Promise<number | null> {
   const skip = await skipReserved()
   const r = await textileSwap('USDT', X, o.size, withSlippage(o.mid), { skipIfReserved: skip })
   if (r.status === 'reserved') {
+    textileHold = { amount: 2n ** 128n, until: Date.now() + r.retryAfterMs } // nothing fits until Textile lets go
     recordSkip()
     lastSkipped = true
     console.log(`  Textile still reserves our funds for ${Math.round(r.retryAfterMs / 1000)}s; skipping this trade instead of waiting (${skipSummary()})`)
@@ -191,6 +198,7 @@ async function execute(o: Opp): Promise<number | null> {
     return null
   }
   if (r.status !== 'filled') { log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), leg1: r.status, pnl: null }); return null }
+  textileHold = { amount: o.size, until: Date.now() + TEXTILE_HOLD_MS }
   const q = await uniQuote(X, 'USDT', r.received)
   if (!q) {
     pending.set(X, { costUsdt: o.size, since: Date.now() })
@@ -230,7 +238,7 @@ async function cycle() {
 
   const cash = await balanceOf(TOKENS.USDT.address)
   const cap = parseUnits((profile ? profile.capUsd : MAX_TRADE_USD).toFixed(2), 6)
-  const { size, watchOnly } = tradeSize(cash, cap, LIVE)
+  const { size, watchOnly } = tradeSize(cash, cap, LIVE, BigInt(Math.round(FIRST_TRADE_SHARE * 100)))
   status.watchOnly = watchOnly
   if (watchOnly) console.log(`  not enough USDT to trade (have ${usd(cash).toFixed(2)}); scanning in watch mode`)
 
@@ -239,11 +247,16 @@ async function cycle() {
   const opps: Opp[] = []
   for (const s of sizes) opps.push(...(await scan(s)))
   opps.sort(byEdge)
+  // While Textile holds our last Textile-first trade, only try Textile-first trades that fit in the free USDT
+  // (when skipping is on; with it off the bot waits for Textile as before)
+  const free = freeForTextile(cash, textileHold, Date.now())
+  const tradable = (await skipReserved()) && free < cash ? opps.filter((o) => o.route !== 'textile->uni' || o.size <= free) : opps
+  if (tradable.length < opps.length) console.log(`  Textile still holds funds from the last trade: Textile-first trades up to $${usd(free).toFixed(2)} for now`)
 
   for (const o of opps.filter((o) => o.size === size)) console.log(`  ${o.X.padEnd(5)} ${o.route.padEnd(13)} $${usd(o.size).toFixed(2)} -> $${usd(o.out).toFixed(4)}  edge ${o.edge >= 0 ? '+' : ''}${o.edge.toFixed(4)}`)
   status.lastScan = { at: new Date().toISOString(), maxSizeUsd: usd(size), opps: opps.map((o) => ({ X: o.X, route: o.route, sizeUsd: usd(o.size), outUsd: usd(o.out), edge: o.edge })) }
 
-  const best = pickBest(opps.filter((o) => o.edge >= minEdge(usd(o.size))), -Infinity)
+  const best = pickBest(tradable.filter((o) => o.edge >= minEdge(usd(o.size))), -Infinity)
   if (!best) { if (chase) console.log('  gap closed, back to full scans'); chase = null; console.log(`  no trade: best edge below $${minEdge(usd(size)).toFixed(4)}${profile ? ' (smart sizing)' : ''}`); return }
   if (watchOnly) { console.log(`  watch mode: edge of $${best.edge.toFixed(4)} available, fund the wallet to trade it`); return }
   console.log(`  >> ${LIVE ? 'TRADING' : 'would trade'}: ${best.X} ${best.route} at $${usd(best.size).toFixed(2)}, expected +$${best.edge.toFixed(4)}`)

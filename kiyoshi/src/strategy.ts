@@ -20,9 +20,10 @@ export function shouldHold(exitOut: bigint, costUsdt: bigint, ageMs: number, max
   return exitOut < flattenFloor(costUsdt, maxLossBps) && ageMs < maxHoldMs
 }
 
-/** Trade size: live uses 90% of cash up to the cap; below the minimum it scans at the cap in watch mode. */
-export function tradeSize(cash: bigint, cap: bigint, live: boolean) {
-  let size = live ? (cash * 90n / 100n < cap ? cash * 90n / 100n : cap) : cap
+/** Trade size: live uses sharePct% of cash (default 90) up to the cap; below the minimum it scans at the cap in watch mode. */
+export function tradeSize(cash: bigint, cap: bigint, live: boolean, sharePct = 90n) {
+  const part = (cash * sharePct) / 100n
+  let size = live ? (part < cap ? part : cap) : cap
   const watchOnly = size < MIN_TRADE
   if (watchOnly) size = cap
   return { size, watchOnly }
@@ -30,6 +31,12 @@ export function tradeSize(cash: bigint, cap: bigint, live: boolean) {
 
 /** Sizes to try: big trades move Uniswap's price, so the best dollar profit is not always at max size. */
 export const candidateSizes = (size: bigint) => [...new Set([size, size / 2n, size / 4n])].filter((s) => s >= MIN_TRADE)
+
+/** Midas's addition: after a trade that sells USDT on Textile, Textile holds that USDT for about two minutes, and a
+ *  new Textile quote must fit in the rest. This is the USDT a Textile-first trade can use now. */
+export type TextileHold = { amount: bigint; until: number }
+export const freeForTextile = (cash: bigint, hold: TextileHold | null, now: number) =>
+  hold && now < hold.until ? (cash > hold.amount ? cash - hold.amount : 0n) : cash
 
 export const byEdge = (a: { edge: number }, b: { edge: number }) => b.edge - a.edge
 

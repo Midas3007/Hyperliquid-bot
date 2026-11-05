@@ -44,12 +44,16 @@ Then decide what to optimize and what to tone down.
 
 ## Scan interval tests (Midas approved the one exception to the freeze, Nov 5)
 
-| From (UTC) | INTERVAL_SEC | Notes |
-|---|---|---|
-| until Nov 5 ~11:15 | 60 | as before |
-| Nov 5 ~11:15, one day | 20 | faster gap discovery; watch for rate-limit errors from forno or Textile |
-| Nov 6, one day | 45 | middle ground |
-| Nov 7 onward | 60 | back to the original, unless the review decides otherwise |
+| From (UTC) | INTERVAL_SEC | FIRST_TRADE_SHARE | Notes |
+|---|---|---|---|
+| until Nov 5 ~11:15 | 60 | 0.9 | as before |
+| Nov 5 ~11:15 | 20 | 0.9 | faster gap discovery; watch for rate-limit errors from forno or Textile |
+| Nov 5 ~12:00, rest of the day | 20 | 0.6 | two-slot sizing: first trade ≤ 60% of the wallet, and Textile-first trades only try what fits beside Textile's hold |
+| Nov 6, one day | 45 | 0.9 | middle ground for the scan; sizing back to normal |
+| Nov 7 onward | 60 | 0.9 | back to the original, unless the review decides otherwise |
+
+The Textile-hold tracking (code) stays in all along: with 0.9 it only stops the bot from asking Textile for trades
+that cannot fit, which it used to skip anyway.
 
 CHASE_SEC stays 5 throughout. At the review, split the week at these times and compare each interval with Mel over the
 same hours: the share of shared gaps won, profit per hour, error count and skipped trades.
@@ -59,6 +63,6 @@ same hours: the share of shared gaps won, profit per hour, error count and skipp
 | Date | Raised by | Issue or idea | Notes |
 |---|---|---|---|
 | Nov 5 | Claude | Base max trade is $500, not $330; peak sizes are bigger than the analysis assumed | Check whether the extra size helped or hurt |
-| Nov 5 | Midas (Render log + Mel's execution log, 12:17–12:23 Lagos) | **Mel chains trades back to back; we can't.** Textile holds the USDT of the last quote for ~2 min, and a new quote needs free (unheld) USDT. Mel trades $195 of ~$297, so $97.50 and $48.75 follow-ups still fit (his log: $195 at 12:17:05, then $97.50, $97.50 and $48.75 at 12:18:34–12:18:59). We trade 90% of the wallet ($338.56 of $376), so nothing is free, and the next Textile-first trade is skipped (18 skipped since Nov 3). On-chain, Oct 29–Nov 5: Textile→Uniswap trades followed by another within 60 s: Mel 107 of 369 (29%), us 23 of 304 (8%). Smart sizing's larger peak sizes make this worse, not better | Proposal for the review: "two-slot" sizing: keep the first trade at or under ~60% of cash (or cash minus a half-size reserve), so a half-size follow-up fits while Textile holds the first. Not built (freeze) |
+| Nov 5 | Midas (Render log + Mel's execution log, 12:17–12:23 Lagos) | **Mel chains trades back to back; we can't.** Textile holds the USDT of the last quote for ~2 min, and a new quote needs free (unheld) USDT. Mel trades $195 of ~$297, so $97.50 and $48.75 follow-ups still fit (his log: $195 at 12:17:05, then $97.50, $97.50 and $48.75 at 12:18:34–12:18:59). We trade 90% of the wallet ($338.56 of $376), so nothing is free, and the next Textile-first trade is skipped (18 skipped since Nov 3). On-chain, Oct 29–Nov 5: Textile→Uniswap trades followed by another within 60 s: Mel 107 of 369 (29%), us 23 of 304 (8%). Smart sizing's larger peak sizes make this worse, not better | Proposal: "two-slot" sizing, first trade ≤ ~60% of cash, so a half-size follow-up fits while Textile holds the first. **Midas approved a one-day test (Nov 5), with the hold tracking**; see the table above |
 | Nov 5 | Claude | The Render log only prints the full-size quotes; half and quarter sizes are scanned but not shown, so "no trade" lines can look worse than they are | Cosmetic; could print the best of all sizes |
 | Nov 5 | Midas asked, Claude proposed | Finer candidate sizes (¾, ⅜) and a best-size candidate from gap × $1.72M ÷ 2 | Offered, not built; decide at the review. Cost corrected: each extra size in the full scan adds ~16 quotes (4 corridors × 2 routes × 2 legs), so ¾ + ⅜ would make each scan about two-thirds slower. Cheaper version: after the normal scan, re-quote only the best opportunity at its formula size: 2 extra quotes, about a second |
