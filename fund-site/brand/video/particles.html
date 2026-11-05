@@ -1,0 +1,93 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#050504}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Aurum": the whole story told in gold dust. Thousands of gold particles swirl and re-form, bar by bar, into
+// the fan, the two markets, the gap, a coin, the clock, and the MIDAS × KIYOSHI wordmark. 44 s, timed to
+// score-aurum.py (70 BPM: a bar is 3.43 s). draw(t) is deterministic.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 44, BAR = 4 * 60 / 70, N = 9000
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const R = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+
+// ---------- shapes the dust forms (drawn white on an offscreen canvas, then sampled) ----------
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fanPath(x, cx, cy, r) { const w = (A1 - A0) / NB; for (let i = 0; i < NB; i++) { const s = A0 + i * w + .014, e = A0 + (i + 1) * w - .014; x.beginPath(); x.moveTo(cx + Math.cos(s) * r * .07, cy + Math.sin(s) * r * .07); x.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); x.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); x.lineTo(cx + Math.cos(e) * r * .07, cy + Math.sin(e) * r * .07); x.fill() } x.beginPath(); x.arc(cx, cy + r * .05, r * .08, 0, TAU); x.lineWidth = r * .04; x.stroke() }
+const SHAPES = [
+  ['dust'],
+  ['fan', (x) => fanPath(x, 960, 640, 380)],
+  ['text', 'Two markets.'],
+  ['lines', (x) => { x.lineWidth = 16; for (const [y0, ph] of [[420, 0], [660, 1.3]]) { x.beginPath(); for (let X = 160; X <= 1760; X += 8) x.lineTo(X, y0 + Math.sin(X / 140 + ph) * 34 + Math.sin(X / 51 + ph * 2) * 10); x.stroke() } }],
+  ['text', 'One gap.'],
+  ['gap', (x) => { x.lineWidth = 16; for (const [y0, ph] of [[400, 0], [680, 1.3]]) { x.beginPath(); for (let X = 160; X <= 1760; X += 8) x.lineTo(X, y0 + Math.sin(X / 140 + ph) * 30); x.stroke() } fanPath(x, 960, 600, 120) }],
+  ['text', 'Kiyoshi trades it.'],
+  ['coin', (x) => { x.lineWidth = 22; x.beginPath(); x.arc(960, 540, 300, 0, TAU); x.stroke(); x.lineWidth = 8; x.beginPath(); x.arc(960, 540, 250, 0, TAU); x.stroke(); fanPath(x, 960, 600, 170) }],
+  ['text', 'Midas runs the desk.'],
+  ['clock', (x) => { for (let h = 0; h < 24; h++) { const a0 = h / 24 * TAU - Math.PI / 2 + .02, a1 = (h + 1) / 24 * TAU - Math.PI / 2 - .02; x.lineWidth = h === 13 || h === 14 ? 70 : 34; x.beginPath(); x.arc(960, 540, 330, a0, a1); x.stroke() } const a = 13.5 / 24 * TAU - Math.PI / 2; x.lineWidth = 14; x.beginPath(); x.moveTo(960, 540); x.lineTo(960 + Math.cos(a) * 240, 540 + Math.sin(a) * 240); x.stroke() }],
+  ['text', 'Members share it.'],
+  ['mark', (x) => { fanPath(x, 960, 470, 200); x.font = `700 132px ${SERIF}`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.letterSpacing = '26px'; x.fillText('MIDAS × KIYOSHI', 975, 690) }],
+]
+const rng = R(5)
+let TARGETS = null
+function sample(draw) {
+  const cv = document.createElement('canvas'); cv.width = 1920; cv.height = 1080
+  const x = cv.getContext('2d', { willReadFrequently: true }); x.fillStyle = x.strokeStyle = '#fff'; x.lineCap = 'round'
+  draw(x)
+  const d = x.getImageData(0, 0, 1920, 1080).data, pts = []
+  for (let y = 0; y < 1080; y += 3) for (let X = 0; X < 1920; X += 3) if (d[(y * 1920 + X) * 4 + 3] > 128) pts.push([X, y])
+  const out = new Float32Array(N * 2), r = R(pts.length)
+  for (let i = 0; i < N; i++) { const p = pts[Math.floor(r() * pts.length)]; out[i * 2] = p[0] + (r() - .5) * 3; out[i * 2 + 1] = p[1] + (r() - .5) * 3 }
+  // sort by x so the dust flows left to right between shapes instead of criss-crossing
+  const idx = [...Array(N).keys()].sort((a, b) => out[a * 2] - out[b * 2]), s = new Float32Array(N * 2)
+  idx.forEach((j, i) => { s[i * 2] = out[j * 2]; s[i * 2 + 1] = out[j * 2 + 1] }); return s
+}
+function build() {
+  TARGETS = SHAPES.map(([kind, arg]) => {
+    if (kind === 'dust') { const s = new Float32Array(N * 2); for (let i = 0; i < N; i++) { const a = rng() * TAU, r = Math.sqrt(rng()) * 700; s[i * 2] = 960 + Math.cos(a) * r * 1.4; s[i * 2 + 1] = 540 + Math.sin(a) * r * .75 } const idx = [...Array(N).keys()].sort((a, b) => s[a * 2] - s[b * 2]), o = new Float32Array(N * 2); idx.forEach((j, i) => { o[i * 2] = s[j * 2]; o[i * 2 + 1] = s[j * 2 + 1] }); return o }
+    if (kind === 'text') return sample((x) => { x.font = `700 190px ${SERIF}`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(arg, 960, 540) })
+    return sample(arg)
+  })
+}
+const SEED = new Float32Array(N * 3); { const r = R(9); for (let i = 0; i < N * 3; i++) SEED[i] = r() }
+// a smooth swirl field for the dust between shapes
+const swirl = (x, y, t, s) => [Math.sin(y * .006 + t * .7 + s * 6) + Math.sin(x * .004 - t * .5), Math.cos(x * .006 - t * .6 + s * 5) + Math.cos(y * .005 + t * .4)]
+
+const glowC = document.createElement('canvas'); glowC.width = W / 4; glowC.height = H / 4
+function draw(t) {
+  if (!TARGETS) build()
+  const b = t / BAR, i0 = Math.min(SHAPES.length - 1, Math.floor(b)), i1 = Math.min(SHAPES.length - 1, i0 + 1)
+  const local = b - Math.floor(b), m = i0 === SHAPES.length - 1 ? 0 : smooth((local - .62) / .38) // hold, then morph into the next
+  const A = TARGETS[i0], B = TARGETS[i1], turb = Math.sin(Math.PI * m) // dust loosens mid-morph
+  g.setTransform(1, 0, 0, 1, 0, 0); g.fillStyle = '#050504'; g.fillRect(0, 0, W, H)
+  const vg = g.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H) * .7); vg.addColorStop(0, 'rgba(70,52,14,.35)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.save(); g.scale(W / 1920, H / 1080); g.globalCompositeOperation = 'lighter'
+  const intro = i0 === 0 ? smooth(t / 2.5) : 1
+  for (let i = 0; i < N; i++) {
+    const s = SEED[i * 3], s2 = SEED[i * 3 + 1], s3 = SEED[i * 3 + 2]
+    const k = smooth(clamp((m - s * .25) / .75)) // particles leave at slightly different moments
+    let x = lerp(A[i * 2], B[i * 2], k), y = lerp(A[i * 2 + 1], B[i * 2 + 1], k)
+    const [sx, sy] = swirl(x, y, t, s), amp = 130 * turb + 2.5 + (i0 === 0 ? 30 * (1 - m) : 0)
+    x += sx * amp + Math.sin(t * 2 + s2 * 20) * 1.2; y += sy * amp + Math.cos(t * 2.3 + s3 * 20) * 1.2
+    const tw = .45 + .55 * Math.sin(t * (1.5 + s2 * 2) + s3 * 30) ** 2
+    g.fillStyle = s < .12 ? `rgba(255,248,220,${.85 * tw * intro})` : `rgba(${220 + s2 * 35 | 0},${168 + s3 * 50 | 0},${60 + s * 40 | 0},${.7 * tw * intro})`
+    const z = s < .12 ? 2.6 : 1.8; g.fillRect(x - z / 2, y - z / 2, z, z)
+  }
+  g.restore()
+  // bloom: the dust, blurred and added back
+  const gx = glowC.getContext('2d'); gx.setTransform(1, 0, 0, 1, 0, 0); gx.clearRect(0, 0, glowC.width, glowC.height); gx.filter = 'blur(6px)'; gx.drawImage(c, 0, 0, glowC.width, glowC.height); gx.filter = 'none'
+  g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha = .55; g.drawImage(glowC, 0, 0, W, H); g.restore()
+  // a quiet caption under the last shape
+  if (t > SHAPES.length * BAR - BAR + 1.4) { g.save(); g.globalAlpha = smooth((t - (SHAPES.length - 1) * BAR - 1.4) / 1) * .8; g.fillStyle = '#b8a77c'; g.font = `500 ${22 * W / 1920}px ${MONO}`; g.textAlign = 'center'; g.letterSpacing = '8px'; g.fillText('CELO FX ARBITRAGE · A FUND FOR ITS MEMBERS', W / 2, H * .86); g.restore() }
+  g.globalAlpha = clamp(1 - t / .5) + clamp((t - (DUR - 1.2)) / 1.2); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready.then(() => build())
+</script>
+</body></html>
