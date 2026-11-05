@@ -42,6 +42,18 @@ Compare:
 
 Then decide what to optimize and what to tone down.
 
+## Scan interval tests (Midas approved the one exception to the freeze, Nov 5)
+
+| From (UTC) | INTERVAL_SEC | Notes |
+|---|---|---|
+| until Nov 5 ~11:15 | 60 | as before |
+| Nov 5 ~11:15, one day | 20 | faster gap discovery; watch for rate-limit errors from forno or Textile |
+| Nov 6, one day | 45 | middle ground |
+| Nov 7 onward | 60 | back to the original, unless the review decides otherwise |
+
+CHASE_SEC stays 5 throughout. At the review, split the week at these times and compare each interval with Mel over the
+same hours: the share of shared gaps won, profit per hour, error count and skipped trades.
+
 ## Issues and ideas logged during the week
 
 | Date | Raised by | Issue or idea | Notes |

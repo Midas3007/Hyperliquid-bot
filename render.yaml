@@ -30,8 +30,8 @@ services:
         value: "0.01"
       - key: SMART_PEAK_MAX_USD # smart sizing (Telegram /smart_on): the largest peak-hour trade
         value: "800"
-      - key: INTERVAL_SEC
-        value: "60"
+      - key: INTERVAL_SEC # seconds between full scans; one-day tests: 20 (Nov 5), 45 (Nov 6), then back to 60
+        value: "20"
       - key: MAX_FLATTEN_LOSS_BPS
         value: "50"
       - key: MAX_HOLD_MIN
