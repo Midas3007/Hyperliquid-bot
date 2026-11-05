@@ -1,0 +1,107 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070707}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Crypto is down. Kiyoshi is always up." A seamless 4 s loop on the old Wall Street line: markets take the stairs
+// up and the elevator down. Behind, a red crypto chart falls without end; in front, Kiyoshi climbs a gold staircase,
+// one small arbitrage step at a time. Both patterns repeat exactly every loop, so the GIF never jumps.
+const P = new URLSearchParams(location.search)
+const S = +(P.get('s') || 1000)
+const c = document.getElementById('c'); c.width = c.height = S
+const g = c.getContext('2d')
+const T = 4, TAU = Math.PI * 2
+const BG = '#080706', GOLD = '#D4AF37', GOLD2 = '#F3D77A', RED = '#c8534a', RED2 = '#e27a6f', GREY = '#8C8C88', WHITE = '#F4F4F0'
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const fr = (x) => x - Math.floor(x)
+const smooth = (x) => { x = clamp(x); return x * x * (3 - 2 * x) }
+const hash = (i) => fr(Math.sin(i * 127.1 + 311.7) * 43758.5453)
+function txt(s, x, y, size, color, o = {}) { g.save(); g.globalAlpha = o.alpha ?? 1; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 700} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore() }
+function dot(x, y, r, color, a = 1) { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha = a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color) {
+  g.save(); g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w + .012, e = A0 + (i + 1) * w - .012; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .05; g.beginPath(); g.arc(cx, cy + r * .05, r * .06, 0, TAU); g.stroke(); g.restore()
+}
+
+// ---------- the falling market (the elevator) ----------
+const CW = 34, PERIOD = 12, SHIFT = 12 // the chart scrolls 12 candles per loop and its shape repeats every 12
+const DROP = 15                         // average fall per candle
+const noise = (i) => { const k = ((i % PERIOD) + PERIOD) % PERIOD; return (hash(k) - .5) * 46 }
+const price = (i) => -i * DROP + noise(i) // falling, with wicks of panic
+function market(ph) {
+  const o = ph * SHIFT, i0 = Math.floor(o), f = o - i0
+  const y0 = (i) => price(i) - (price(i0) + (price(i0 + 1) - price(i0)) * f) // relative to the left edge
+  g.save(); g.beginPath(); g.rect(40, 190, 920, 600); g.clip()
+  // faint grid
+  g.strokeStyle = 'rgba(200,83,74,.08)'; g.lineWidth = 1
+  for (let y = 190; y <= 790; y += 50) { g.beginPath(); g.moveTo(40, y); g.lineTo(960, y); g.stroke() }
+  for (let j = -1; j < 920 / CW + 2; j++) {
+    const i = i0 + j, x = 60 + (j - f) * CW
+    const open = 250 - y0(i), close = 250 - y0(i + 1)
+    const top = Math.min(open, close) - 6 - hash(i * 3 + 1) * 18, bot = Math.max(open, close) + 6 + hash(i * 5 + 2) * 30
+    const up = close < open
+    g.strokeStyle = up ? 'rgba(127,191,143,.5)' : 'rgba(226,122,111,.75)'; g.lineWidth = 2; g.beginPath(); g.moveTo(x, top); g.lineTo(x, bot); g.stroke()
+    g.fillStyle = up ? 'rgba(127,191,143,.45)' : 'rgba(200,83,74,.8)'; g.fillRect(x - 10, Math.min(open, close), 20, Math.max(3, Math.abs(close - open)))
+  }
+  g.restore()
+  // tickers sliding down the left edge, like an elevator
+  const tick = [['BTC', '−8.4%'], ['ETH', '−11.2%'], ['SOL', '−14.7%'], ['CELO', '−9.1%'], ['DOGE', '−17.3%'], ['ALTS', '−21.0%']]
+  g.save(); g.beginPath(); g.rect(40, 190, 230, 600); g.clip()
+  for (let k = 0; k < 8; k++) { const y = 190 + fr(ph + k / 6) * 660 - 40, [n, v] = tick[k % 6], a = clamp((y - 200) / 60) * clamp((780 - y) / 60)
+    txt(`${n} ▼ ${v}`, 60, y, 22, RED2, { font: MONO, weight: 600, align: 'left', alpha: .55 * a }) }
+  g.restore()
+}
+
+// ---------- Kiyoshi's staircase (the stairs) ----------
+const RUN = 74, RISE = 30, STEPS_PER_LOOP = 4
+function stairs(ph) {
+  const o = ph * STEPS_PER_LOOP, f = fr(o)
+  // the staircase passes behind a fixed point (the fan), so the climb never ends
+  g.save(); g.beginPath(); g.rect(40, 190, 920, 600); g.clip()
+  const fx = 560, fy = 560
+  const pts = []
+  for (let k = -9; k <= 7; k++) {
+    const x = fx + (k - f) * RUN, y = fy - (k - f) * RISE
+    pts.push([x - RUN, y], [x, y]); pts.push([x, y], [x, y - RISE])
+  }
+  // fill under the stairs with a soft gold wash
+  g.save(); g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (const p of pts) g.lineTo(p[0], p[1]); g.lineTo(pts[pts.length - 1][0], 900); g.lineTo(pts[0][0], 900); g.closePath()
+  const wash = g.createLinearGradient(0, 300, 0, 900); wash.addColorStop(0, 'rgba(212,175,55,.22)'); wash.addColorStop(1, 'rgba(212,175,55,0)'); g.fillStyle = wash; g.fill()
+  g.lineJoin = 'miter'; g.strokeStyle = GOLD; for (const [w, a] of [[16, .08], [7, .18], [3, 1]]) { g.globalAlpha = a; g.lineWidth = w; g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke() }
+  g.restore()
+  // each step is a small, settled trade
+  const gains = ['+0.04', '+0.11', '+0.02', '+0.07', '+0.19', '+0.05', '+0.03', '+0.09']
+  for (let k = -6; k <= 5; k++) {
+    const x = fx + (k - f) * RUN, y = fy - (k - f) * RISE, n = ((Math.floor(o) + k) % 8 + 8) % 8, a = clamp((x - 330) / 90) * clamp((920 - x) / 80) * clamp(Math.abs(x - RUN / 2 - (fx - RUN * .45)) / 50 - .4)
+    if (a > 0) txt(gains[n], x - RUN / 2, y - 20, 17, GOLD2, { font: MONO, weight: 500, alpha: .7 * a })
+  }
+  // the fan climbs: one small hop per step
+  const hop = Math.sin(f * Math.PI) * 18
+  dot(fx - RUN * .45, fy - RISE * .5 - hop - 30, 70, 'rgba(243,215,122,.35)')
+  fan(fx - RUN * .45, fy - 22 - hop - RISE * smooth(f), 46, GOLD)
+  g.restore()
+}
+
+function draw(t) {
+  const ph = fr(t / T)
+  g.setTransform(S / 1000, 0, 0, S / 1000, 0, 0)
+  g.fillStyle = BG; g.fillRect(0, 0, 1000, 1000)
+  const vg = g.createRadialGradient(560, 520, 60, 560, 520, 640); vg.addColorStop(0, 'rgba(90,70,20,.25)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = vg; g.fillRect(0, 0, 1000, 1000)
+  market(ph)
+  // a fade so the falling chart sits behind the stairs
+  const fd = g.createLinearGradient(0, 190, 0, 790); fd.addColorStop(0, 'rgba(8,7,6,0)'); fd.addColorStop(1, 'rgba(8,7,6,.55)'); g.fillStyle = fd; g.fillRect(40, 190, 920, 600)
+  stairs(ph)
+  // frame and words
+  g.strokeStyle = 'rgba(212,175,55,.45)'; g.lineWidth = 1.5; g.strokeRect(40, 190, 920, 600)
+  txt('Crypto is down.', 500, 110, 66, RED2)
+  txt('Kiyoshi is always up.', 500, 872, 66, GOLD2)
+  txt('ARBITRAGE, NOT DIRECTION · MIDAS × KIYOSHI', 500, 940, 17, GREY, { font: MONO, weight: 500, spacing: 5 })
+}
+window.draw = draw; window.DUR = T
+window.READY = Promise.resolve()
+draw(+(P.get('t') || 1))
+</script>
+</body></html>
