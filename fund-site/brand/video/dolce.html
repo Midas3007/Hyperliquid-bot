@@ -1,0 +1,140 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#f1e6cf}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script src="teaser-assets/assets.js"></script>
+<script>
+// "Dolce Arbitraggio": a 1960s Italian film title sequence. Flat paper cut-outs in cream, tangerine, teal and
+// mustard, colour-block wipes on the bar lines, opening credits in Italian. 44 s, timed to score-dolce.py
+// (120 BPM swing: a bar is 2 s). draw(t) is deterministic; render with SCENE=dolce.html.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const main = c.getContext('2d')
+let g = main
+const DUR = 44, BEAT = .5, BAR = 2
+const CREAM = '#f1e6cf', TANG = '#e8743b', TEAL = '#1f6f6b', MUST = '#e2b33c', INK = '#2a2320', RED = '#c0392b', PAPER = '#fbf4e4'
+const SERIF = 'Caladea, "Liberation Serif", serif', SANS = 'Inter, sans-serif', MONO = '"JetBrains Mono", monospace'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * (3 - 2 * x) }
+const pop = (x) => { x = clamp(x); const s = 1.7; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2) } // back-out
+const hash = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+const IM = {}
+window.READY = Promise.all(['tok7', 'card2'].map((k) => new Promise((ok) => { const i = new Image(); i.onload = () => { IM[k] = i; ok() }; i.onerror = ok; i.src = (window.TEASER_IMG || {})[k] })))
+
+function txt(s, x, y, size, color, alpha = 1, o = {}) { if (alpha <= .003) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 700} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'
+  if (o.rot) { g.translate(x, y); g.rotate(o.rot); g.fillText(s, 0, 0) } else g.fillText(s, x, y); g.restore() }
+// a paper cut-out: a flat shape with a soft drop shadow
+function cut(fn, color, a = 1) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.shadowColor = 'rgba(40,25,10,.28)'; g.shadowBlur = 14; g.shadowOffsetX = 5; g.shadowOffsetY = 7; g.fillStyle = color; g.beginPath(); fn(); g.fill(); g.restore() }
+const circle = (x, y, r) => () => g.arc(x, y, Math.max(0, r), 0, TAU)
+function ribbon(y, amp, phase, thick, color, a = 1, x0 = -100, x1 = 2020) {
+  cut(() => { g.moveTo(x0, y); for (let x = x0; x <= x1; x += 20) g.lineTo(x, y + Math.sin(x / 160 + phase) * amp); for (let x = x1; x >= x0; x -= 20) g.lineTo(x, y + thick + Math.sin(x / 160 + phase + .4) * amp) }, color, a)
+}
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, open = 1, a = 1) {
+  cut(() => { const w = (A1 - A0) / NB; for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .014, e = A0 + (i + 1) * w * open - .014 + (1 - open) * .03; g.moveTo(cx + Math.cos(s) * r * .08, cy + Math.sin(s) * r * .08); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .08, cy + Math.sin(e) * r * .08); g.closePath() } }, color, a)
+  cut(circle(cx, cy + r * .04, r * .07), INK, a)
+}
+function coin(x, y, r, a = 1) { cut(circle(x, y, r), MUST, a); g.save(); g.globalAlpha *= a; g.strokeStyle = 'rgba(42,35,32,.55)'; g.lineWidth = r * .1; g.beginPath(); g.arc(x, y, r * .72, 0, TAU); g.stroke(); g.restore(); txt('M', x, y + r * .04, r * .9, 'rgba(42,35,32,.7)', a) }
+function sticker(x, y, r, label, color, rot, a) { // a round travel sticker
+  if (a <= 0) return
+  g.save(); g.translate(x, y); g.rotate(rot); g.scale(a, a)
+  cut(circle(0, 0, r), color); g.strokeStyle = PAPER; g.lineWidth = 5; g.beginPath(); g.arc(0, 0, r * .86, 0, TAU); g.stroke()
+  txt(label, 0, -4, r * (label.length > 9 ? .18 : label.length > 6 ? .24 : .3), PAPER, 1, { font: SANS, weight: 800, spacing: 3 })
+  txt('VIA CELO', 0, r * .36, r * .14, PAPER, .85, { font: MONO, weight: 600, spacing: 4 })
+  g.restore()
+}
+
+// ---------- scenes (each on 1920 x 1080) ----------
+const S = [
+  { t0: 0, bg: CREAM, draw(lt) { // presenta
+    cut(() => g.rect(0, 760, 1920, 320), TEAL); cut(() => g.rect(0, 820, 1920, 260), '#2b8a84')
+    cut(circle(960, lerp(1150, 790, pop(lt / 1.6)), 280), TANG)
+    txt('MIDAS × KIYOSHI', 960, 260, 92, INK, smooth((lt - .6) / .5), { spacing: 22 })
+    txt('presenta', 960, 360, 70, RED, smooth((lt - 1.4) / .5), { italic: true })
+  } },
+  { t0: 4, bg: TANG, draw(lt) { // the title
+    cut(circle(640, 500, lerp(0, 330, pop(lt / .8))), CREAM)
+    ribbon(820, 26, lt * 1.6, 70, TEAL, smooth((lt - .2) / .5)); ribbon(900, 26, lt * 1.6 + 1.7, 70, CREAM, smooth((lt - .35) / .5))
+    fan(640, 560, 210 * pop((lt - .5) / .7), MUST, smooth((lt - .5) / .9))
+    txt('Dolce', 1270, 400, 210 * pop((lt - .9) / .6), CREAM, smooth((lt - .9) / .3), { italic: true, rot: -.05 })
+    txt('ARBITRAGGIO', 1290, 560, 86, INK, smooth((lt - 1.6) / .4), { spacing: 18 })
+    txt('una commedia finanziaria', 1290, 650, 40, CREAM, smooth((lt - 2.4) / .5), { italic: true, weight: 400 })
+  } },
+  { t0: 10, bg: TEAL, draw(lt) { // con Kiyoshi, un'idea di Mel
+    cut(circle(560, 560, 330), '#2b8a84', smooth(lt / .5))
+    fan(560, 620, 300, MUST, smooth((lt - .2) / 1.3))
+    txt('con', 1300, 380, 60, CREAM, smooth((lt - .6) / .4), { italic: true, weight: 400 })
+    txt('KIYOSHI', 1300, 480, 150 * pop((lt - .8) / .5), CREAM, smooth((lt - .8) / .3), { spacing: 20 })
+    txt('il motore', 1300, 580, 44, MUST, smooth((lt - 1.5) / .4), { italic: true })
+    txt('un’idea di', 1300, 760, 44, CREAM, smooth((lt - 3) / .4), { italic: true, weight: 400 })
+    txt('MEL', 1300, 840, 96, TANG, smooth((lt - 3.3) / .4), { spacing: 26 })
+  } },
+  { t0: 16, bg: MUST, draw(lt) { // e Midas nel ruolo del banco
+    for (let k = 0; k < 5; k++) cut(circle(1340, 540, lerp(0, 420 - k * 76, pop((lt - k * .12) / .7))), [INK, TANG, CREAM, TEAL, CREAM][k])
+    const a = -Math.PI / 2 + lt * 1.2; g.save(); g.strokeStyle = INK; g.lineWidth = 12; g.lineCap = 'round'; g.globalAlpha = smooth((lt - .8) / .4); g.beginPath(); g.moveTo(1340, 540); g.lineTo(1340 + Math.cos(a) * 180, 540 + Math.sin(a) * 180); g.stroke(); g.restore()
+    txt('e', 560, 360, 70, INK, smooth((lt - .4) / .4), { italic: true, weight: 400 })
+    txt('MIDAS', 560, 480, 150 * pop((lt - .6) / .5), INK, smooth((lt - .6) / .3), { spacing: 22 })
+    txt('nel ruolo del banco', 560, 590, 48, RED, smooth((lt - 1.3) / .4), { italic: true })
+    txt('il banco non dorme mai', 560, 690, 34, INK, smooth((lt - 2.6) / .5), { italic: true, weight: 400 })
+  } },
+  { t0: 22, bg: CREAM, draw(lt) { // the montage: coins between two markets, the three cities
+    ribbon(250, 22, lt * 1.4, 64, TEAL); ribbon(760, 22, lt * 1.4 + 2, 64, TANG)
+    txt('TEXTILE', 140, 220, 26, TEAL, 1, { font: SANS, weight: 800, spacing: 6, align: 'left' }); txt('UNISWAP', 140, 860, 26, TANG, 1, { font: SANS, weight: 800, spacing: 6, align: 'left' })
+    for (let k = 0; k < 16; k++) { const t1 = .2 + k * BEAT, q = (lt - t1) / (BEAT * 1.8); if (q < 0 || q > 1) continue
+      const x = 220 + k * 105, y = lerp(740, 330, Math.sin(q * Math.PI / 2)) - Math.sin(q * Math.PI) * 60; coin(x, y, 34, 1 - smooth((q - .85) / .15)) }
+    sticker(520, 540, 120, 'LAGOS', RED, -.12, pop((lt - 1) / .5))
+    sticker(980, 520, 128, 'BUENOS AIRES', TEAL, .08, pop((lt - 2) / .5))
+    sticker(1440, 550, 120, 'SÃO PAULO', TANG, -.06, pop((lt - 3) / .5))
+    txt('comprare dove costa meno, vendere dove vale di più', 960, 990, 40, INK, smooth((lt - 4.2) / .5), { italic: true, weight: 400 })
+  } },
+  { t0: 30, bg: INK, draw(lt) { // il Fondo e il Pass
+    const k = smooth((lt - .2) / 1.4)
+    cut(circle(560, 520, 260), CREAM)
+    for (let i = 0; i < 8; i++) { const a0 = -Math.PI / 2 + i / 8 * TAU, a1 = a0 + TAU / 8 * clamp(k * 8 - i); if (a1 <= a0) continue; cut(() => { g.moveTo(560, 520); g.arc(560, 520, 230, a0 + .02, a1 - .02); g.closePath() }, [TANG, TEAL, MUST, RED][i % 4]) }
+    cut(circle(560, 520, 70), INK); fan(560, 530, 56, MUST)
+    txt('il Fondo', 560, 860, 70, CREAM, smooth((lt - .6) / .4), { italic: true })
+    txt('ogni socio, una quota', 560, 930, 32, MUST, smooth((lt - 1.2) / .4), { italic: true, weight: 400 })
+    const pk = pop((lt - 2.6) / .6)
+    if (IM.tok7 && pk > 0) { g.save(); g.translate(1360, 500); g.rotate(.06); g.scale(pk, pk); cut(() => g.rect(-250, -250, 500, 560), PAPER); g.drawImage(IM.tok7, -220, -220, 440, 440); txt('GENESIS', 0, 268, 34, INK, 1, { font: SANS, weight: 800, spacing: 10 }); g.restore() }
+    txt('e il Pass Genesis', 1360, 930, 52, CREAM, smooth((lt - 3.2) / .4), { italic: true })
+  } },
+  { t0: 36, bg: TANG, draw(lt) { // prossimamente
+    cut(circle(960, 470, lerp(0, 380, pop(lt / .9))), CREAM)
+    fan(960, 520, 300, INK, smooth((lt - .3) / 1.2))
+    txt('PROSSIMAMENTE', 960, 870, 120, CREAM, smooth((lt - 1.4) / .5), { spacing: 24 })
+    txt('coming soon · Midas × Kiyoshi', 960, 970, 40, INK, smooth((lt - 2.2) / .5), { italic: true, weight: 400 })
+  } },
+]
+
+// ---------- composition: scenes, colour-block wipes on the bar line, a film look ----------
+const WIPE = .5
+const grainC = document.createElement('canvas'); grainC.width = grainC.height = 256
+{ const gx = grainC.getContext('2d'), id = gx.createImageData(256, 256); for (let i = 0; i < id.data.length; i += 4) { const v = hash(i) * 255; id.data[i] = id.data[i + 1] = id.data[i + 2] = v; id.data[i + 3] = 18 } gx.putImageData(id, 0, 0) }
+const off = document.createElement('canvas'); off.width = W; off.height = H; const offx = off.getContext('2d')
+function scene(i, t, ctx) { const s = S[i]; g = ctx; ctx.setTransform(W / 1920, 0, 0, H / 1080, 0, 0); ctx.fillStyle = s.bg; ctx.fillRect(0, 0, 1920, 1080); s.draw(t - s.t0); g = main }
+function draw(t) {
+  let i = S.length - 1; while (i > 0 && t < S[i].t0) i--
+  const weave = [(hash(Math.floor(t * 24)) - .5) * 2.2, (hash(Math.floor(t * 24) + 99) - .5) * 1.6] // a little gate weave
+  main.save(); main.setTransform(1, 0, 0, 1, weave[0] * W / 1920, weave[1] * H / 1080)
+  scene(i, t, offx); main.drawImage(off, 0, 0)
+  // the wipe into the next scene: a band of the next colour sweeps across, revealing it
+  const nx = S[i + 1]
+  if (nx && t > nx.t0 - WIPE) {
+    const k = smooth((t - (nx.t0 - WIPE)) / WIPE)
+    scene(i + 1, nx.t0 + .001, offx)
+    main.save(); main.beginPath(); main.moveTo(0, 0); main.lineTo(W * k * 1.25, 0); main.lineTo(W * k * 1.25 - W * .25, H); main.lineTo(0, H); main.closePath(); main.clip(); main.drawImage(off, 0, 0); main.restore()
+    main.save(); main.fillStyle = [TANG, TEAL, MUST, CREAM, INK, TANG, CREAM][(i + 1) % 7]; main.beginPath(); const x = W * k * 1.25; main.moveTo(x, 0); main.lineTo(x + W * .06, 0); main.lineTo(x + W * .06 - W * .25, H); main.lineTo(x - W * .25, H); main.closePath(); main.fill(); main.restore()
+  }
+  main.restore()
+  main.setTransform(1, 0, 0, 1, 0, 0)
+  const gp = main.createPattern(grainC, 'repeat'); main.save(); main.translate((t * 997) % 256, (t * 613) % 256); main.fillStyle = gp; main.fillRect(-256, -256, W + 512, H + 512); main.restore()
+  const vg = main.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .45, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(40,20,5,.35)'); main.fillStyle = vg; main.fillRect(0, 0, W, H)
+  main.globalAlpha = clamp(1 - t / .4) + clamp((t - (DUR - 1)) / 1); main.fillStyle = '#000'; main.fillRect(0, 0, W, H); main.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR
+window.READY.then(() => draw(+(P.get('t') || 6)))
+</script>
+</body></html>
