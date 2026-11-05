@@ -75,108 +75,189 @@ function gear(cx, cy, r, teeth, ang, color, a = 1) {
 }
 
 // ---------- the machine (1000 x 1000 design space) ----------
-const HX = 500, HY = 205, HW = 860, HK = HW / GEO.W, GAP = 120
+const HX = 500, HY = 200, HW = 860, HK = HW / GEO.W, GAP = 120
 const ADAM = [HX - (GEO.W / 2 - GEO.adamTip[0]) * HK - GAP / 2, HY - (GEO.H / 2 - GEO.adamTip[1]) * HK]
 const GOD = [HX + (GEO.godTip[0] - GEO.W / 2) * HK + GAP / 2, HY - (GEO.H / 2 - GEO.godTip[1]) * HK]
-const PRINTER = { x: 640, y: 650, w: 250, h: 190 }
-const PILE = { x: 330, y: 840 }
-// the coins' closed route: lift up (left), across the hands (top), chute down (right), into the printer (hidden),
-// out as bills (hidden coin), back through the pile into the lift
-const ROUTE = [[95, 860], [95, 300], [150, ADAM[1] + 40], [ADAM[0] - 6, ADAM[1] + 6], [GOD[0] + 6, GOD[1] + 6], [905, GOD[1] + 60], [905, 470], [PRINTER.x + PRINTER.w / 2 - 20, PRINTER.y - 30], [PRINTER.x, PRINTER.y + 60], [PILE.x, PILE.y + 20], [95, 860]]
-const VISIBLE = (seg) => seg <= 6 // segments inside the printer and the pile are hidden
-const LEN = ROUTE.slice(1).map((p, i) => Math.hypot(p[0] - ROUTE[i][0], p[1] - ROUTE[i][1]))
-const TOTAL = LEN.reduce((a, b) => a + b, 0)
-function along(u) { let d = fr(u) * TOTAL; for (let i = 0; i < LEN.length; i++) { if (d <= LEN[i]) { const k = d / LEN[i]; return { x: lerp(ROUTE[i][0], ROUTE[i + 1][0], k), y: lerp(ROUTE[i][1], ROUTE[i + 1][1], k), seg: i, k } } d -= LEN[i] } return { x: ROUTE[0][0], y: ROUTE[0][1], seg: 0, k: 0 } }
-const NCOIN = 5
+const PRESS = { x: 790, y: 700 }           // the intaglio press (centre)
+const PILE = { x: 330, y: 838 }            // the money pile and the man in it
+// The coins' closed route, as a smooth curve: up the lift (left), across the hands, down the chute (right), into
+// the press; hidden while they become notes and while the pile mints a new one.
+const CTRL = [[95, 880], [95, 560], [95, 330], [150, ADAM[1] + 36], [ADAM[0] - 4, ADAM[1] + 6], [GOD[0] + 4, GOD[1] + 6],
+  [880, GOD[1] + 70], [905, 430], [870, 560], [PRESS.x + 20, PRESS.y - 120], [PRESS.x, PRESS.y - 40], [PRESS.x - 160, PRESS.y + 110], [PILE.x, PILE.y + 30], [160, 890]]
+function cr(p0, p1, p2, p3, k) { const k2 = k * k, k3 = k2 * k; return .5 * (2 * p1 + (-p0 + p2) * k + (2 * p0 - 5 * p1 + 4 * p2 - p3) * k2 + (-p0 + 3 * p1 - 3 * p2 + p3) * k3) }
+const SAMPLES = (() => { const out = [], n = CTRL.length; for (let i = 0; i < n; i++) for (let s = 0; s < 40; s++) { const k = s / 40, q = (j) => CTRL[(i + j + n) % n]
+  out.push({ x: cr(q(-1)[0], q(0)[0], q(1)[0], q(2)[0], k), y: cr(q(-1)[1], q(0)[1], q(1)[1], q(2)[1], k), seg: i }) } return out })()
+const CUM = (() => { const c = [0]; for (let i = 1; i <= SAMPLES.length; i++) { const a = SAMPLES[i - 1], b = SAMPLES[i % SAMPLES.length]; c.push(c[i - 1] + Math.hypot(b.x - a.x, b.y - a.y)) } return c })()
+function along(u) { const d = fr(u) * CUM[CUM.length - 1]; let lo = 0, hi = CUM.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; CUM[m] <= d ? (lo = m) : (hi = m) }
+  const a = SAMPLES[lo % SAMPLES.length], b = SAMPLES[(lo + 1) % SAMPLES.length], k = (d - CUM[lo]) / (CUM[lo + 1] - CUM[lo] || 1); return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), seg: a.seg } }
+// visible on the lift, across the hands and down the chute; it fades into the press and out of the pile
+const vis = (seg, x, y) => (seg >= 9 && seg <= 12 ? 0 : seg === 8 ? clamp((PRESS.y - 60 - y) / 50) : seg === 13 ? clamp((880 - y + 60) / 60) * clamp((x - 100) / 40 + 1) : 1)
+const NCOIN = 6
 
-const rng = R(7)
-const BILLS = Array.from({ length: 22 }, (_, i) => ({ ph: i / 22, x1: 150 + rng() * 260, y1: 790 + rng() * 60, spin: rng() * 4 - 2, w: 44 + rng() * 14 }))
-const PILEB = Array.from({ length: 70 }, () => ({ x: PILE.x + (rng() - .5) * 360, y: PILE.y + (rng() - .3) * 70, r: rng() * TAU, w: 40 + rng() * 14 }))
+const rng = R(9)
+const NOTE_TINT = ['#cfd2bd', '#c6cab2', '#d6d8c4', '#bfc4aa']
+const PILEB = Array.from({ length: 260 }, () => { const a = rng() * TAU, r = Math.sqrt(rng()); return { x: PILE.x + Math.cos(a) * r * 300, y: PILE.y + Math.sin(a) * r * 190, r: rng() * TAU, w: 46 + rng() * 12, tint: NOTE_TINT[Math.floor(rng() * 4)] } })
+const FLY = Array.from({ length: 16 }, (_, i) => ({ ph: i / 16, x1: PILE.x - 240 + rng() * 480, y1: PILE.y - 70 + rng() * 120, spin: (rng() - .5) * 3, w: 46 + rng() * 10 }))
+
+function note(x, y, w, rot, alpha = 1, tint = '#cfd2bd', tilt = 1) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha = alpha; g.translate(x, y); g.rotate(rot); g.scale(1, tilt)
+  const h = w * .44
+  g.shadowColor = 'rgba(0,0,0,.45)'; g.shadowBlur = 6; g.shadowOffsetY = 2
+  g.fillStyle = tint; g.fillRect(-w / 2, -h / 2, w, h); g.shadowBlur = 0; g.shadowOffsetY = 0
+  g.strokeStyle = 'rgba(46,84,62,.85)'; g.lineWidth = 1.2; g.strokeRect(-w / 2 + 2.5, -h / 2 + 2.5, w - 5, h - 5)
+  g.strokeStyle = 'rgba(46,84,62,.35)'; g.lineWidth = .8; for (let k = -2; k <= 2; k++) { g.beginPath(); g.moveTo(-w / 2 + 5, k * h * .13); g.lineTo(-w * .2, k * h * .13); g.stroke(); g.beginPath(); g.moveTo(w * .2, k * h * .13); g.lineTo(w / 2 - 5, k * h * .13); g.stroke() }
+  g.fillStyle = 'rgba(46,84,62,.75)'; g.beginPath(); g.ellipse(0, 0, w * .12, h * .32, 0, 0, TAU); g.fill()
+  g.restore()
+}
+// a tapered limb segment from a to b, with cylinder shading
+function limb(ax, ay, bx, by, wa, wb, base, light, dark) {
+  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy), nx = -dy / len, ny = dx / len
+  const gr = g.createLinearGradient(ax + nx * wa, ay + ny * wa, ax - nx * wa, ay - ny * wa)
+  gr.addColorStop(0, dark); gr.addColorStop(.35, light); gr.addColorStop(.6, base); gr.addColorStop(1, dark)
+  g.fillStyle = gr; g.beginPath(); g.moveTo(ax + nx * wa, ay + ny * wa); g.lineTo(bx + nx * wb, by + ny * wb); g.arc(bx, by, wb, Math.atan2(ny, nx), Math.atan2(-ny, -nx)); g.lineTo(ax - nx * wa, ay - ny * wa); g.arc(ax, ay, wa, Math.atan2(-ny, -nx), Math.atan2(ny, nx)); g.fill()
+}
+function hand(x, y, ang, s = 1) {
+  g.save(); g.translate(x, y); g.rotate(ang)
+  const gr = g.createLinearGradient(0, -9 * s, 0, 9 * s); gr.addColorStop(0, '#e2b896'); gr.addColorStop(1, '#b98663')
+  g.fillStyle = gr; g.beginPath(); g.ellipse(9 * s, 0, 13 * s, 9 * s, 0, 0, TAU); g.fill()
+  for (let f = -1.5; f <= 1.5; f++) { g.beginPath(); g.ellipse(23 * s, f * 4.2 * s, 7 * s, 2.3 * s, f * .08, 0, TAU); g.fill() }
+  g.beginPath(); g.ellipse(10 * s, -9 * s, 6 * s, 2.6 * s, -.6, 0, TAU); g.fill()
+  g.restore()
+}
+// The man in the money: seen from above, head (a gold coin) to the left, sweeping his arms and legs
+function man(cx, cy, w) {
+  const sweep = .5 - .5 * Math.cos(w * 2) // 0..1, twice per loop, easing at both ends
+  g.save(); g.translate(cx, cy)
+  // the angel: notes pushed aside where his limbs sweep, showing the walnut floor
+  g.save(); g.beginPath(); g.ellipse(-20, 0, 150, 52, 0, 0, TAU)
+  for (const s of [-1, 1]) { g.moveTo(-95, 0); g.arc(-95, 0, 160, s > 0 ? Math.PI * .58 : -Math.PI * 1.22, s > 0 ? Math.PI * 1.22 : -Math.PI * .58); g.closePath()
+    g.moveTo(25, 0); g.arc(25, 0, 196, s > 0 ? .1 : -.6, s > 0 ? .6 : -.1); g.closePath() }
+  g.clip()
+  const fl = g.createLinearGradient(-300, -200, 300, 200); fl.addColorStop(0, '#3a2414'); fl.addColorStop(.5, '#4b2f19'); fl.addColorStop(1, '#2f1d10')
+  g.fillStyle = fl; g.fillRect(-320, -240, 640, 480)
+  g.strokeStyle = 'rgba(0,0,0,.28)'; g.lineWidth = 1.2; for (let y = -240; y < 240; y += 18) { g.beginPath(); g.moveTo(-320, y); g.lineTo(320, y + 6); g.stroke() }
+  g.strokeStyle = 'rgba(255,220,170,.05)'; for (let y = -236; y < 240; y += 18) { g.beginPath(); g.moveTo(-320, y); g.lineTo(320, y + 6); g.stroke() }
+  g.restore()
+  // limbs, posed
+  const SUIT = ['#5a5e66', '#7c818b', '#33363c'], SHOE = ['#1a1a1c', '#4a4a50', '#050506']
+  const legs = []
+  for (const s of [-1, 1]) {
+    const a = s * lerp(.12, .55, sweep), hip = [18, s * 24], kn = [hip[0] + Math.cos(a) * 102, hip[1] + Math.sin(a) * 102], an = [kn[0] + Math.cos(a * .9) * 96, kn[1] + Math.sin(a * .9) * 96]
+    legs.push([hip, kn, an, a])
+  }
+  const arms = []
+  for (const s of [-1, 1]) {
+    const a = Math.PI + s * lerp(2.45, .75, sweep) // from down by his sides to up past his shoulders
+    const sh = [-92, s * 44], el = [sh[0] + Math.cos(a) * 80, sh[1] + Math.sin(a) * 80], b = a - s * .18, wr = [el[0] + Math.cos(b) * 74, el[1] + Math.sin(b) * 74]
+    arms.push([sh, el, wr, b])
+  }
+  // soft shadow under the whole figure
+  g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 22; g.shadowOffsetX = 6; g.shadowOffsetY = 10; g.fillStyle = 'rgba(0,0,0,.35)'
+  g.beginPath(); g.roundRect(-110, -56, 150, 112, 30); g.fill(); g.restore()
+  for (const [hip, kn, an] of legs) { limb(hip[0], hip[1], kn[0], kn[1], 21, 17, ...SUIT); limb(kn[0], kn[1], an[0], an[1], 17, 14, ...SUIT) }
+  for (const [, , an, a] of legs) { g.save(); g.translate(an[0], an[1]); g.rotate(a); const sg = g.createLinearGradient(0, -12, 0, 12); sg.addColorStop(0, SHOE[1]); sg.addColorStop(.5, SHOE[0]); sg.addColorStop(1, SHOE[2]); g.fillStyle = sg; g.beginPath(); g.ellipse(22, 0, 30, 13, 0, 0, TAU); g.fill(); g.fillStyle = 'rgba(255,255,255,.18)'; g.beginPath(); g.ellipse(30, -4, 10, 3, 0, 0, TAU); g.fill(); g.restore() }
+  // torso: jacket with lapels, shirt and tie
+  const jg = g.createLinearGradient(0, -60, 0, 60); jg.addColorStop(0, SUIT[2]); jg.addColorStop(.3, SUIT[1]); jg.addColorStop(.55, SUIT[0]); jg.addColorStop(1, SUIT[2])
+  g.fillStyle = jg; g.beginPath(); g.moveTo(-112, -54); g.quadraticCurveTo(-40, -62, 34, -40); g.lineTo(34, 40); g.quadraticCurveTo(-40, 62, -112, 54); g.quadraticCurveTo(-126, 0, -112, -54); g.fill()
+  g.fillStyle = '#ecebe6'; g.beginPath(); g.moveTo(-114, -20); g.lineTo(-48, 0); g.lineTo(-114, 20); g.fill()
+  g.fillStyle = 'rgba(0,0,0,.22)'; g.beginPath(); g.moveTo(-114, -24); g.lineTo(-40, 0); g.lineTo(-114, -12); g.fill(); g.beginPath(); g.moveTo(-114, 24); g.lineTo(-40, 0); g.lineTo(-114, 12); g.fill()
+  const tg = g.createLinearGradient(0, -7, 0, 7); tg.addColorStop(0, '#7e1f1c'); tg.addColorStop(.5, '#b8433a'); tg.addColorStop(1, '#6a1816')
+  g.fillStyle = tg; g.beginPath(); g.moveTo(-112, -5); g.lineTo(-104, -7); g.lineTo(-56, -4); g.lineTo(-50, 0); g.lineTo(-56, 4); g.lineTo(-104, 7); g.lineTo(-112, 5); g.fill()
+  g.fillStyle = '#1d1e22'; for (const bx of [-30, -6]) { g.beginPath(); g.arc(bx, 0, 3.2, 0, TAU); g.fill() }
+  g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(-40, 0); g.lineTo(34, -6); g.moveTo(-40, 0); g.lineTo(34, 6); g.stroke()
+  // arms over the jacket, white cuffs, hands
+  for (const [sh, el, wr, b] of arms) { limb(sh[0], sh[1], el[0], el[1], 17, 14, ...SUIT); limb(el[0], el[1], wr[0], wr[1], 14, 11, ...SUIT)
+    g.save(); g.translate(wr[0], wr[1]); g.rotate(b); g.fillStyle = '#efeee9'; g.fillRect(-2, -10, 8, 20); g.restore(); hand(wr[0] + Math.cos(b) * 6, wr[1] + Math.sin(b) * 6, b, 1.05) }
+  // collar and the coin head
+  g.fillStyle = '#ecebe6'; g.beginPath(); g.ellipse(-120, 0, 10, 20, 0, 0, TAU); g.fill()
+  g.restore()
+  coin(cx - 162, cy, 46, .12 * Math.sin(w * 2), true)
+}
+// the intaglio press: two star wheels, an engraved mint panel, notes sliding out onto a tray
+function press(x, y, w) {
+  g.save(); g.translate(x, y)
+  g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 30; g.shadowOffsetY = 14
+  const bg = g.createLinearGradient(0, -110, 0, 110); bg.addColorStop(0, '#2a241a'); bg.addColorStop(1, '#14110c')
+  g.fillStyle = bg; g.beginPath(); g.roundRect(-150, -90, 300, 170, 16); g.fill(); g.restore()
+  g.strokeStyle = GOLD; g.lineWidth = 2.5; g.beginPath(); g.roundRect(-150, -90, 300, 170, 16); g.stroke()
+  g.lineWidth = 1; g.globalAlpha = .6; g.beginPath(); g.roundRect(-140, -80, 280, 150, 10); g.stroke(); g.globalAlpha = 1
+  // the hopper the coins drop into
+  g.fillStyle = '#1e1a13'; g.beginPath(); g.moveTo(-40, -90); g.lineTo(-24, -128); g.lineTo(44, -128); g.lineTo(60, -90); g.closePath(); g.fill(); g.strokeStyle = GOLD; g.lineWidth = 2; g.stroke()
+  // the star wheels (one turn per loop each way, so the loop is seamless)
+  for (const [wx, dir] of [[-82, 1], [82, -1]]) {
+    g.save(); g.translate(wx, -22); g.rotate(w * dir)
+    const wg = g.createRadialGradient(-12, -12, 4, 0, 0, 52); wg.addColorStop(0, '#f6dc8e'); wg.addColorStop(1, '#8a6216')
+    g.strokeStyle = wg; g.lineWidth = 7; g.beginPath(); g.arc(0, 0, 46, 0, TAU); g.stroke()
+    g.lineWidth = 5; for (let k = 0; k < 8; k++) { const a = k * TAU / 8; g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(a) * 44, Math.sin(a) * 44); g.stroke(); g.beginPath(); g.arc(Math.cos(a) * 54, Math.sin(a) * 54, 5, 0, TAU); g.fillStyle = GOLD2; g.fill() }
+    g.fillStyle = '#f6dc8e'; g.beginPath(); g.arc(0, 0, 9, 0, TAU); g.fill()
+    g.restore()
+  }
+  txt('MIDAS × KIYOSHI', 0, 48, 15, GOLD, { spacing: 4 }); txt('MINT', 0, 66, 12, 'rgba(212,175,55,.7)', { font: MONO, weight: 500, spacing: 6 })
+  // the tray on the left where the notes slide out
+  g.fillStyle = '#1a1610'; g.beginPath(); g.moveTo(-150, 50); g.lineTo(-230, 70); g.lineTo(-230, 82); g.lineTo(-150, 66); g.closePath(); g.fill(); g.strokeStyle = GOLD; g.lineWidth = 1.5; g.stroke()
+  g.restore()
+}
 
 function draw(t) {
-  const ph = fr(t / T), w = ph * TAU // w: one full turn per loop
+  const ph = fr(t / T), w = ph * TAU // w: one full turn per loop; every motion below is periodic in it
   g.setTransform(S / 1000, 0, 0, S / 1000, 0, 0)
   g.fillStyle = BG; g.fillRect(0, 0, 1000, 1000)
-  const vg = g.createRadialGradient(500, 520, 60, 500, 520, 640); vg.addColorStop(0, 'rgba(90,70,20,.35)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = vg; g.fillRect(0, 0, 1000, 1000)
+  const vg = g.createRadialGradient(500, 520, 60, 500, 520, 640); vg.addColorStop(0, 'rgba(90,70,20,.32)'); vg.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = vg; g.fillRect(0, 0, 1000, 1000)
 
-  // the route, engraved
-  g.save(); g.strokeStyle = 'rgba(212,175,55,.35)'; g.lineWidth = 3; g.setLineDash([2, 10]); g.beginPath(); ROUTE.slice(0, 8).forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.stroke(); g.restore()
-  // the lift on the left: a rail with turning gears top and bottom
-  g.save(); g.strokeStyle = DEEP; g.lineWidth = 6; g.beginPath(); g.moveTo(80, 870); g.lineTo(80, 300); g.moveTo(110, 870); g.lineTo(110, 300); g.stroke(); g.restore()
-  gear(95, 880, 42, 12, w * 2, GOLD); gear(95, 290, 30, 10, -w * 3, GOLD)
-  // the chute on the right
-  g.save(); g.strokeStyle = DEEP; g.lineWidth = 6; g.beginPath(); g.moveTo(890, GOD[1] + 50); g.lineTo(890, 470); g.lineTo(PRINTER.x + PRINTER.w / 2 - 30, PRINTER.y - 44); g.moveTo(920, GOD[1] + 50); g.lineTo(920, 490); g.lineTo(PRINTER.x + PRINTER.w / 2 + 6, PRINTER.y - 30); g.stroke(); g.restore()
+  // rails: the lift on the left and the chute on the right, drawn as twin gold rails along the coins' curve
+  for (const off of [-13, 13]) { g.save(); g.strokeStyle = off < 0 ? '#7a5714' : '#a5781f'; g.lineWidth = 4; g.beginPath()
+    let first = true; for (const p of SAMPLES) { if (p.seg >= 9 && p.seg <= 12) { first = true; continue } if (p.seg === 13 && p.x > 140) continue; const q = [p.x + off, p.y]; first ? g.moveTo(...q) : g.lineTo(...q); first = false } g.stroke(); g.restore() }
+  gear(95, 318, 28, 10, -w * 3, GOLD)
 
-  // the flywheel: an engraved coin with circuit traces, spinning slowly, gears either side
-  gear(330, 520, 56, 14, -w, DEEP, .9); gear(670, 520, 56, 14, w, DEEP, .9)
+  // the flywheel coin, turning once every four loops' worth of quarter turns (w / 4 keeps it seamless with 4-fold symmetry)
+  gear(318, 520, 54, 14, -w, DEEP, .9); gear(682, 520, 54, 14, w, DEEP, .9)
   g.save(); g.translate(500, 500)
-  g.save(); g.rotate(w * .25)
+  g.save(); g.rotate(w / 18 * 1) // 18 spokes: a 1/18 turn per loop looks continuous and lands on itself
   const gr = g.createRadialGradient(-60, -70, 20, 0, 0, 175); gr.addColorStop(0, '#f6dc8e'); gr.addColorStop(.55, '#c99a3c'); gr.addColorStop(1, '#5e3e08')
-  g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 170, 0, TAU); g.fill()
+  g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 40; g.shadowOffsetY = 16; g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 170, 0, TAU); g.fill(); g.shadowBlur = 0; g.shadowOffsetY = 0
   g.strokeStyle = 'rgba(70,44,6,.85)'; g.lineWidth = 3; for (const r of [160, 128, 70]) { g.beginPath(); g.arc(0, 0, r, 0, TAU); g.stroke() }
   for (let i = 0; i < 18; i++) { const a = i / 18 * TAU; g.beginPath(); g.moveTo(Math.cos(a) * 74, Math.sin(a) * 74); g.lineTo(Math.cos(a) * 100, Math.sin(a) * 100); g.lineTo(Math.cos(a + .12) * 118, Math.sin(a + .12) * 118); g.stroke(); g.beginPath(); g.arc(Math.cos(a + .12) * 118, Math.sin(a + .12) * 118, 4, 0, TAU); g.stroke() }
-  g.font = `700 20px ${SERIF}`; g.fillStyle = 'rgba(70,44,6,.9)'; g.textAlign = 'center'
+  g.restore()
+  g.save(); g.font = `700 20px ${SERIF}`; g.fillStyle = 'rgba(70,44,6,.9)'; g.textAlign = 'center'
   const legend = 'DIGITAL · DECENTRALIZED · ARBITRAGE · KIYOSHI · '
   for (let i = 0; i < legend.length; i++) { const a = -Math.PI / 2 + i / legend.length * TAU; g.save(); g.translate(Math.cos(a) * 144, Math.sin(a) * 144); g.rotate(a + Math.PI / 2); g.fillText(legend[i], 0, 7); g.restore() }
   g.restore()
   fan(0, 24, 58, 'rgba(70,44,6,.92)')
   g.restore()
 
-  // the money printer: shakes, rollers turn, BRRR
-  const shake = Math.sin(t * 90) * 2.2
-  g.save(); g.translate(PRINTER.x + shake, PRINTER.y)
-  g.fillStyle = '#1b1814'; g.strokeStyle = GOLD; g.lineWidth = 3; g.beginPath(); g.roundRect(0, 0, PRINTER.w, PRINTER.h, 14); g.fill(); g.stroke()
-  g.beginPath(); g.moveTo(PRINTER.w / 2 - 60, 0); g.lineTo(PRINTER.w / 2 - 30, -40); g.lineTo(PRINTER.w / 2 + 30, -40); g.lineTo(PRINTER.w / 2 + 60, 0); g.closePath(); g.fillStyle = '#25211b'; g.fill(); g.stroke()
-  for (const [rx, dir] of [[70, 1], [180, -1]]) { g.save(); g.translate(rx, 95); g.rotate(w * 6 * dir); g.fillStyle = DEEP; g.beginPath(); g.arc(0, 0, 34, 0, TAU); g.fill(); g.strokeStyle = GOLD2; g.lineWidth = 3; for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(k * TAU / 6) * 30, Math.sin(k * TAU / 6) * 30); g.stroke() } g.restore() }
-  g.fillStyle = '#0b0a08'; g.fillRect(-8, 150, 70, 18) // the slot the bills come out of
-  g.restore()
-  const pulse = .5 + .5 * Math.sin(w * 8)
-  g.save(); g.translate(PRINTER.x + PRINTER.w / 2 + shake * 2, PRINTER.y + PRINTER.h + 56); g.rotate(-.04 + .03 * Math.sin(w * 8)); g.scale(1 + .06 * pulse, 1 + .06 * pulse)
-  txt('BRRR', 0, 0, 64, GOLD2, { spacing: 10 }); g.restore()
-
-  // the money pile and the coin-headed suit making money angels
-  for (const b of PILEB) bill(b.x, b.y, b.w, b.r, .95)
-  const angel = Math.sin(w * 2) // arms and legs sweep twice per loop
-  g.save(); g.translate(PILE.x, PILE.y - 10)
-  g.lineCap = 'round'
-  g.strokeStyle = '#4a4d55'; g.lineWidth = 26
-  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(60, 0 + s * 16); g.lineTo(150, s * (40 + 26 * angel)); g.stroke() } // legs
-  g.strokeStyle = '#111'; g.lineWidth = 22; for (const s of [-1, 1]) { g.beginPath(); g.moveTo(150, s * (40 + 26 * angel)); g.lineTo(166, s * (44 + 28 * angel)); g.stroke() } // shoes
-  g.strokeStyle = '#4a4d55'; g.lineWidth = 22
-  for (const s of [-1, 1]) { g.beginPath(); g.moveTo(-50, s * 30); g.lineTo(-90 + 30 * angel, s * (90 - 10 * angel)); g.stroke() } // arms
-  g.fillStyle = '#4a4d55'; g.beginPath(); g.roundRect(-70, -36, 140, 72, 20); g.fill() // jacket
-  g.fillStyle = '#e9e6de'; g.beginPath(); g.moveTo(-70, -14); g.lineTo(-20, 0); g.lineTo(-70, 14); g.fill()
-  g.fillStyle = '#b03a32'; g.beginPath(); g.moveTo(-68, -5); g.lineTo(-10, 0); g.lineTo(-68, 5); g.fill() // tie
-  g.restore()
-  coin(PILE.x - 112, PILE.y - 10, 44, .5 * Math.sin(w), true) // the coin head, turning to look about
-
-  // bills flying from the printer slot to the pile
-  for (const b of BILLS) {
-    const k = fr(ph * 2 + b.ph), x0 = PRINTER.x - 10, y0 = PRINTER.y + 158
-    const x = lerp(x0, b.x1, k), y = lerp(y0, b.y1, k) - Math.sin(k * Math.PI) * 140
-    bill(x, y, b.w, b.spin * k * TAU * .5 + k * 2, k < .08 ? k / .08 : k > .9 ? (1 - k) / .1 : 1)
+  // the pile, the man in it, the press
+  for (const b of PILEB) note(b.x, b.y, b.w, b.r, .96, b.tint, .82)
+  man(PILE.x + 30, PILE.y - 6, w)
+  press(PRESS.x, PRESS.y, w)
+  gear(95, 900, 40, 12, w * 2, GOLD)
+  // notes leave the tray in a steady stream and settle on the pile
+  for (const f of FLY) {
+    const k = fr(ph * 2 + f.ph), x0 = PRESS.x - 225, y0 = PRESS.y + 70
+    const e = smooth(k), x = lerp(x0, f.x1, e), y = lerp(y0, f.y1, e) - Math.sin(k * Math.PI) * 120
+    note(x, y, f.w, f.spin * k * 2 + .2, k < .1 ? k / .1 : k > .86 ? (1 - k) / .14 : 1, '#d2d5c1', .6 + .4 * Math.abs(Math.cos(k * 4)))
   }
 
-  // the hands, with the fan in the gap
+  // the hands, the glow and the fan in the gap
   if (HANDS) {
     const hh = GEO.H * HK, x0 = HX - HW / 2, sp = GEO.split
+    g.save(); g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 30; g.shadowOffsetY = 12
     g.drawImage(HANDS, 0, 0, sp, GEO.H, x0 - GAP / 2, HY - hh / 2, sp * HK, hh)
-    g.drawImage(HANDS, sp, 0, GEO.W - sp, GEO.H, x0 + sp * HK + GAP / 2, HY - hh / 2, (GEO.W - sp) * HK, hh)
+    g.drawImage(HANDS, sp, 0, GEO.W - sp, GEO.H, x0 + sp * HK + GAP / 2, HY - hh / 2, (GEO.W - sp) * HK, hh); g.restore()
   }
   const mid = [(ADAM[0] + GOD[0]) / 2, (ADAM[1] + GOD[1]) / 2]
-  dot(mid[0], mid[1], 70, 'rgba(243,215,122,.35)', .6 + .4 * Math.sin(w * 4) ** 2)
-  fan(mid[0], mid[1] + 36, 46, GOLD)
+  dot(mid[0], mid[1], 80, 'rgba(243,215,122,.35)', .7 + .3 * Math.cos(w * NCOIN))
+  fan(mid[0], mid[1] + 36, 44, GOLD)
 
-  // the coins on their route
+  // the coins on their route, evenly spaced
   for (let i = 0; i < NCOIN; i++) {
-    const p = along(ph + i / NCOIN)
-    if (!VISIBLE(p.seg)) continue
-    const inGap = p.seg === 3, glow = inGap ? Math.sin(p.k * Math.PI) : 0
-    if (glow > 0) dot(p.x, p.y, 60, 'rgba(255,240,190,.8)', glow)
-    coin(p.x, p.y, inGap ? 26 + 8 * glow : 24, fr(ph * 4 + i * .37), true)
+    const p = along(ph + i / NCOIN), a = vis(p.seg, p.x, p.y)
+    if (a <= 0) continue
+    const nearGap = Math.max(0, 1 - Math.abs(p.x - mid[0]) / 90) * (p.y < 300 ? 1 : 0)
+    if (nearGap > 0) dot(p.x, p.y, 64, 'rgba(255,240,190,.85)', nearGap)
+    g.save(); g.globalAlpha = a; coin(p.x, p.y, 24 + 7 * nearGap, fr(ph * 2 + i / NCOIN * 2), true); g.restore()
   }
-
-  txt('KIYOSHI · PERPETUAL', 500, 965, 22, GREY, { font: MONO, weight: 500, spacing: 8 })
+  txt('KIYOSHI · PERPETUAL', 500, 34, 18, GREY, { font: MONO, weight: 500, spacing: 8 })
 }
 window.draw = draw; window.DUR = T
 window.READY.then(() => draw(+(P.get('t') || 1)))
