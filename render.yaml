@@ -28,6 +28,8 @@ services:
         value: /data
       - key: MIN_EDGE_USD
         value: "0.01"
+      - key: SMART_PEAK_MAX_USD # smart sizing (Telegram /smart_on): the largest peak-hour trade
+        value: "800"
       - key: INTERVAL_SEC
         value: "60"
       - key: MAX_FLATTEN_LOSS_BPS

@@ -68,6 +68,22 @@ count. Switch it from Telegram: `/skipwait` shows the setting and the count, `/s
 `/skipwait_on` turns skipping on again. The bot picks up a change within 2 minutes, and stays on if it cannot read
 the setting.
 
+## Smart sizing by time of day
+
+Off until you switch it on. When on, the max trade and the minimum edge follow Lagos time (`src/schedule.ts`,
+from the trade analysis in `docs/trade-size-analysis.pdf`):
+
+| Window | Hours (Lagos) | Max trade | Minimum edge |
+|---|---|---|---|
+| Peak | 13:00–14:59, every day | MAX_TRADE_USD × 2 on Mon/Fri, × 1.5 Tue–Thu, × 1.25 Sat/Sun, never above `SMART_PEAK_MAX_USD` (default $800) | 0.3 bps, at least $0.01 |
+| Busy | 00, 01, 09, 11, 12, 20, 21 on weekdays | MAX_TRADE_USD | 1 bp, at least $0.02 |
+| Quiet | every other hour, and weekends outside the peak | MAX_TRADE_USD | 1.5 bps, at least $0.03 |
+
+A trade still never uses more than 90% of the bot's USDT, so the bigger peak size only applies when the cash is
+there. Telegram: `/smart` shows the setting and what the bot is doing now, `/smart_on` and `/smart_off` switch it,
+`/schedule` shows the week. `/dashboard` sends every command as buttons, with the two switches showing their
+state. The bot picks up a change within 2 minutes; if it cannot read the setting it keeps the last one it read.
+
 ## Telegram alerts
 
 The fund's `fund-alerts` function (Supabase) checks every 10 minutes and messages you on Telegram when:

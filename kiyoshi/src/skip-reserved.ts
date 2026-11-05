@@ -5,9 +5,8 @@
 // cannot. A tally of skips and of trades that did wait (when it is off) is kept in DATA_DIR across restarts.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
-const URL_ = process.env.FUND_SUPABASE_URL
-const KEY = process.env.FUND_SUPABASE_KEY
-const CHECK_MS = 2 * 60_000
+import { botSettings } from './settings.js'
+
 const FILE = (process.env.DATA_DIR ?? '.') + '/skip-reserved.json'
 
 type Tally = { since: string; skipped: number; waited: number; waitedPnl: number; waitedLosers: number }
@@ -16,7 +15,6 @@ try { if (existsSync(FILE)) tally = { ...tally, ...JSON.parse(readFileSync(FILE,
 const save = () => { try { writeFileSync(FILE, JSON.stringify(tally, null, 2)) } catch { /* not fatal */ } }
 
 let on = true
-let checkedAt = 0
 
 /** The Telegram setting: true unless explicitly switched off. */
 export function settingFrom(j: any) {
@@ -25,20 +23,9 @@ export function settingFrom(j: any) {
 
 /** Whether the next Textile -> Uniswap trade may be skipped when Textile reserves our funds. */
 export async function skipReserved() {
-  if (URL_ && KEY && Date.now() - checkedAt >= CHECK_MS) {
-    checkedAt = Date.now()
-    try {
-      const r = await fetch(`${URL_}/rest/v1/rpc/bot_settings`, {
-        method: 'POST', headers: { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' }, body: '{}',
-        signal: AbortSignal.timeout(10_000),
-      })
-      if (r.ok) {
-        const next = settingFrom(await r.json())
-        if (next !== on) console.log(`  skipping trades Textile makes wait for: switched ${next ? 'ON' : 'OFF'} from Telegram`)
-        on = next
-      }
-    } catch { /* keep the last known setting */ }
-  }
+  const next = settingFrom(await botSettings())
+  if (next !== on) console.log(`  skipping trades Textile makes wait for: switched ${next ? 'ON' : 'OFF'} from Telegram`)
+  on = next
   return on
 }
 

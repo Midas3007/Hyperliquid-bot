@@ -14,11 +14,15 @@ import { heartbeat } from './heartbeat.js'
 import { gasState, gasTopUp } from './gas.js'
 import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from './skip-reserved.js'
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
+import { botSettings } from './settings.js'
+import { describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
 import { byEdge, candidateSizes, edgeUsd, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip } from './strategy.js'
 
 const LIVE = process.env.LIVE === '1'
 const MAX_TRADE_USD = Number(process.env.MAX_TRADE_USD ?? '20')
 const MIN_EDGE_USD = Number(process.env.MIN_EDGE_USD ?? '0.01')
+// Smart sizing (Telegram /smart_on): peak-hour trades may grow up to this, never more
+const SMART_PEAK_MAX_USD = Number(process.env.SMART_PEAK_MAX_USD ?? '800')
 const INTERVAL_MS = Number(process.env.INTERVAL_SEC ?? '60') * 1000
 const CHASE_MS = Number(process.env.CHASE_SEC ?? '5') * 1000
 // After a profitable trade, re-check only that corridor and direction quickly until the gap closes
@@ -57,6 +61,7 @@ const status: Entry = {
   live: LIVE, startedAt: new Date().toISOString(),
   config: { maxTradeUsd: MAX_TRADE_USD, minEdgeUsd: MIN_EDGE_USD, intervalSec: INTERVAL_MS / 1000, maxFlattenLossBps: Number(MAX_FLATTEN_LOSS_BPS), maxHoldMin: MAX_HOLD_MS / 60_000 },
   lastScan: null, equity: null, baselineEquity: null, since: null, holding: false, lastError: null,
+  smartSchedule: scheduleTable(MAX_TRADE_USD, SMART_PEAK_MAX_USD),
 }
 function summary() {
   return {
@@ -216,8 +221,15 @@ async function cycle() {
     console.log('  holding leftover inventory; no new trades until it is sold')
     return
   }
+  // Smart sizing: max trade and minimum edge follow the time of day (schedule.ts), when switched on from Telegram
+  const profile: Profile | null = (await botSettings()).smart_sizing === true ? smartProfile(new Date(), MAX_TRADE_USD, SMART_PEAK_MAX_USD) : null
+  status.smart = profile ? { on: true, ...profile } : { on: false }
+  status.smartSummary = profile ? 'ON · ' + describeProfile(profile) : 'OFF'
+  if (profile) console.log('  smart sizing: ' + describeProfile(profile))
+  const minEdge = (sizeUsd: number) => (profile ? minEdgeFor(sizeUsd, profile) : MIN_EDGE_USD)
+
   const cash = await balanceOf(TOKENS.USDT.address)
-  const cap = parseUnits(String(MAX_TRADE_USD), 6)
+  const cap = parseUnits((profile ? profile.capUsd : MAX_TRADE_USD).toFixed(2), 6)
   const { size, watchOnly } = tradeSize(cash, cap, LIVE)
   status.watchOnly = watchOnly
   if (watchOnly) console.log(`  not enough USDT to trade (have ${usd(cash).toFixed(2)}); scanning in watch mode`)
@@ -231,8 +243,8 @@ async function cycle() {
   for (const o of opps.filter((o) => o.size === size)) console.log(`  ${o.X.padEnd(5)} ${o.route.padEnd(13)} $${usd(o.size).toFixed(2)} -> $${usd(o.out).toFixed(4)}  edge ${o.edge >= 0 ? '+' : ''}${o.edge.toFixed(4)}`)
   status.lastScan = { at: new Date().toISOString(), maxSizeUsd: usd(size), opps: opps.map((o) => ({ X: o.X, route: o.route, sizeUsd: usd(o.size), outUsd: usd(o.out), edge: o.edge })) }
 
-  const best = pickBest(opps, MIN_EDGE_USD)
-  if (!best) { if (chase) console.log('  gap closed, back to full scans'); chase = null; console.log(`  no trade: best edge below $${MIN_EDGE_USD}`); return }
+  const best = pickBest(opps.filter((o) => o.edge >= minEdge(usd(o.size))), -Infinity)
+  if (!best) { if (chase) console.log('  gap closed, back to full scans'); chase = null; console.log(`  no trade: best edge below $${minEdge(usd(size)).toFixed(4)}${profile ? ' (smart sizing)' : ''}`); return }
   if (watchOnly) { console.log(`  watch mode: edge of $${best.edge.toFixed(4)} available, fund the wallet to trade it`); return }
   console.log(`  >> ${LIVE ? 'TRADING' : 'would trade'}: ${best.X} ${best.route} at $${usd(best.size).toFixed(2)}, expected +$${best.edge.toFixed(4)}`)
   if (LIVE) {

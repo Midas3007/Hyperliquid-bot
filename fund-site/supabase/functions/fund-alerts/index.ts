@@ -3,8 +3,8 @@
 //     delivers chat messages here (webhook) with the command menu set.
 //   - Telegram, the moment someone messages the bot: carries a secret header derived from TELEGRAM_BOT_TOKEN
 //     (an Edge Function secret from @BotFather). The first private chat that sends /start gets the alerts;
-//     only that chat gets answers. Commands are read-only, except /skipwait_on|off, a bot setting that cannot move
-//     money: nothing here can move money.
+//     only that chat gets answers. Commands are read-only, except /skipwait_on|off and /smart_on|off, bot
+//     settings that cannot move money: nothing here can move money. /dashboard sends every command as buttons.
 //   - The Kiyoshi bot's heartbeat {heartbeat: {message, signature}}, signed by the bot wallet (the vault's
 //     treasury), so nobody can fake it.
 // Checks: bot silent or erroring, share price down sharply, settlement missed or waiting, keeper errors or low on
@@ -37,21 +37,27 @@ const vaultAbi = parseAbi([
 ])
 const SITE = 'https://midas-kiyoshi-fund.vercel.app'
 const COMMANDS = [
+  { command: 'dashboard', description: 'Every command as buttons' },
   { command: 'status', description: 'Bot, fund value and keeper at a glance' },
   { command: 'today', description: 'Trades and trading profit today' },
   { command: 'queue', description: 'Deposits and withdrawals waiting to settle' },
   { command: 'keeper', description: 'Keeper gas, last run and last settlement' },
   { command: 'skipwait', description: 'Skipping trades Textile makes wait for: on/off' },
+  { command: 'smart', description: 'Smart sizing by time of day: on/off' },
+  { command: 'schedule', description: 'The smart sizing schedule for the week' },
   { command: 'help', description: 'What this bot does' },
 ]
 const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, or the fund is paused. After each daily settlement you get a summary.
 
 Commands (nothing here moves money):
+/dashboard: every command as buttons
 /status: bot, fund value and keeper
 /today: trades and profit today (Lagos time)
 /queue: deposits and withdrawals waiting to settle
 /keeper: keeper gas, last run, last settlement (the bot's own gas is in /status)
 /skipwait: is the bot skipping trades Textile makes wait for? /skipwait_off and /skipwait_on switch it
+/smart: is smart sizing on? It sets the max trade and minimum edge by time of day. /smart_on and /smart_off switch it
+/schedule: the smart sizing schedule for the week
 /help: this message
 
 Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
@@ -92,7 +98,8 @@ Deno.serve(async (req) => {
       const { data: last } = await db.from('bot_heartbeat').select('at').eq('id', 1).single()
       if (last?.at && Date.parse(hb.at) <= Date.parse(last.at)) throw new Error('replayed')
       await db.from('bot_heartbeat').update({ at: hb.at, equity: hb.equity ?? null, error: hb.error ?? null, error_streak: hb.errorStreak ?? 0, pause: hb.pause ?? null, holding: !!hb.holding,
-        celo: hb.celo ?? null, last_topup: hb.lastTopUp ?? null, gas_error: hb.gasError ?? null, skip_summary: hb.skipSummary ?? null, received_at: new Date().toISOString() }).eq('id', 1)
+        celo: hb.celo ?? null, last_topup: hb.lastTopUp ?? null, gas_error: hb.gasError ?? null, skip_summary: hb.skipSummary ?? null,
+        smart_summary: hb.smart ?? null, smart_schedule: hb.schedule ?? null, received_at: new Date().toISOString() }).eq('id', 1)
       return reply({ ok: true })
     } catch (e) { return reply({ error: `heartbeat: ${(e as Error).message.split('\n')[0]}` }) }
   }
@@ -111,6 +118,19 @@ Deno.serve(async (req) => {
   // A chat message, delivered by Telegram the moment it is sent
   if (req.headers.get('x-telegram-bot-api-secret-token') !== null) {
     if (req.headers.get('x-telegram-bot-api-secret-token') !== secret) return new Response('forbidden', { status: 403 })
+    // A button on the dashboard: run its command for the linked chat, then refresh the buttons (their labels show state)
+    const cq = body?.callback_query
+    if (cq) {
+      await tg('answerCallbackQuery', { callback_query_id: cq.id })
+      if (!chat || cq.message?.chat?.id !== chat) return reply({ ok: true })
+      const c = String(cq.data ?? '')
+      if (!/^\/[a-z_]+$/.test(c)) return reply({ ok: true })
+      let text = ''
+      try { text = await run(c) } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
+      if (c !== '/dashboard') await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
+      await tg('editMessageReplyMarkup', { chat_id: chat, message_id: cq.message.message_id, reply_markup: await dashboardKeys() })
+      return reply({ ok: true })
+    }
     const m = body?.message
     if (!m || m.chat?.type !== 'private') return reply({ ok: true })
     const cmd = String(m.text ?? '').trim().split(/[\s@]/)[0].toLowerCase()
@@ -124,14 +144,55 @@ Deno.serve(async (req) => {
     }
     if (m.chat.id !== chat) return reply({ ok: true }) // only the linked chat gets answers
     let text = ''
-    try {
-      text = cmd === '/status' ? await statusText() : cmd === '/today' ? await todayText() : cmd === '/queue' ? await queueText()
-        : cmd === '/keeper' ? await keeperText() : cmd === '/skipwait' ? await skipText()
-        : cmd === '/skipwait_on' || cmd === '/skipwait_off' ? await setSkip(cmd === '/skipwait_on')
-        : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
-    } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
-    await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
+    try { text = await run(cmd) } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
+    const dash = cmd === '/dashboard' || cmd === '/menu'
+    await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true, ...(dash ? { reply_markup: await dashboardKeys() } : {}) })
     return reply({ ok: true })
+  }
+
+  async function run(cmd: string) {
+    return cmd === '/status' ? await statusText() : cmd === '/today' ? await todayText() : cmd === '/queue' ? await queueText()
+      : cmd === '/keeper' ? await keeperText() : cmd === '/skipwait' ? await skipText()
+      : cmd === '/skipwait_on' || cmd === '/skipwait_off' ? await setSkip(cmd === '/skipwait_on')
+      : cmd === '/smart' ? await smartText() : cmd === '/schedule' ? await scheduleText()
+      : cmd === '/smart_on' || cmd === '/smart_off' ? await setSmart(cmd === '/smart_on')
+      : cmd === '/dashboard' || cmd === '/menu' ? 'Command dashboard. Tap a button; the switches show their current state. Nothing here moves money.'
+      : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
+  }
+
+  // The dashboard's buttons. Switch labels show the current state; tapping one flips it.
+  async function dashboardKeys() {
+    const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
+    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true
+    const b = (text: string, data: string) => ({ text, callback_data: data })
+    return { inline_keyboard: [
+      [b('Status', '/status'), b('Today', '/today')],
+      [b('Queue', '/queue'), b('Keeper', '/keeper')],
+      [b(`Smart sizing: ${smart ? 'ON' : 'OFF'} (tap to turn ${smart ? 'off' : 'on'})`, smart ? '/smart_off' : '/smart_on')],
+      [b('Smart sizing now', '/smart'), b('Weekly schedule', '/schedule')],
+      [b(`Skip waits: ${skip ? 'ON' : 'OFF'} (tap to turn ${skip ? 'off' : 'on'})`, skip ? '/skipwait_off' : '/skipwait_on')],
+      [{ text: 'Open the site', url: SITE }, b('Help', '/help')],
+    ] }
+  }
+
+  async function smartText() {
+    const [{ data: st }, { data: hb }] = await Promise.all([db.from('bot_settings').select('*').eq('id', 1).single(), db.from('bot_heartbeat').select('smart_summary, at').eq('id', 1).single()])
+    const on = st?.smart_sizing === true
+    return [
+      `Smart sizing: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.smart_updated_at)})`,
+      on ? 'The max trade and minimum edge follow the time of day: bigger trades 13:00–14:59 Lagos, a higher minimum edge in quiet hours. /schedule shows the week.'
+        : 'The bot uses its fixed max trade and minimum edge all day.',
+      hb?.smart_summary ? `Bot now (reported ${ago(hb.at)}): ${hb.smart_summary}` : '',
+      on ? '/smart_off to go back to fixed sizing' : '/smart_on to turn it on',
+    ].filter(Boolean).join('\n')
+  }
+  async function setSmart(on: boolean) {
+    await db.from('bot_settings').update({ smart_sizing: on, smart_updated_at: new Date().toISOString() }).eq('id', 1)
+    return `Done: smart sizing is now ${on ? 'ON' : 'OFF'}. The bot picks this up within 2 minutes.`
+  }
+  async function scheduleText() {
+    const [{ data: st }, { data: hb }] = await Promise.all([db.from('bot_settings').select('smart_sizing').eq('id', 1).single(), db.from('bot_heartbeat').select('smart_schedule').eq('id', 1).single()])
+    return `Smart sizing schedule, Lagos time (${st?.smart_sizing === true ? 'ON' : 'OFF'}):\n${hb?.smart_schedule ?? 'The bot has not sent its schedule yet; it does within 5 minutes of its next start.'}\nA trade never uses more than 90% of the bot's USDT, so a bigger peak size only applies when the cash is there.`
   }
 
   async function skipText() {
@@ -206,7 +267,8 @@ Deno.serve(async (req) => {
   // Make sure Telegram delivers messages here, instantly, with the secret header; and set the "/" menu
   const hook = `${SUPA}/functions/v1/fund-alerts`
   const info = await tg('getWebhookInfo', {})
-  if (info.ok && info.result?.url !== hook) await tg('setWebhook', { url: hook, secret_token: secret, allowed_updates: ['message'] })
+  if (info.ok && (info.result?.url !== hook || !(info.result?.allowed_updates ?? []).includes('callback_query')))
+    await tg('setWebhook', { url: hook, secret_token: secret, allowed_updates: ['message', 'callback_query'] })
   await tg('setMyCommands', { commands: COMMANDS }) // keeps the "/" menu in step with COMMANDS
   if (!chat) return reply({ skipped: 'no chat linked yet: send /start to the Telegram bot' })
   const send = (text: string) => tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
