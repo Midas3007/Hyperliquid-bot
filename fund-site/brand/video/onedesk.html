@@ -1,0 +1,167 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#0c0e11}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Keep your phone. Join the fund." Why running Kiyoshi alone on a phone pays so little, and what pooling changes.
+// Numbers: a round trip's gas ~ $0.005 (Celo gas 202 gwei, ~380k gas, CELO ~ $0.069 from Textile's ticker, 6 Nov);
+// profit per trade ~ 4.3 bps (5 Nov: 260 trades, +$25.83 before gas, avg ~ $230, Telegram /today); share price
+// $1.00 -> $1.56 (on-chain, 29 Oct -> 5 Nov); 10% performance fee on profit; deposits and withdrawals settle daily.
+// 48 s, timed to score-onedesk.py (mellow amapiano, 112 BPM: a bar is 2.143 s).
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 48, BAR = 4 * 60 / 112
+const BG = '#0c0e11', CARD = '#15181d', LINE = '#262a31', GOLD = '#D4AF37', GOLD2 = '#F3D77A', WHITE = '#F4F4F0', SOFT = '#c9c6bd', GREY = '#8a8d93', RED = '#e0675a', GREEN = '#7fbf8f'
+const SERIF = 'Caladea, "Liberation Serif", serif', SANS = 'Inter, "Liberation Sans", sans-serif', MONO = '"JetBrains Mono", "DejaVu Sans Mono", monospace'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const inout = (t, a, b, f = .5) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+const hash = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+const B = (n) => n * BAR
+function txt(s, x, y, size, color, alpha = 1, o = {}) { if (alpha <= .003) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SANS}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore() }
+function dot(x, y, r, color, a = 1) { if (a <= 0) return; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha *= a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, a = 1, open = 1) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .012, e = A0 + (i + 1) * w * open - .012; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .05; g.beginPath(); g.arc(cx, cy + r * .05, r * .06, 0, TAU); g.stroke(); g.restore() }
+function card(x, y, w, h, a, glow = false) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.fillStyle = CARD; g.beginPath(); g.roundRect(x - w / 2, y - h / 2, w, h, 22); g.fill(); g.strokeStyle = glow ? 'rgba(212,175,55,.7)' : LINE; g.lineWidth = 1.5; g.stroke(); g.restore() }
+
+// ---------- a phone (generic), drawing its screen with a callback in local coordinates (272 x 592) ----------
+function phone(x, y, s, a, screen, rot = 0, dim = 0) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha *= a; g.translate(x, y); g.rotate(rot); g.scale(s, s)
+  g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 60; g.shadowOffsetY = 30
+  const body = g.createLinearGradient(-150, -310, 150, 310); body.addColorStop(0, '#3a3f47'); body.addColorStop(.5, '#1d2026'); body.addColorStop(1, '#2d3138')
+  g.fillStyle = body; g.beginPath(); g.roundRect(-150, -310, 300, 620, 46); g.fill(); g.shadowColor = 'transparent'
+  g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 2; g.stroke()
+  g.fillStyle = '#05060a'; g.beginPath(); g.roundRect(-136, -296, 272, 592, 34); g.fill()
+  g.save(); g.beginPath(); g.roundRect(-136, -296, 272, 592, 34); g.clip(); g.translate(-136, -296)
+  if (screen) screen()
+  if (dim > 0) { g.fillStyle = `rgba(0,0,0,${dim})`; g.fillRect(0, 0, 272, 592) }
+  g.restore()
+  g.fillStyle = '#000'; g.beginPath(); g.roundRect(-44, -284, 88, 24, 12); g.fill() // the camera pill
+  const sh = g.createLinearGradient(-136, -296, 136, 296); sh.addColorStop(0, 'rgba(255,255,255,.08)'); sh.addColorStop(.4, 'rgba(255,255,255,0)'); g.fillStyle = sh; g.beginPath(); g.roundRect(-136, -296, 272, 592, 34); g.fill()
+  g.restore()
+}
+function statusBar(time, batt, warm = 0) {
+  g.fillStyle = WHITE; g.font = `600 15px ${SANS}`; g.textAlign = 'left'; g.textBaseline = 'middle'; g.fillText(time, 24, 30)
+  const bx = 212, col = batt < .2 ? RED : batt < .4 ? '#e8b04a' : WHITE
+  g.strokeStyle = 'rgba(255,255,255,.7)'; g.lineWidth = 1.4; g.beginPath(); g.roundRect(bx, 22, 34, 16, 4); g.stroke(); g.fillStyle = col; g.fillRect(bx + 2.5, 24.5, 29 * clamp(batt), 11); g.fillRect(bx + 35, 27, 2.5, 6)
+  g.fillStyle = col; g.font = `600 12px ${SANS}`; g.textAlign = 'right'; g.fillText(`${Math.round(batt * 100)}%`, bx - 6, 30)
+  if (warm > 0) { g.globalAlpha = warm; g.fillStyle = 'rgba(224,103,90,.22)'; g.fillRect(0, 0, 272, 592); g.globalAlpha = 1 }
+}
+const LOG = ['scan cNGN  edge -0.0004', 'scan wARS  edge +0.0031', 'Textile 429: too many requests', 'reserved: waiting 118s', 'scan wBRL  no Uniswap quote', 'gas top-up: 0.08 CELO', 'trade wARS $50  +$0.021', 'gas  -$0.005', 'scan USDC  edge -0.0002', 'scan cNGN  edge +0.0006', 'reconnecting… data off?', 'trade cNGN $50  +$0.018', 'gas  -$0.005']
+function logScreen(t, speed = 1.6) {
+  g.fillStyle = '#07090c'; g.fillRect(0, 0, 272, 592)
+  g.font = `500 13px ${MONO}`; g.textAlign = 'left'; g.textBaseline = 'middle'
+  const off = t * speed * 22
+  for (let i = 0; i < 26; i++) { const k = Math.floor(off / 22) + i, y = 80 + i * 22 - (off % 22); if (y < 64 || y > 580) continue; const line = LOG[k % LOG.length]
+    g.fillStyle = line.includes('429') || line.includes('gas  -') || line.includes('reconnecting') ? 'rgba(224,103,90,.9)' : line.startsWith('trade') ? GOLD2 : 'rgba(200,205,210,.75)'; g.fillText(line, 16, y) }
+  g.fillStyle = 'rgba(212,175,55,.9)'; g.font = `700 14px ${SANS}`; g.fillText('KIYOSHI · LIVE', 16, 58)
+}
+
+// ---------- scenes ----------
+function s0(t) { // you could run it on your phone
+  const a = inout(t, .2, B(2) - .2), fl = Math.sin(t * 1.2) * 6
+  dot(960, 560, 520, 'rgba(212,175,55,.08)', a)
+  phone(960, 560 + fl, .95, a * smooth(t / .9), () => { logScreen(t); statusBar('21:40', .82) }, -.04)
+  txt('You could run Kiyoshi on your phone.', 960, 120, 64, WHITE, inout(t, .6, B(2) - .3), { font: SERIF, weight: 700 })
+}
+function s1(t) { // it has to stay awake
+  const lt = t - B(2), a = inout(t, B(2), B(4) - .15)
+  if (a <= 0) return
+  const q = clamp(lt / (B(2) * .9)), hours = 18 + q * 19.07, hh = Math.floor(hours) % 24, mm = Math.floor((hours % 1) * 60)
+  const batt = clamp(1 - q * 1.15), dead = batt <= 0
+  phone(620, 570, .95, a, () => { if (!dead) { logScreen(t, 5); statusBar(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`, batt, q * .8) } else { g.fillStyle = '#000'; g.fillRect(0, 0, 272, 592) } }, -.03)
+  if (dead) { const k = smooth((lt - B(2) * .87) / .4); card(1240, 470, 560, 130, a * k); txt('13:04 · peak hour', 1240, 440, 26, GOLD, a * k, { font: MONO, weight: 600 }); txt('+9 bps gap — your phone was off', 1240, 492, 30, WHITE, a * k, { weight: 600 }) }
+  txt('It has to stay awake, all day and all night.', 960, 120, 56, WHITE, a, { font: SERIF, weight: 700 })
+  txt('Battery, heat, data and a charger, for every hour of the trading day.', 1240, 640, 28, SOFT, a * smooth((lt - .8) / .5), { })
+}
+function s2(t) { // small trades, small change
+  const lt = t - B(4), a = inout(t, B(4), B(6) - .15); if (a <= 0) return
+  txt('Small trades earn small change.', 960, 120, 60, WHITE, a, { font: SERIF, weight: 700 })
+  const coin = (x, y, r, label, sub, k, gold) => { g.save(); g.globalAlpha = a * k; const gr = g.createLinearGradient(x - r, y - r, x + r, y + r); gr.addColorStop(0, gold ? GOLD2 : '#9aa0a8'); gr.addColorStop(1, gold ? '#8a6a1c' : '#4a4f57'); g.fillStyle = gr; g.beginPath(); g.arc(x, y, r * k, 0, TAU); g.fill(); g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, r * k * .82, 0, TAU); g.stroke(); g.restore()
+    txt(label, x, y + r + 60, 40, WHITE, a * k, { font: MONO, weight: 600 }); txt(sub, x, y + r + 108, 26, SOFT, a * k) }
+  coin(640, 470, 70, '≈ 2¢', 'a $50 trade, from a phone', smooth((lt - .2) / .5), false)
+  coin(1280, 470, 150, '≈ 10¢', 'the fund’s ~$230 trade, same gap', smooth((lt - .8) / .6), true)
+  txt('a typical gap is about 4 bps', 960, 900, 24, GREY, a * smooth((lt - 1.4) / .5), { font: MONO })
+}
+function s3(t) { // gas bites harder when you're small
+  const lt = t - B(6), a = inout(t, B(6), B(8) - .15); if (a <= 0) return
+  txt('Gas takes a bigger bite of a small trade.', 960, 120, 56, WHITE, a, { font: SERIF, weight: 700 })
+  const bar = (y, label, profit, gas, k) => { const W0 = 1100, x0 = 410, w = W0 * k
+    txt(label, x0, y - 54, 30, SOFT, a, { align: 'left' })
+    g.save(); g.globalAlpha = a; g.fillStyle = '#1d2128'; g.beginPath(); g.roundRect(x0, y - 26, W0, 52, 12); g.fill()
+    g.fillStyle = GOLD; g.beginPath(); g.roundRect(x0, y - 26, w, 52, 12); g.fill()
+    const gw = w * gas / profit; g.fillStyle = RED; g.beginPath(); g.roundRect(x0 + w - gw, y - 26, gw, 52, [0, 12, 12, 0]); g.fill(); g.restore()
+    txt(`gas ≈ ${Math.round(gas / profit * 100)}% of the profit`, x0 + W0 + 0, y + 60, 28, RED, a * k, { align: 'right', font: MONO, weight: 600 }) }
+  bar(400, 'From a phone, $50 a trade', 2.15, .53, smooth((lt - .3) / .7))
+  bar(660, 'The fund, ~$230 a trade', 9.9, .53, smooth((lt - .9) / .7))
+  txt('about half a cent of gas a round trip, either way', 960, 880, 26, GREY, a * smooth((lt - 1.6) / .5), { font: MONO })
+}
+function s4(t) { // ten phones, one gap
+  const lt = t - B(8), a = inout(t, B(8), B(10) - .1); if (a <= 0) return
+  txt('And every phone chases the same gap.', 960, 120, 58, WHITE, a, { font: SERIF, weight: 700 })
+  const pos = Array.from({ length: 10 }, (_, i) => { const an = i / 10 * TAU - Math.PI / 2; return [960 + Math.cos(an) * 560, 580 + Math.sin(an) * 300] })
+  pos.forEach(([x, y], i) => phone(x, y, .28, a * smooth((lt - i * .06) / .3), () => { logScreen(t + i, 3); statusBar('13:04', .3 + hash(i) * .6) }, (hash(i) - .5) * .2))
+  const split = smooth((lt - 1.0) / .9)
+  dot(960, 580, 120, 'rgba(243,215,122,.5)', a * (1 - split * .7))
+  g.save(); g.globalAlpha = a; g.fillStyle = GOLD2; g.beginPath(); g.arc(960, 580, 54 * (1 - split * .6), 0, TAU); g.fill(); g.restore()
+  pos.forEach(([x, y], i) => { const k = split, px = lerp(960, x, k * .7), py = lerp(580, y, k * .7); g.save(); g.globalAlpha = a * k; g.fillStyle = GOLD; g.beginPath(); g.arc(px, py, 10, 0, TAU); g.fill(); g.restore() })
+  txt('one gap, split ten ways', 960, 1000, 34, SOFT, a * smooth((lt - 1.6) / .5), { italic: true, font: SERIF })
+}
+function s5(t) { // the turn
+  const lt = t - B(10), a = inout(t, B(10), B(12) - .15); if (a <= 0) return
+  const merge = smooth(lt / 1.2)
+  for (let i = 0; i < 10; i++) { const an = i / 10 * TAU - Math.PI / 2, x = lerp(960 + Math.cos(an) * 560, 960, merge), y = lerp(580 + Math.sin(an) * 300, 560, merge)
+    phone(x, y, .28 * (1 - merge * .6), a * (1 - merge), null) }
+  dot(960, 560, 420, 'rgba(212,175,55,.3)', a * merge)
+  fan(960, 600, 190, GOLD, a * merge, smooth((lt - .6) / 1.0))
+  txt('Or pool it, and let one desk do the work.', 960, 150, 62, WHITE, a * smooth((lt - .8) / .5), { font: SERIF, weight: 700 })
+}
+const PERKS = [['One desk, awake around the clock', 'on a server, not your phone'], ['Trades at a size where the gaps pay', 'about $230 a trade today'],
+  ['No battery, data or gas on your side', 'the desk handles all of it'], ['Your share of every trade', 'deposits and withdrawals settle daily'], ['10% fee, only on profit', 'no profit, no fee']]
+function s6(t) {
+  const lt = t - B(12), a = inout(t, B(12), B(16) - .15); if (a <= 0) return
+  dot(470, 560, 380, 'rgba(212,175,55,.22)', a); fan(470, 610, 170, GOLD, a)
+  txt('THE FUND', 470, 760, 30, GOLD, a, { font: MONO, weight: 600, spacing: 12 })
+  PERKS.forEach(([h, s], i) => { const k = smooth((lt - .3 - i * 1.15) / .45) * a, y = 250 + i * 150, x = 900
+    card(x + 400, y, 860, 118, k, true)
+    g.save(); g.globalAlpha = k; g.strokeStyle = GREEN; g.lineWidth = 5; g.lineCap = 'round'; g.beginPath(); g.moveTo(x + 8, y); g.lineTo(x + 24, y + 16); g.lineTo(x + 52, y - 18); g.stroke(); g.restore()
+    txt(h, x + 84, y - 18, 34, WHITE, k, { align: 'left', weight: 600 }); txt(s, x + 84, y + 24, 24, SOFT, k, { align: 'left' }) })
+}
+function s7(t) { // proof, and the honest line
+  const lt = t - B(16), a = inout(t, B(16), B(19) - .15); if (a <= 0) return
+  txt('What the desk did', 960, 150, 30, GOLD, a, { font: MONO, weight: 600, spacing: 10 })
+  const k1 = smooth((lt - .2) / .5) * a, k2 = smooth((lt - .9) / .5) * a
+  card(600, 470, 620, 300, k1); txt('5 November', 600, 380, 28, SOFT, k1); txt('260 trades', 600, 455, 64, WHITE, k1, { font: MONO, weight: 600 }); txt('+$25.83 before gas', 600, 535, 40, GOLD2, k1, { font: MONO, weight: 600 })
+  card(1320, 470, 620, 300, k2); txt('Share price, on-chain', 1320, 380, 28, SOFT, k2); txt('$1.00 → $1.56', 1320, 455, 64, WHITE, k2, { font: MONO, weight: 600 }); txt('29 Oct to 5 Nov', 1320, 535, 34, SOFT, k2)
+  txt('Past results don’t promise future ones. Gaps can shrink, and the money can lose.', 960, 760, 28, GREY, a * smooth((lt - 1.6) / .5))
+}
+function s8(t) {
+  const lt = t - B(19); if (lt < 0) return
+  const a = smooth(lt / .6)
+  dot(960, 400, 520, 'rgba(212,175,55,.2)', a)
+  txt('Keep your phone.', 960, 300, 92, WHITE, a, { font: SERIF, weight: 700 })
+  txt('Join the fund.', 960, 410, 92, GOLD2, smooth((lt - .5) / .6), { font: SERIF, weight: 700 })
+  fan(960, 600, 90, GOLD, smooth((lt - 1.1) / .6), smooth((lt - 1.1) / 1.0))
+  txt('MIDAS × KIYOSHI', 960, 720, 60, WHITE, smooth((lt - 1.5) / .6), { font: SERIF, weight: 700, spacing: 16 })
+  txt('midas-kiyoshi-fund.vercel.app', 960, 800, 32, SOFT, smooth((lt - 2.0) / .6), { font: MONO })
+}
+function draw(t) {
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  g.fillStyle = BG; g.fillRect(0, 0, 1920, 1080)
+  // a soft table light that slowly drifts
+  dot(960 + Math.sin(t * .2) * 200, 700, 1100, 'rgba(60,52,36,.35)')
+  s0(t); s1(t); s2(t); s3(t); s4(t); s5(t); s6(t); s7(t); s8(t)
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .4, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.55)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .6) + clamp((t - (DUR - 1.2)) / 1.2); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready
+</script>
+</body></html>
