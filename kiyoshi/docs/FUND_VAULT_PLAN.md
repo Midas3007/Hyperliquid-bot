@@ -205,6 +205,10 @@ These are now part of the plan, not options. They override the Pass notes furthe
 - **Supply: 100 passes.** That is also the most members the fund can have.
 - **Site:** shows each member's passes counted, their fee tier and any locked shares with the days left; checks
   for a pass before the deposit button; check whether MiniPay shows NFTs.
+- **Redeem breakdown card (build with these additions, not before):** as a member types an amount to redeem, a
+  small card shows the amount, the part that is profit, the fee at their tier rate on that profit, the 0.3% that
+  stays in the fund if they choose instant, what they receive, and when it is paid. Example for $150 worth with
+  $50 profit at 1 pass: scheduled gets $140; instant gets $139.55 ($10 fee + $0.45 into the fund).
 - **Still invite-based.** The pass does not open the fund to the public; Midas still decides who gets one. It
   just replaces adding wallets to the list by hand.
 
