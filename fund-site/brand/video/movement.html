@@ -1,0 +1,144 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#070605}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "The Movement": Kiyoshi's loop as a watch movement. A gold watch face ticks, lifts away, and the camera travels
+// gear to gear through the seven steps the bot repeats every 30 seconds. 44 s, timed to score-movement.py
+// (60 BPM: one tick a second, a bar is 4 s). Steps change on the bar: 8, 12, ... 32 s.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 44, BAR = 4
+const GOLD = '#D4AF37', GOLD2 = '#F3D77A', DEEP = '#7a5c18', WHITE = '#F4F1EA', SOFT = '#cfc6b4', GREY = '#8c857a'
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace', SANS = 'Inter, sans-serif'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const inout = (t, a, b, f = .6) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+function txt(s, x, y, size, color, alpha = 1, o = {}) { if (alpha <= .003) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore() }
+function dot(x, y, r, color, a = 1) { if (a <= 0) return; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha *= a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, a = 1, open = 1) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .012, e = A0 + (i + 1) * w * open - .012; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .05; g.beginPath(); g.arc(cx, cy + r * .05, r * .06, 0, TAU); g.stroke(); g.restore() }
+const tick = (t) => Math.floor(t) + smooth(clamp((t % 1) / .12)) // a second hand that ticks, with a soft landing
+
+// ---------- gears ----------
+function gear(x, y, r, teeth, rot, glow = 0, a = 1) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha *= a; g.translate(x, y); g.rotate(rot)
+  const gr = g.createRadialGradient(-r * .3, -r * .3, r * .1, 0, 0, r * 1.1); gr.addColorStop(0, glow > 0 ? GOLD2 : '#c9a33c'); gr.addColorStop(.7, GOLD); gr.addColorStop(1, DEEP)
+  g.fillStyle = gr; g.beginPath()
+  const d = r * .09
+  for (let i = 0; i < teeth; i++) { const a0 = i / teeth * TAU, w = TAU / teeth
+    g.lineTo(Math.cos(a0) * r, Math.sin(a0) * r); g.lineTo(Math.cos(a0 + w * .12) * (r + d), Math.sin(a0 + w * .12) * (r + d))
+    g.lineTo(Math.cos(a0 + w * .45) * (r + d), Math.sin(a0 + w * .45) * (r + d)); g.lineTo(Math.cos(a0 + w * .57) * r, Math.sin(a0 + w * .57) * r) }
+  g.closePath()
+  // spokes: cut the gear into a rim and a hub
+  g.moveTo(r * .72, 0); g.arc(0, 0, r * .72, 0, TAU, true)
+  g.fill('evenodd')
+  g.beginPath(); g.arc(0, 0, r * .26, 0, TAU); g.fill()
+  for (let k = 0; k < 5; k++) { g.save(); g.rotate(k / 5 * TAU); g.fillRect(r * .2, -r * .06, r * .56, r * .12); g.restore() }
+  g.fillStyle = '#2a1f0a'; g.beginPath(); g.arc(0, 0, r * .08, 0, TAU); g.fill()
+  g.fillStyle = '#b03040'; g.beginPath(); g.arc(0, 0, r * .045, 0, TAU); g.fill() // the jewel bearing
+  g.restore()
+  if (glow > 0) dot(x, y, r * 1.6, 'rgba(243,215,122,.35)', glow)
+}
+const CX = 960, CY = 560
+const STEPS = [
+  ['Safety first', 'Leftovers from an unfinished trade are sold first,', 'never at more than a 0.5% loss.'],
+  ['Size', 'Up to 80% of the cash on the first trade,', 'bigger at the peak hours.'],
+  ['Scan', 'Every pair, both ways round,', 'at a few different sizes.'],
+  ['Pick', 'Only the best gap that beats', 'the minimum edge. Otherwise, wait.'],
+  ['Trade', 'Two swaps, Uniswap and Textile.', 'The firm quote is checked first.'],
+  ['Chase', 'A winning gap is checked again', 'every five seconds until it closes.'],
+  ['Report', 'Gas, equity, the dashboard and Telegram.', 'Then it begins again.'],
+]
+const GEARS = STEPS.map((_, i) => { const a = -Math.PI / 2 + i / 7 * TAU; return { x: CX + Math.cos(a) * 360, y: CY + Math.sin(a) * 360, r: 92 + (i % 2) * 14, teeth: 18 + (i % 3) * 2 } })
+const stepAt = (t) => Math.floor((t - 8) / BAR)
+function movement(t, a) {
+  if (a <= 0) return
+  // the plate: brushed with circular graining
+  g.save(); g.globalAlpha = a
+  g.fillStyle = '#14100a'; g.beginPath(); g.arc(CX, CY, 560, 0, TAU); g.fill()
+  g.strokeStyle = 'rgba(212,175,55,.07)'; g.lineWidth = 2; for (let r = 40; r < 560; r += 14) { g.beginPath(); g.arc(CX, CY, r, 0, TAU); g.stroke() }
+  g.strokeStyle = 'rgba(212,175,55,.5)'; g.lineWidth = 4; g.beginPath(); g.arc(CX, CY, 560, 0, TAU); g.stroke()
+  g.restore()
+  const cur = stepAt(t), fin = clamp((t - 36) / 1.2)
+  const spin = t * .35
+  gear(CX, CY, 220, 48, spin, 0, a)
+  GEARS.forEach((gr, i) => {
+    const on = i === cur ? inout(t, 8 + i * BAR, 8 + (i + 1) * BAR - .05, .4) : 0
+    const dir = i % 2 ? 1 : -1, ratio = 220 / gr.r
+    gear(gr.x, gr.y, gr.r, gr.teeth, -dir * spin * ratio * .5 + i, Math.max(on, fin * .6), a)
+    txt(String(i + 1), gr.x, gr.y, 34, '#2a1f0a', a * (.4 + .6 * Math.max(on, fin)), { font: MONO, weight: 700 })
+  })
+  // balance wheel at the centre, oscillating with the tick
+  const osc = Math.sin(t * Math.PI) * .9
+  g.save(); g.globalAlpha = a; g.translate(CX, CY); g.rotate(osc); g.strokeStyle = GOLD2; g.lineWidth = 6; g.beginPath(); g.arc(0, 0, 70, 0, TAU); g.stroke()
+  g.lineWidth = 4; for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(k / 3 * TAU) * 70, Math.sin(k / 3 * TAU) * 70); g.stroke() } g.restore()
+  fan(CX, CY + 8, 46, '#2a1f0a', a * .9)
+}
+function face(t) {
+  const lift = smooth((t - 4) / 2.4); if (lift >= 1) return
+  const s = 1 + lift * .5, a = 1 - lift
+  g.save(); g.globalAlpha = a; g.translate(CX, CY); g.scale(s, s)
+  const gr = g.createRadialGradient(-120, -160, 40, 0, 0, 560); gr.addColorStop(0, '#f6eedb'); gr.addColorStop(1, '#d9ccad'); g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 540, 0, TAU); g.fill()
+  g.strokeStyle = GOLD; g.lineWidth = 22; g.beginPath(); g.arc(0, 0, 551, 0, TAU); g.stroke()
+  for (let i = 0; i < 60; i++) { const an = i / 60 * TAU, big = i % 5 === 0; g.strokeStyle = '#2a2218'; g.lineWidth = big ? 6 : 2; g.beginPath(); g.moveTo(Math.cos(an) * (big ? 470 : 492), Math.sin(an) * (big ? 470 : 492)); g.lineTo(Math.cos(an) * 510, Math.sin(an) * 510); g.stroke() }
+  const RN = ['XII', 'I', 'II', 'III', 'IIII', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI']
+  RN.forEach((n, i) => { const an = i / 12 * TAU - Math.PI / 2; txt(n, Math.cos(an) * 410, Math.sin(an) * 410, 56, '#2a2218', 1, { weight: 400 }) })
+  fan(0, -150, 70, GOLD, 1); txt('KIYOSHI', 0, 160, 34, '#2a2218', 1, { spacing: 12 }); txt('MIDAS EDITION', 0, 200, 18, '#6a5d48', 1, { font: SANS, spacing: 6 })
+  const hand = (an, len, w, col) => { g.save(); g.rotate(an); g.fillStyle = col; g.beginPath(); g.moveTo(-w / 2, 40); g.lineTo(w / 2, 40); g.lineTo(w * .2, -len); g.lineTo(-w * .2, -len); g.fill(); g.restore() }
+  hand(TAU * (10.1 / 12), 260, 18, '#2a2218'); hand(TAU * (8.6 / 60), 380, 12, '#2a2218'); hand(TAU * (tick(t) + 23) / 60, 450, 4, '#a3283a')
+  g.fillStyle = '#2a2218'; g.beginPath(); g.arc(0, 0, 16, 0, TAU); g.fill()
+  g.restore()
+}
+// the camera: wide for the intro, then to each gear in turn, then back out
+function camera(t) {
+  const wide = { x: CX, y: CY + 20, z: .72 }
+  if (t < 8 - .8) return wide
+  const target = (i) => ({ x: GEARS[i].x + 260, y: GEARS[i].y, z: 1.7 }) // gear on the left of frame, words on the right
+  const i = clamp(stepAt(t), 0, 6), lt = (t - 8) - i * BAR
+  if (t > 36) { const k = smooth((t - 36) / 1.6), a = target(6); return { x: lerp(a.x, wide.x, k), y: lerp(a.y, wide.y, k), z: lerp(a.z, wide.z, k) } }
+  if (t < 8) { const k = smooth((t - 7.2) / .8), b = target(0); return { x: lerp(wide.x, b.x, k), y: lerp(wide.y, b.y, k), z: lerp(wide.z, b.z, k) } }
+  const from = i === 0 ? target(0) : target(i - 1), to = target(i), k = smooth(lt / .9)
+  return { x: lerp(from.x, to.x, k), y: lerp(from.y, to.y, k), z: lerp(from.z, to.z, k) * (1 - .06 * Math.sin(Math.PI * k)) }
+}
+function words(t) {
+  txt('Every thirty seconds,', 960, 78, 56, WHITE, inout(t, .8, 4.2), { weight: 700 })
+  txt('Kiyoshi runs the same seven steps.', 960, 78, 56, WHITE, inout(t, 4.6, 7.4), { weight: 700 })
+  STEPS.forEach(([h, l1, l2], i) => { const a = inout(t, 8 + i * BAR + .6, 8 + (i + 1) * BAR - .25, .45)
+    txt(`STEP ${i + 1} OF 7`, 1220, 430, 26, GOLD, a, { font: MONO, weight: 600, spacing: 10, align: 'left' })
+    txt(h, 1220, 510, 84, WHITE, a, { weight: 700, align: 'left' })
+    txt(l1, 1220, 600, 31, SOFT, a, { italic: true, align: 'left' }); txt(l2, 1220, 646, 31, SOFT, a, { italic: true, align: 'left' }) })
+  txt('Two markets. One gap. Around the clock.', 960, 78, 56, WHITE, inout(t, 37, 40.2), { weight: 700 })
+}
+function endCard(t) {
+  const lt = t - 40.4; if (lt < 0) return
+  g.save(); g.globalAlpha = smooth(lt / .6) * .85; g.fillStyle = '#070605'; g.fillRect(0, 0, 1920, 1080); g.restore()
+  fan(960, 420, 150, GOLD, smooth(lt / .6), smooth(lt / 1.2))
+  txt('MIDAS × KIYOSHI', 960, 590, 80, WHITE, smooth((lt - .4) / .6), { weight: 700, spacing: 18 })
+  txt('precision, every thirty seconds', 960, 665, 40, SOFT, smooth((lt - .9) / .6), { italic: true })
+}
+function draw(t) {
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  g.fillStyle = '#070605'; g.fillRect(0, 0, 1920, 1080)
+  dot(960, 540, 900, 'rgba(110,80,28,.25)')
+  const cam = camera(t)
+  g.save(); g.translate(960, 540); g.scale(cam.z, cam.z); g.translate(-cam.x, -cam.y)
+  movement(t, smooth((t - 3.6) / 2)); face(t)
+  g.restore()
+  // a soft panel behind the step words so they read over the plate
+  const pa = inout(t, 8.2, 36, .6); if (pa > 0) { const gr = g.createLinearGradient(1150, 0, 1920, 0); gr.addColorStop(0, 'rgba(7,6,5,0)'); gr.addColorStop(.25, `rgba(7,6,5,${.82 * pa})`); gr.addColorStop(1, `rgba(7,6,5,${.9 * pa})`); g.fillStyle = gr; g.fillRect(1150, 0, 770, 1080) }
+  words(t); endCard(t)
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .35, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.6)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .6) + clamp((t - (DUR - 1)) / 1); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = Promise.resolve()
+</script>
+</body></html>
