@@ -41,7 +41,8 @@ hidden until the vault address is set. Choices made while building:
 - 🔴 Independent audit before raising the cap.
 
 **Optional, any time after Phase 1**
-- ⚪ Kiyoshi Pass membership NFT (see the section near the end).
+- 🟡 Kiyoshi Pass NFT gating (decided 6 Nov): replaces the approved-wallet list, sets fees by passes held, and is
+  needed to use shares received by transfer (see "Transferable shares and NFT gating").
 - 🟢 Host the bot on a cloud server instead of the phone (**built 29 Oct: Render worker, see kiyoshi/HOSTING.md;
   the daily restart became a pause inside the bot from 20:00 UTC until the keeper reports the day settled**): a small always-on VPS (or a cloud container) running
   Kiyoshi under a process manager that restarts it, with the bot key in the server's secret store, logs and
@@ -165,6 +166,21 @@ No profit means no profit fee in every row. 10% of every manager fee still goes 
 **Setting changes:** fee rates, the transfer fee, the bot address and allowed exchanges can only change after a
 public delay (e.g. 48 hours, a "timelock"). Members see the pending change on the dashboard and can withdraw
 first at the old terms.
+
+## Transferable shares and NFT gating (decided by Midas, 6 Nov)
+
+These are now part of the plan, not options. They override the Pass notes further down where the two differ.
+
+- **Shares (MKF) are transferable.** The transfer pricing above applies (15% of the sender's profit on the shares
+  moved, settled at transfer; free between a member's own wallets).
+- **The NFT replaces the manual approved-wallet list.** Holding at least one pass is what lets a wallet deposit.
+  No more adding wallets by hand.
+- **The number of passes held sets the fee you pay.** More passes, lower performance and transfer fees.
+- **Shares need a pass to be used.** If someone transfers shares to a wallet without a pass, the shares arrive
+  but stay locked (no withdrawing, no moving them on) until that wallet holds a pass.
+
+Still to decide: the fee for each pass count, the pass supply, and what happens to locked shares that never
+get a pass (see the suggestions under review).
 
 ## Kiyoshi Pass (membership NFT) ⚪ optional, later
 
