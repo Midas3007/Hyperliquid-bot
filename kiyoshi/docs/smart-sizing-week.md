@@ -71,3 +71,9 @@ same hours: the share of shared gaps won, profit per hour, error count and skipp
 | Nov 5 18:03 Lagos | Midas (Render log) | Uniswap→Textile wARS at half size ($153.68, expected +$0.48) bought on Uniswap but the Textile sale did not fill ("incomplete"); flatten sold it on Uniswap for ~$153.65 (≈ −$0.03). The full-size quote on the same scan showed −$0.25 while half size showed +$0.48: a likely stale or over-optimistic Textile preview ("phantom gap") | For the review: (1) distrust a smaller size quoting a much larger edge than the full size; (2) on Uniswap-first trades, get Textile's firm quote before buying on Uniswap, not only a preview |
 | Nov 5 | Claude | The Render log only prints the full-size quotes; half and quarter sizes are scanned but not shown, so "no trade" lines can look worse than they are | Cosmetic; could print the best of all sizes |
 | Nov 5 | Midas asked, Claude proposed | Finer candidate sizes (¾, ⅜) and a best-size candidate from gap × $1.72M ÷ 2 | Offered, not built; decide at the review. Cost corrected: each extra size in the full scan adds ~16 quotes (4 corridors × 2 routes × 2 legs), so ¾ + ⅜ would make each scan about two-thirds slower. Cheaper version: after the normal scan, re-quote only the best opportunity at its formula size: 2 extra quotes, about a second |
+- **Nov 6: the profit counter used for the baseline reads high.** `wallet-stats.ts` only counts trades whose sale
+  matches the buy within 1%, which drops most of the losing trades. For Nov 5 it read $76.65 (bot) and $44.29 (Mel).
+  Counting every trade the way Telegram's /today does gives **$27.30 (bot) and $22.70 (Mel)**, which matches /today
+  ($25.83; the small gap is where the day's edges fall). Before the review: redo the baseline (the ~$13.5 and ~$9.5
+  a day, and the 1,887 / 1,820 trips) with the /today method, which `scripts/day-stats.ts` now uses, and check the
+  trade-size PDF's figures the same way. The share price is the final check.
