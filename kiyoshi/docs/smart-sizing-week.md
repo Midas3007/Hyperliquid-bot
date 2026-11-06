@@ -92,3 +92,10 @@ same hours: the share of shared gaps won, profit per hour, error count and skipp
   $0.01 (MIN_EDGE_USD; about 0.3 bps at $323), and Mel's default is $0.01 too, so the thin minimum is not what separates
   us from Mel. Size (half our trades at $65–$162) and leftover sales on Uniswap at a loss are. Midas chose to leave
   smart sizing on for the rest of the trial week.
+- **Nov 6, 13:00–15:00 Lagos: read-only simulation of Textile's new Celo pairs** (one check a minute, Textile
+  previews vs Uniswap v3, the peak rule of 0.3 bps or $0.01, sizes $100/$200/$300, one trade a minute at most):
+  CELO had a tradable gap in 32 of 120 minutes (best 32.5 bps, only at $100; Textile gives no quote much above that),
+  worth ~$3.51 if each were taken; wARS 21 minutes (~$4.06); cNGN 5 (~$0.47); USAT 0 (best 0.31 bps); IDRX and wCOP
+  have no Uniswap pool; wBRL's Uniswap side is still one-sided; USDC 0. Picking the best per minute: 50 trades,
+  ~$7.39, of which CELO 30. Previews, not firm quotes, and no Textile waits or competition, so an upper bound.
+  Candidate for the review: add CELO as a corridor, capped near $100.
