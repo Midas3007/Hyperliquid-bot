@@ -37,4 +37,10 @@ for (const l of legs) {
   const p = usd(l.usdt) - usd(-o.usdt); trips++; pnl += p; if (p > 0) wins++; vol += usd(-o.usdt); maxBuy = Math.max(maxBuy, usd(-o.usdt))
   hours[new Date((t0 + Number(l.block - s)) * 1000 + 3600_000).getUTCHours()] += p
 }
-console.log(JSON.stringify({ who, day, trips, wins, pnl: +pnl.toFixed(2), avgTrade: +(vol / (trips || 1)).toFixed(0), maxBuy: +maxBuy.toFixed(0), perTrip: +(pnl / (trips || 1)).toFixed(4), hours: hours.map((h) => +h.toFixed(2)) }))
+let acc = 0, tTrips = 0, tWins = 0, tPnl = 0, tVol = 0, unmatchedLoss = 0
+for (const l of legs) { const d = usd(l.usdt); if (d < 0) { acc += -d; continue } if (acc <= 0) continue
+  if (l.block >= s) { const p = d - acc; tTrips++; tPnl += p; tVol += acc; if (p > 0) tWins++ } acc = 0 }
+// The main numbers use the same method as Telegram's /today (every buy counts until the next sale, losses included).
+// The matched-only figures leave out trades whose sale didn't match the buy (usually the losing ones), so they read high.
+console.log(JSON.stringify({ who, day, trips: tTrips, wins: tWins, pnl: +tPnl.toFixed(2), traded: +tVol.toFixed(2) }))
+console.log(JSON.stringify({ matchedOnly: { trips, wins, pnl: +pnl.toFixed(2), avgTrade: +(vol / (trips || 1)).toFixed(0), maxBuy: +maxBuy.toFixed(0), perTrip: +(pnl / (trips || 1)).toFixed(4), hours: hours.map((h) => +h.toFixed(2)) } }))
