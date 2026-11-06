@@ -8,10 +8,15 @@ echo "== Installing system packages (Python, compilers, Rust) =="
 pkg update -y
 pkg install -y python git clang rust make binutils libffi openssl pkg-config
 
-echo "== Installing Python packages (can take 20-40 minutes on a phone) =="
+echo "== Installing Python packages (30-60 minutes on a phone) =="
+echo "   Three parts (maturin, jiter, pydantic-core) are compiled from Rust source. While that runs, pip shows"
+echo "   'Installing build dependencies ... |' or 'Building wheel ...' with only a spinning character for many"
+echo "   minutes. That is normal - DON'T press Ctrl+C. Keep Termux open and the phone on its charger."
+termux-wake-lock 2>/dev/null || true                         # stop Android from sleeping mid-build
 export ANDROID_API_LEVEL="$(getprop ro.build.version.sdk)"   # Rust builds (maturin) need this on Android
-export CARGO_BUILD_JOBS=2                                    # gentler on the phone's CPU and battery
+export CARGO_BUILD_JOBS=2                                    # gentler on the phone's CPU, memory and battery
 pip install -r requirements.txt
+termux-wake-unlock 2>/dev/null || true
 
 echo "== Preparing config =="
 if [ ! -f .env ]; then
