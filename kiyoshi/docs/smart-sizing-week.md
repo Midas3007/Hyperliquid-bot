@@ -88,5 +88,7 @@ same hours: the share of shared gaps won, profit per hour, error count and skipp
   the same wARS pool in the same block at 14:22:49. For the review: full size when Textile holds nothing, a higher
   peak minimum to survive a 2-minute hold, and flatten waiting for Textile before selling on Uniswap at a loss.
 - **Nov 6, 11:00–14:36 Lagos: the win rate fell from 82% to 76%.** Between the two /today readings: 35 trades,
-  21 profitable (60%), +$1.16 on $7,634 traded (about 1.5 bps). Fits the entry above: the 0.3 bps peak minimum lets
-  in thin gaps that a 2-minute Textile hold turns into losers or leftover sales.
+  21 profitable (60%), +$1.16 on $7,634 traded (about 1.5 bps). Correction: with smart sizing off the minimum is the same flat
+  $0.01 (MIN_EDGE_USD; about 0.3 bps at $323), and Mel's default is $0.01 too, so the thin minimum is not what separates
+  us from Mel. Size (half our trades at $65–$162) and leftover sales on Uniswap at a loss are. Midas chose to leave
+  smart sizing on for the rest of the trial week.
