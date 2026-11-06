@@ -22,6 +22,7 @@ import re
 import time
 
 from telegram import BotCommand, Update
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .config import CFG
@@ -113,10 +114,39 @@ class Bot:
         for i in range(0, len(text), 4000):
             await update.effective_chat.send_message(text[i: i + 4000], disable_web_page_preview=True)
 
-    async def _push(self, app: Application, text: str) -> None:
-        if self.chat_id and text:
-            for i in range(0, len(text), 4000):
-                await app.bot.send_message(self.chat_id, text[i: i + 4000], disable_web_page_preview=True)
+    async def _push(self, app: Application, text: str, delays: tuple = (3, 10, 30)) -> bool:
+        """Send to the owner's chat. Phone networks drop out: retry with backoff, and if Telegram stays unreachable,
+        log one line and carry on - a lost message must never stop trading or management."""
+        if not (self.chat_id and text):
+            return False
+        for i in range(0, len(text), 4000):
+            chunk = text[i: i + 4000]
+            for attempt in range(len(delays) + 1):
+                try:
+                    await app.bot.send_message(self.chat_id, chunk, disable_web_page_preview=True)
+                    break
+                except RetryAfter as e:  # Telegram flood control: wait as told
+                    ra = e.retry_after
+                    await asyncio.sleep(ra.total_seconds() if hasattr(ra, "total_seconds") else float(ra))
+                except (BadRequest, Forbidden) as e:  # wrong chat id, bot blocked: retrying won't help
+                    log.warning("Telegram refused the message: %s", e)
+                    return False
+                except NetworkError as e:  # timeouts, no connection
+                    if attempt == len(delays):
+                        log.warning("Telegram unreachable after %d tries, message not delivered: %s", attempt + 1, e)
+                        return False
+                    await asyncio.sleep(delays[attempt])
+                except TelegramError as e:  # e.g. wrong chat id: retrying won't help
+                    log.warning("Telegram refused the message: %s", e)
+                    return False
+        return True
+
+    async def on_error(self, update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Network blips get one log line; anything else gets the full traceback."""
+        if isinstance(ctx.error, NetworkError) and not isinstance(ctx.error, (BadRequest, Forbidden)):
+            log.warning("Telegram network error (will retry automatically): %s", ctx.error)
+        else:
+            log.error("Unhandled error", exc_info=ctx.error)
 
     async def _guard(self, update: Update) -> bool:
         if self._authorized(update):
@@ -381,7 +411,12 @@ class Bot:
                               f"trade, {auto}. First scan after a {e.P.autopilot.warmup_min:g}-min warm-up. /help")
 
     def run(self) -> None:
-        app = Application.builder().token(CFG.telegram_token).post_init(self.on_startup).build()
+        app = (Application.builder().token(CFG.telegram_token).post_init(self.on_startup)
+               # mobile networks are slow to connect: PTB's 5-second default times out too easily
+               .connect_timeout(20).read_timeout(30).write_timeout(30).pool_timeout(30)
+               .get_updates_connect_timeout(20).get_updates_read_timeout(30)
+               .build())
+        app.add_error_handler(self.on_error)
         for name, fn in {
             "help": self.cmd_help, "start": self.cmd_help, "status": self.cmd_status, "journal": self.cmd_journal,
             "review": self.cmd_review, "stats": self.cmd_review, "risk": self.cmd_risk, "close": self.cmd_close,
