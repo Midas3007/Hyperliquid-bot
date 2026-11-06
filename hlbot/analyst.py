@@ -1,7 +1,12 @@
-"""Claude: picks among pre-validated setups (Module 3 scoring + news) and runs post-trade studies (Module 9).
+"""Claude's jobs in protocol v3.0. The rules decide; Claude only reads text the rules can't.
 
-Claude never sets prices, leverage or size - those come from levels.py / risk.py. It can only choose
-one of the validated options, or none.
+1. rate_news:   rate each of a coin's last 3 headlines bullish / bearish / neutral and flag a thesis-breaking
+                catalyst inside the hold window (feeds the Module 3 news filter and ranking).
+2. study:       post-trade study (Module 11): what happened vs the plan, recorded as a HYPOTHESIS, never a rule.
+3. thesis_check: while a position is open, flag thesis-breaking news (exploit, delisting, unlock, exchange
+                incident) so the bot can SUGGEST an early exit (Module 9). It never closes anything itself.
+
+Claude never sets prices, sizes, leverage or direction, and never picks the trade: ranking is deterministic.
 """
 
 from __future__ import annotations
@@ -17,60 +22,52 @@ log = logging.getLogger(__name__)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
-PICK_SYSTEM = """You are the analyst for a disciplined crypto perpetual-futures compounding challenge on Hyperliquid.
-Rule-based code has already run the BTC gate, the screener, the deep dive, direction triggers and the risk math.
-You receive candidate coins with their data and a list of fully-validated trade options (entry/SL/TP/leverage
-already computed and checked). Your job:
+NEWS_SYSTEM = """You rate crypto news headlines for a disciplined perpetual-futures trading protocol.
+For each article, rate its likely effect on THAT coin's price over the next 1-2 days: "bullish", "bearish" or
+"neutral" (neutral = irrelevant, mixed, or not really about this coin). Be strict: a headline that merely
+mentions the coin is neutral.
+Then, per coin, set "catalyst" to a short description if the articles reveal a scheduled or ongoing
+thesis-breaking event inside the hold window (token unlock, listing/delisting, governance vote, network
+upgrade, exploit, exchange incident, regulatory action). Otherwise set it to an empty string. Do not guess
+beyond the supplied text."""
 
-1. Rate news sentiment per candidate from the supplied headlines (count clearly bullish vs bearish items; ignore irrelevant ones).
-2. Score and rank candidates the way the protocol does: prefer green/flat price, strong whale L/S (>2:1 preferred),
-   growing OI, NORMAL/LOW IV, 2+ bullish news, clean support structure under the entry, few obstacles before TP.
-3. Pick the single best option id, or "NONE" if nothing is worth taking. Passing is a valid, often correct, answer.
-4. If the picked coin has BOTH a long and a short option (reversal signals present), put the other one in "alternate".
-5. List concrete warnings (e.g. resistance between entry and TP, thin whale sample, OI history missing, news risk).
-
-Only choose ids from the options list. Do not invent prices. Be concise and specific."""
-
-PICK_SCHEMA = {
+NEWS_SCHEMA = {
     "type": "object",
     "properties": {
-        "pick": {"type": "string", "description": "option id or NONE"},
-        "alternate": {"type": "string", "description": "opposite-direction option id for the same coin, or NONE"},
-        "confidence": {"type": "integer", "description": "0-100"},
-        "news": {
+        "coins": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "coin": {"type": "string"},
-                    "bullish": {"type": "integer"},
-                    "bearish": {"type": "integer"},
-                    "summary": {"type": "string"},
+                    "ratings": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"id": {"type": "string"},
+                                           "rating": {"type": "string", "enum": ["bullish", "bearish", "neutral"]}},
+                            "required": ["id", "rating"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "catalyst": {"type": "string"},
                 },
-                "required": ["coin", "bullish", "bearish", "summary"],
+                "required": ["coin", "ratings", "catalyst"],
                 "additionalProperties": False,
             },
-        },
-        "ranking": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {"coin": {"type": "string"}, "score": {"type": "number"}, "note": {"type": "string"}},
-                "required": ["coin", "score", "note"],
-                "additionalProperties": False,
-            },
-        },
-        "rationale": {"type": "string"},
-        "warnings": {"type": "array", "items": {"type": "string"}},
+        }
     },
-    "required": ["pick", "alternate", "confidence", "news", "ranking", "rationale", "warnings"],
+    "required": ["coins"],
     "additionalProperties": False,
 }
 
-STUDY_SYSTEM = """You review closed trades from a disciplined perpetual-futures compounding challenge.
-Compare the planned entry/SL/TP with what price actually did afterwards (excursions and current levels are supplied).
-Identify what went right or wrong, concretely. Propose a new rule ONLY if the evidence shows a repeatable pattern that
-the existing rules don't already cover; otherwise set propose_rule to false. Rules must be short, testable statements."""
+STUDY_SYSTEM = """You review a closed trade from a disciplined perpetual-futures compounding protocol.
+Compare the planned entry/SL/TP and the inputs behind the card with what price actually did (MAE/MFE in R,
+the result in R, current 4H levels). Say concretely what went right and wrong.
+Record the lesson as a HYPOTHESIS, not a rule: rules only change at 20-trade reviews when 5+ trades support a
+hypothesis. If this trade supports one of the existing hypotheses, list its id in "supports". Only propose a
+new hypothesis if the trade shows something the existing rules and hypotheses don't cover; keep it a short,
+testable statement."""
 
 STUDY_SCHEMA = {
     "type": "object",
@@ -79,10 +76,21 @@ STUDY_SCHEMA = {
         "went_right": {"type": "array", "items": {"type": "string"}},
         "went_wrong": {"type": "array", "items": {"type": "string"}},
         "lesson": {"type": "string"},
-        "propose_rule": {"type": "boolean"},
-        "rule_text": {"type": "string"},
+        "supports": {"type": "array", "items": {"type": "integer"}},
+        "new_hypothesis": {"type": "string", "description": "empty string if none"},
     },
-    "required": ["what_happened", "went_right", "went_wrong", "lesson", "propose_rule", "rule_text"],
+    "required": ["what_happened", "went_right", "went_wrong", "lesson", "supports", "new_hypothesis"],
+    "additionalProperties": False,
+}
+
+THESIS_SYSTEM = """A position is open. Decide from the supplied headlines (published after entry) whether there is
+thesis-breaking news for this coin and direction: an exploit, delisting, newly announced token unlock, exchange
+incident, or regulatory action that directly hits the coin. Ordinary market commentary is NOT thesis-breaking."""
+
+THESIS_SCHEMA = {
+    "type": "object",
+    "properties": {"thesis_breaking": {"type": "boolean"}, "reason": {"type": "string"}},
+    "required": ["thesis_breaking", "reason"],
     "additionalProperties": False,
 }
 
@@ -109,8 +117,11 @@ class Analyst:
         text = next(b.text for b in resp.content if b.type == "text")
         return json.loads(text)
 
-    def pick(self, context: dict) -> dict:
-        return self._call(PICK_SYSTEM, context, PICK_SCHEMA)
+    def rate_news(self, payload: dict) -> dict:
+        return self._call(NEWS_SYSTEM, payload, NEWS_SCHEMA, max_tokens=8000)
 
-    def study(self, context: dict) -> dict:
-        return self._call(STUDY_SYSTEM, context, STUDY_SCHEMA, max_tokens=8000)
+    def study(self, payload: dict) -> dict:
+        return self._call(STUDY_SYSTEM, payload, STUDY_SCHEMA, max_tokens=8000)
+
+    def thesis_check(self, payload: dict) -> dict:
+        return self._call(THESIS_SYSTEM, payload, THESIS_SCHEMA, max_tokens=4000)

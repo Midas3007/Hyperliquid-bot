@@ -1,4 +1,9 @@
-"""SQLite persistence: runtime settings, trade journal, lessons, OI history."""
+"""SQLite persistence: settings, the Module 11 trade and skip logs, equity history, events, hypotheses, snapshots.
+
+Trade log (Module 11): #, date, protocol version, coin, direction, setup score, BTC band, entry, SL, TP,
+risk ($ and %), exit price, exit type, result ($ and R), MAE and MFE (in R), fees and funding paid.
+Skip log: coin, the rule that blocked it, and 48h later whether TP or SL would have hit first.
+"""
 
 from __future__ import annotations
 
@@ -17,24 +22,41 @@ CREATE TABLE IF NOT EXISTS trades (
     entry REAL, sl REAL, tp REAL, qty REAL, leverage INTEGER, margin REAL,
     entry_oid INTEGER, created_at REAL, filled_at REAL, closed_at REAL,
     exit_px REAL, pnl REAL, close_reason TEXT,
-    plan TEXT,                                     -- JSON: full card / analysis snapshot
+    plan TEXT,                                     -- JSON: card + every input behind it
     study TEXT                                     -- JSON: post-trade study
 );
+CREATE TABLE IF NOT EXISTS skips (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL, version TEXT, coin TEXT, side TEXT, rule TEXT, detail TEXT,
+    entry REAL, sl REAL, tp REAL,                  -- the would-be bracket, when one was computed
+    outcome TEXT, checked_at REAL                  -- tp | sl | no fill | neither | n/a (48h later)
+);
+CREATE TABLE IF NOT EXISTS equity (ts REAL, value REAL);
+CREATE TABLE IF NOT EXISTS events (ts REAL, kind TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS lessons (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    text TEXT, status TEXT, source_trade INTEGER, created_at REAL   -- proposed | active | rejected
+    text TEXT, status TEXT, source_trade INTEGER, created_at REAL   -- hypothesis | rule | rejected
 );
 CREATE TABLE IF NOT EXISTS oi (coin TEXT, ts REAL, oi_usd REAL, px REAL);
 CREATE INDEX IF NOT EXISTS oi_coin_ts ON oi(coin, ts);
+CREATE TABLE IF NOT EXISTS whale (coin TEXT, ts REAL, ratio REAL);
+CREATE INDEX IF NOT EXISTS whale_coin_ts ON whale(coin, ts);
 """
 
+# Columns added by protocol v3.0 (added to older databases on startup).
+TRADE_COLUMNS_V3 = {
+    "version": "TEXT", "score": "INTEGER", "btc_band": "TEXT", "risk_usd": "REAL", "risk_pct": "REAL",
+    "risk_mode": "TEXT", "fill_px": "REAL", "exit_type": "TEXT", "result_r": "REAL", "mae_r": "REAL",
+    "mfe_r": "REAL", "fees": "REAL", "funding": "REAL", "override": "TEXT", "bracket_r": "REAL",
+}
+LESSON_COLUMNS_V3 = {"support": "TEXT"}  # JSON list of trade ids that support a hypothesis
+
 HARDCODED_LESSONS = [
-    "Never enter a coin down >8% on the day regardless of whale data.",
-    "SL below 1.5% gets hunted - always widen.",
-    "TAO: exercise extreme caution despite bullish screener data (skipped by default).",
-    "Trust TP levels - early exits leave money on the table.",
-    "Never re-enter the same coin multiple times on a red day.",
-    "Chasing a +5% intraday pump on Friday = high risk, avoid.",
+    "Sub-1.5% stops were hunted repeatedly (SUI x3, Trade 11) -> 1.5% floor.",
+    "TAO lost on a -2% BTC day despite a strong screener -> BTC gate.",
+    "1D Bollinger R1 TPs were unrealistic for 1-2 day holds -> 4H TP rule.",
+    "WLD Trade 10 and HYPE Trade 13 closed early before TP -> discretionary exits are logged against the bracket.",
+    "0.01%/8h funding is the neutral default, not a cap.",
 ]
 
 
@@ -47,7 +69,17 @@ class Store:
         self._db.row_factory = sqlite3.Row
         with self._lock:
             self._db.executescript(SCHEMA)
+            self._add_columns("trades", TRADE_COLUMNS_V3)
+            self._add_columns("lessons", LESSON_COLUMNS_V3)
+            self._db.execute("UPDATE lessons SET status='hypothesis' WHERE status='proposed'")
+            self._db.execute("UPDATE lessons SET status='rule' WHERE status='active'")
             self._db.commit()
+
+    def _add_columns(self, table: str, cols: dict[str, str]) -> None:
+        have = {r[1] for r in self._db.execute(f"PRAGMA table_info({table})")}
+        for name, typ in cols.items():
+            if name not in have:
+                self._db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
 
     def _x(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -70,8 +102,9 @@ class Store:
     # trades --------------------------------------------------------------
     def add_trade(self, **f) -> int:
         f.setdefault("created_at", time.time())
-        if isinstance(f.get("plan"), (dict, list)):
-            f["plan"] = json.dumps(f["plan"], default=str)
+        for k in ("plan", "study"):
+            if isinstance(f.get(k), (dict, list)):
+                f[k] = json.dumps(f[k], default=str)
         cols = ",".join(f)
         cur = self._x(f"INSERT INTO trades({cols}) VALUES({','.join('?' * len(f))})", tuple(f.values()))
         return int(cur.lastrowid)
@@ -88,41 +121,84 @@ class Store:
             return self._q("SELECT * FROM trades WHERE status=? ORDER BY id DESC LIMIT ?", (status, limit))
         return self._q("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
 
-    def closed_since(self, ts: float) -> list[dict]:
-        """Closed trades (oldest first) closed at or after `ts` - the input for /stats."""
-        return self._q("SELECT * FROM trades WHERE status='closed' AND closed_at>=? ORDER BY closed_at", (ts,))
-
     def trade(self, tid: int) -> dict | None:
         rows = self._q("SELECT * FROM trades WHERE id=?", (tid,))
         return rows[0] if rows else None
 
-    def losses_today(self, coin: str, day_start_ts: float) -> int:
-        rows = self._q(
-            "SELECT COUNT(*) n FROM trades WHERE coin=? AND status='closed' AND pnl<0 AND closed_at>=?",
-            (coin, day_start_ts),
-        )
-        return rows[0]["n"]
+    def closed(self, since: float = 0.0) -> list[dict]:
+        """Closed trades, oldest first (the review and breakers read these)."""
+        return self._q("SELECT * FROM trades WHERE status='closed' AND closed_at>=? ORDER BY closed_at", (since,))
 
-    # lessons -------------------------------------------------------------
+    def entries_since(self, ts: float) -> list[str]:
+        """Coins of entry orders placed since `ts` (Module 8: max 2 new entries per UTC day)."""
+        rows = self._q("SELECT coin FROM trades WHERE created_at>=? AND status!='rejected' ORDER BY id", (ts,))
+        return [r["coin"] for r in rows]
+
+    # skip log ------------------------------------------------------------
+    def add_skip(self, version: str, coin: str, side: str | None, rule: str, detail: str,
+                 entry: float | None = None, sl: float | None = None, tp: float | None = None) -> None:
+        outcome = None if entry and sl and tp else "n/a"
+        self._x("INSERT INTO skips(ts,version,coin,side,rule,detail,entry,sl,tp,outcome) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (time.time(), version, coin, side, rule, detail, entry, sl, tp, outcome))
+
+    def skips_due(self, older_than: float) -> list[dict]:
+        return self._q("SELECT * FROM skips WHERE outcome IS NULL AND ts<=? ORDER BY id LIMIT 50", (older_than,))
+
+    def set_skip_outcome(self, sid: int, outcome: str) -> None:
+        self._x("UPDATE skips SET outcome=?, checked_at=? WHERE id=?", (outcome, time.time(), sid))
+
+    def skips(self, limit: int = 200) -> list[dict]:
+        return self._q("SELECT * FROM skips ORDER BY id DESC LIMIT ?", (limit,))
+
+    # equity --------------------------------------------------------------
+    def record_equity(self, value: float) -> None:
+        if value > 0:
+            self._x("INSERT INTO equity(ts,value) VALUES(?,?)", (time.time(), value))
+
+    def peak_equity(self, since: float = 0.0) -> float:
+        rows = self._q("SELECT MAX(value) m FROM equity WHERE ts>=?", (since,))
+        return float(rows[0]["m"] or 0.0)
+
+    # events (breakers, overrides, mismatches, reviews) ---------------------
+    def add_event(self, kind: str, detail: str) -> None:
+        self._x("INSERT INTO events(ts,kind,detail) VALUES(?,?,?)", (time.time(), kind, detail))
+
+    def last_event(self, kind: str) -> dict | None:
+        rows = self._q("SELECT * FROM events WHERE kind=? ORDER BY ts DESC LIMIT 1", (kind,))
+        return rows[0] if rows else None
+
+    # hypotheses (Module 11: a lesson is a hypothesis until 5+ trades support it) ---
     def add_lesson(self, text: str, source_trade: int | None) -> int:
-        cur = self._x(
-            "INSERT INTO lessons(text,status,source_trade,created_at) VALUES(?,?,?,?)",
-            (text, "proposed", source_trade, time.time()),
-        )
+        cur = self._x("INSERT INTO lessons(text,status,source_trade,created_at,support) VALUES(?,?,?,?,?)",
+                      (text, "hypothesis", source_trade, time.time(), json.dumps([source_trade] if source_trade else [])))
         return int(cur.lastrowid)
+
+    def support_lesson(self, lid: int, trade_id: int) -> None:
+        rows = self._q("SELECT support FROM lessons WHERE id=?", (lid,))
+        if not rows:
+            return
+        ids = set(json.loads(rows[0]["support"] or "[]"))
+        ids.add(trade_id)
+        self._x("UPDATE lessons SET support=? WHERE id=?", (json.dumps(sorted(ids)), lid))
 
     def set_lesson(self, lid: int, status: str) -> bool:
         return self._x("UPDATE lessons SET status=? WHERE id=?", (status, lid)).rowcount > 0
 
     def lessons(self, status: str | None = None) -> list[dict]:
-        if status:
-            return self._q("SELECT * FROM lessons WHERE status=? ORDER BY id", (status,))
-        return self._q("SELECT * FROM lessons ORDER BY id")
+        rows = (self._q("SELECT * FROM lessons WHERE status=? ORDER BY id", (status,)) if status
+                else self._q("SELECT * FROM lessons ORDER BY id"))
+        for r in rows:
+            r["support"] = json.loads(r.get("support") or "[]")
+        return rows
+
+    def lesson(self, lid: int) -> dict | None:
+        rows = [r for r in self.lessons() if r["id"] == lid]
+        return rows[0] if rows else None
 
     def active_lessons(self) -> list[str]:
-        return HARDCODED_LESSONS + [r["text"] for r in self.lessons("active")]
+        return HARDCODED_LESSONS + [r["text"] for r in self.lessons("rule")]
 
-    # open interest history -------------------------------------------------
+    # snapshots the bot records itself (Hyperliquid has no OI or whale history) --------
     def add_oi(self, rows: list[tuple[str, float, float]]) -> None:
         now = time.time()
         with self._lock:
@@ -130,14 +206,24 @@ class Store:
             self._db.execute("DELETE FROM oi WHERE ts < ?", (now - 40 * 86400,))
             self._db.commit()
 
-    def oi_at(self, coin: str, seconds_ago: float) -> dict | None:
-        """Closest OI snapshot at or before `seconds_ago`, if within 2h of that point."""
+    def oi_at(self, coin: str, seconds_ago: float, tolerance_s: float = 7200) -> dict | None:
+        """Closest OI snapshot at or before `seconds_ago`, if within `tolerance_s` of that point."""
         target = time.time() - seconds_ago
         rows = self._q("SELECT ts, oi_usd, px FROM oi WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1", (coin, target))
-        if rows and target - rows[0]["ts"] < 7200:
+        if rows and target - rows[0]["ts"] < tolerance_s:
             return rows[0]
         return None
 
-    def oi_oldest(self, coin: str) -> dict | None:
-        rows = self._q("SELECT ts, oi_usd, px FROM oi WHERE coin=? ORDER BY ts ASC LIMIT 1", (coin,))
-        return rows[0] if rows else None
+    def add_whales(self, rows: list[tuple[str, float]]) -> None:
+        now = time.time()
+        with self._lock:
+            self._db.executemany("INSERT INTO whale(coin,ts,ratio) VALUES(?,?,?)", [(c, now, r) for c, r in rows])
+            self._db.execute("DELETE FROM whale WHERE ts < ?", (now - 40 * 86400,))
+            self._db.commit()
+
+    def whale_at(self, coin: str, seconds_ago: float, tolerance_s: float = 7200) -> float | None:
+        target = time.time() - seconds_ago
+        rows = self._q("SELECT ts, ratio FROM whale WHERE coin=? AND ts<=? ORDER BY ts DESC LIMIT 1", (coin, target))
+        if rows and target - rows[0]["ts"] < tolerance_s:
+            return rows[0]["ratio"]
+        return None

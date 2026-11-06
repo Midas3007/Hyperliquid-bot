@@ -1,12 +1,17 @@
 """Market data: Hyperliquid REST/websocket plus free external sources.
 
-Free stand-ins for Bybit-only metrics:
-  * buy/sell ratio  -> taker buy vs sell notional from Hyperliquid's live trade stream
-                       (falls back to order-book depth imbalance until enough trades are collected)
-  * whale L/S       -> live positions of the top accounts on Hyperliquid's public leaderboard
-  * IV Rank         -> Deribit DVOL percentile (BTC/ETH), realized-volatility percentile otherwise
-  * OI trend        -> snapshots recorded hourly by this bot (history builds up over time)
+Hyperliquid stand-ins for Bybit/Bitget metrics (see PROTOCOL.md, "Hyperliquid mapping"):
+  * buy/sell ratio  -> taker buy vs sell notional from Hyperliquid's live trade stream. N/A until
+                       `flow_min_coverage_min` of trades are collected (no substitute metric is used).
+  * whale L/S       -> live positions of the largest accounts on Hyperliquid's public leaderboard
+  * volatility      -> Deribit DVOL percentile (BTC/ETH IV), 30-day realized-vol percentile otherwise (RV)
+  * OI / whale trend -> snapshots recorded hourly by this bot (history builds up over time)
   * news            -> public RSS feeds filtered by coin
+  * MMR             -> Hyperliquid margin tables (maintenance rate = 1 / (2 x max leverage of the tier))
+  * fees            -> the account's own rates from the userFees endpoint
+
+Every cache TTL is shorter than the protocol's 15-minute staleness limit, and each cached value keeps the time
+it was fetched (`stamp(key)`), so the rules engine can show and check data age.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from hyperliquid.utils import constants
 
 from . import indicators as ind
 from .config import Config
+from .protocol import PROTOCOL as P
+from .rules.sizing import Fees
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -66,9 +73,11 @@ def base_symbol(coin: str) -> str:
 class FlowCollector:
     """Rolling taker buy/sell notional per coin from the websocket trade stream."""
 
-    def __init__(self, base_url: str, window_min: int):
+    def __init__(self, base_url: str, window_min: float, min_coverage_min: float, stale_min: float):
         self.base_url = base_url
         self.window_s = window_min * 60
+        self.min_coverage_min = min_coverage_min
+        self.stale_s = stale_min * 60
         self._info: Info | None = None
         self._trades: dict[str, deque] = defaultdict(deque)
         self._since: dict[str, float] = {}
@@ -119,10 +128,10 @@ class FlowCollector:
             buy = sum(n for _, s, n in dq if s == "B")
             sell = sum(n for _, s, n in dq if s != "B")
         covered_min = min(self.window_s, time.time() - since) / 60
-        if covered_min < 10 or buy + sell <= 0:
+        if covered_min < self.min_coverage_min or buy + sell <= 0 or time.time() - self._last_msg > self.stale_s:
             return None
         return {"ratio": buy / sell if sell > 0 else 99.0, "buy_usd": buy, "sell_usd": sell,
-                "minutes": round(covered_min), "source": "taker trades"}
+                "minutes": round(covered_min), "source": "Hyperliquid taker trades", "ts": self._last_msg}
 
 
 class Market:
@@ -131,7 +140,8 @@ class Market:
         self.store = store
         self.base_url = constants.MAINNET_API_URL if cfg.is_mainnet else constants.TESTNET_API_URL
         self.info = Info(self.base_url, skip_ws=True)
-        self.flow = FlowCollector(self.base_url, cfg.flow_window_min)
+        self.flow = FlowCollector(self.base_url, P.screener.flow_window_min, P.screener.flow_min_coverage_min,
+                                  P.data.stale_after_min)
         self._cache: dict[str, tuple[float, object]] = {}
         self._http = requests.Session()
         self._http.headers.update(UA)
@@ -145,10 +155,20 @@ class Market:
         self._cache[key] = (time.time(), val)
         return val
 
+    def stamp(self, key: str) -> float | None:
+        """When the cached value under `key` was fetched."""
+        hit = self._cache.get(key)
+        return hit[0] if hit else None
+
     # -- Hyperliquid -------------------------------------------------------
     def ctxs(self) -> dict[str, dict]:
         def load():
             meta, ctxs = self.info.meta_and_asset_ctxs()
+            tables = {}
+            for tid, tbl in meta.get("marginTables", []):
+                tiers = [(float(t["lowerBound"]), int(t["maxLeverage"])) for t in tbl.get("marginTiers", [])]
+                if tiers:
+                    tables[tid] = tiers
             out = {}
             for asset, (m, c) in enumerate(zip(meta["universe"], ctxs)):
                 if m.get("isDelisted"):
@@ -171,6 +191,8 @@ class Market:
                     "oi_usd": float(c.get("openInterest") or 0) * mark,
                     "funding_1h_pct": f1h * 100,
                     "funding_8h_pct": f1h * 8 * 100,
+                    "margin_tiers": tables.get(m.get("marginTableId"), [(0.0, int(m.get("maxLeverage", 1)))]),
+                    "only_isolated": bool(m.get("onlyIsolated", False)),
                 }
             return out
 
@@ -189,24 +211,46 @@ class Market:
         """Uncached candles between two timestamps (used by paper trading to replay price since the last check)."""
         return [_candle(c) for c in self.info.candles_snapshot(coin, interval, int(start_ms), int(end_ms))]
 
-    def book_imbalance(self, coin: str, depth_pct: float = 1.0) -> dict | None:
-        try:
-            book = self.info.l2_snapshot(coin)
-        except Exception:  # noqa: BLE001
-            return None
-        bids, asks = book["levels"]
-        if not bids or not asks:
-            return None
-        mid = (float(bids[0]["px"]) + float(asks[0]["px"])) / 2
-        lo, hi = mid * (1 - depth_pct / 100), mid * (1 + depth_pct / 100)
-        b = sum(float(x["px"]) * float(x["sz"]) for x in bids if float(x["px"]) >= lo)
-        a = sum(float(x["px"]) * float(x["sz"]) for x in asks if float(x["px"]) <= hi)
-        if a <= 0:
-            return None
-        return {"ratio": b / a, "buy_usd": b, "sell_usd": a, "minutes": 0, "source": f"book depth +/-{depth_pct:g}%"}
-
     def buy_sell(self, coin: str) -> dict | None:
-        return self.flow.ratio(coin) or self.book_imbalance(coin)
+        return self.flow.ratio(coin)
+
+    def day_open(self, coin: str) -> float | None:
+        """Open of today's UTC daily candle (the protocol's "daily change" reference)."""
+        now = int(time.time() * 1000)
+        start = now // 86_400_000 * 86_400_000
+
+        def load():
+            rows = [_candle(c) for c in self.info.candles_snapshot(coin, "1d", start, now)]
+            today = [c for c in rows if c["t"] == start]
+            return today[-1]["o"] if today else None
+
+        val = self._cached(f"open:{coin}:{start}", 86_400, load)
+        if val is None:
+            self._cache.pop(f"open:{coin}:{start}", None)  # retry next time instead of caching a miss
+        return val
+
+    def funding_hist(self, coin: str, hours: int = 12) -> list[float]:
+        """Hourly funding rates (%) for the last `hours`, oldest first."""
+        def load():
+            start = int((time.time() - hours * 3600) * 1000)
+            rows = self.info.funding_history(coin, start)
+            return [float(r["fundingRate"]) * 100 for r in sorted(rows, key=lambda r: r["time"])]
+
+        return self._cached(f"fh:{coin}", 300, load)
+
+    def user_fees(self, address: str) -> Fees:
+        """The account's actual maker/taker rates (fallback: protocol.toml base tier)."""
+        def load():
+            try:
+                f = self.info.user_fees(address)
+                return Fees(float(f["userAddRate"]) * 100, float(f["userCrossRate"]) * 100, P.fees.slippage_pct,
+                            "your Hyperliquid fee tier")
+            except Exception as e:  # noqa: BLE001
+                log.warning("userFees: %s", e)
+                return None
+
+        got = self._cached(f"fees:{address}", 600, load) if address else None
+        return got or Fees(P.fees.maker_pct, P.fees.taker_pct, P.fees.slippage_pct, "base-tier default")
 
     def account(self, address: str) -> dict:
         st = self.info.user_state(address)
@@ -251,7 +295,7 @@ class Market:
                 log.warning("fear&greed: %s", e)
                 return None
 
-        return self._cached("fng", 1800, load)
+        return self._cached("fng", 600, load)
 
     def dvol(self, currency: str) -> dict | None:
         def load():
@@ -269,23 +313,14 @@ class Market:
                 cur = closes[-1]
                 rank = ind.percentile_rank(closes, cur)
                 day_ago = closes[-25] if len(closes) > 25 else closes[0]
-                return {"dvol": cur, "rank": rank, "label": ind.rank_label(rank), "change_24h": cur - day_ago,
-                        "source": f"Deribit DVOL ({currency})"}
+                rank_ago = ind.percentile_rank(closes[:-24], day_ago) if len(closes) > 48 else None
+                return {"dvol": cur, "rank": rank, "rank_24h_ago": rank_ago, "change_24h": cur - day_ago,
+                        "source": f"Deribit DVOL ({currency}) IV percentile"}
             except Exception as e:  # noqa: BLE001
                 log.warning("dvol %s: %s", currency, e)
                 return None
 
-        return self._cached(f"dvol:{currency}", 1800, load)
-
-    def iv(self, coin: str) -> dict | None:
-        if coin in ("BTC", "ETH"):
-            d = self.dvol(coin)
-            if d:
-                return d
-        rv = ind.realized_vol_rank(self.candles(coin, "1h", 24 * 30))
-        if rv:
-            rv["source"] = "realized-vol percentile (30d)"
-        return rv
+        return self._cached(f"dvol:{currency}", 600, load)
 
     def whales(self) -> dict[str, dict]:
         """Aggregate live positions of the largest leaderboard accounts -> per-coin long/short notional."""
@@ -297,7 +332,7 @@ class Market:
                 log.warning("leaderboard: %s", e)
                 return {}
             rows = sorted(rows, key=lambda r: float(r.get("accountValue") or 0), reverse=True)
-            addrs = [r["ethAddress"] for r in rows[: self.cfg.whale_accounts]]
+            addrs = [r["ethAddress"] for r in rows[: P.deep_dive.whale_accounts]]
 
             def fetch(a):
                 try:
@@ -322,7 +357,7 @@ class Market:
             out = {}
             for coin, a in agg.items():
                 ls = a["long_usd"] / a["short_usd"] if a["short_usd"] > 0 else (99.0 if a["long_usd"] > 0 else None)
-                out[coin] = {**a, "ratio": ls, "accounts_scanned": len(addrs)}
+                out[coin] = {**a, "ratio": ls, "holders": a["longs"] + a["shorts"], "accounts_scanned": len(addrs)}
             return out
 
         return self._cached("whales", self.cfg.whale_cache_min * 60, load)
@@ -350,24 +385,10 @@ class Market:
         sym = base_symbol(coin)
         name = COIN_NAMES.get(sym)
         pat = re.compile(rf"\b{re.escape(sym)}\b" + (rf"|\b{re.escape(name)}\b" if name else ""), re.I if name else 0)
-        out = [i for i in self._cached("rss", 900, load_all) if pat.search(i["title"]) or pat.search(i["summary"])]
+        out = [i for i in self._cached("rss", 600, load_all) if pat.search(i["title"]) or pat.search(i["summary"])]
         return [{"title": i["title"], "summary": i["summary"][:200], "age_h": round((time.time() - i["ts"]) / 3600, 1),
                  "source": i["source"]} for i in out[:limit]]
 
     # -- OI history ----------------------------------------------------------
     def record_oi(self) -> None:
         self.store.add_oi([(c, d["oi_usd"], d["mark"]) for c, d in self.ctxs().items() if d["volume_usd"] > 1_000_000])
-
-    def oi_trend(self, coin: str, oi_now: float) -> dict:
-        out: dict = {"oi_usd": oi_now}
-        d1 = self.store.oi_at(coin, 86400)
-        if d1 and d1["oi_usd"] > 0:
-            out["delta_24h_pct"] = (oi_now / d1["oi_usd"] - 1) * 100
-        old = self.store.oi_oldest(coin)
-        if old and old["oi_usd"] > 0:
-            days = (time.time() - old["ts"]) / 86400
-            if days >= 1:
-                out[f"growth_{min(30, round(days))}d_pct"] = (oi_now / old["oi_usd"] - 1) * 100
-        if len(out) == 1:
-            out["note"] = "history still building (bot records OI hourly)"
-        return out

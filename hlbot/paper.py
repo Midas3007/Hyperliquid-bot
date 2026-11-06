@@ -1,8 +1,9 @@
 """Paper trading: same interface as Trader, filled against live Hyperliquid prices. No orders reach the exchange.
 
 How fills are simulated (deliberately on the conservative side, so paper results don't flatter the strategy):
-- A limit entry fills when a 1-minute candle that started after the order was placed trades at or through it
-  (maker fee). An entry that is already marketable when placed fills at once at mark + slippage (taker fee).
+- Entries are post-only (ALO), like the live bot: an entry that would cross the book is rejected, as
+  Hyperliquid does. A resting entry fills when a 1-minute candle that started after the order was placed
+  trades at or through it (maker fee).
 - SL and TP are market triggers: they fill at the trigger price minus slippage (taker fee).
 - If one candle touches both SL and TP, the SL is assumed to have hit first.
 - In the minute the entry fills, only the SL is checked (we can't tell the order of moves inside a candle).
@@ -22,7 +23,8 @@ import time
 
 from .config import Config
 from .market import Market
-from .risk import liq_hyperliquid
+from .protocol import PROTOCOL
+from .rules.sizing import Fees, liq_price, maintenance
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -40,7 +42,8 @@ class PaperTrader:
         self.cfg = cfg
         self.mkt = mkt
         self.store = store
-        self.slip = cfg.paper_slippage_pct / 100
+        f = PROTOCOL.fees
+        self.maker, self.taker, self.slip = f.maker_pct / 100, f.taker_pct / 100, f.slippage_pct / 100
         self._lock = threading.RLock()
         self._last_step = 0.0
         self.state = store.get(STATE_KEY) or self._fresh(cfg.paper_balance)
@@ -81,36 +84,44 @@ class PaperTrader:
         """Market exit with slippage against us."""
         return px * (1 - self.slip) if side == "long" else px * (1 + self.slip)
 
-    def _fill(self, coin: str, direction: str, px: float, sz: float, fee: float, closed_pnl: float, t_ms: int) -> None:
+    def _fill(self, coin: str, direction: str, px: float, sz: float, fee: float, closed_pnl: float, t_ms: int,
+              funding: float = 0.0, liquidation: bool = False) -> None:
         self.state["fills"].append({"coin": coin, "dir": direction, "px": str(px), "sz": str(sz), "fee": str(fee),
-                                    "closedPnl": str(closed_pnl), "time": int(t_ms)})
+                                    "closedPnl": str(closed_pnl), "time": int(t_ms), "funding": funding,
+                                    "liquidation": liquidation})
         del self.state["fills"][:-MAX_FILLS]
 
     def _open(self, o: dict, px: float, fee_rate: float, t_ms: int) -> None:
         notional = px * o["qty"]
         fee = notional * fee_rate
         margin = notional / o["leverage"]
-        max_lev = int(self.mkt.ctxs().get(o["coin"], {}).get("max_leverage", 50))
         self.state["cash"] -= margin + fee
         self.state["positions"][o["coin"]] = {
             "coin": o["coin"], "side": o["side"], "size": o["qty"], "entry": px, "leverage": o["leverage"],
             "margin": margin, "sl": o["sl"], "tp": o["tp"], "sl_oid": self._oid(), "tp_oid": self._oid(),
-            "liq": liq_hyperliquid(px, o["leverage"], o["side"], max_lev),
+            "liq": self._liq(o["coin"], o["side"], px, o["qty"], margin),
             "opened_ms": int(t_ms), "funding": 0.0, "funding_ms": int(time.time() * 1000),
         }
         self.state["statuses"][str(o["oid"])] = "filled"
         self._fill(o["coin"], f"Open {o['side'].capitalize()}", px, o["qty"], fee, 0.0, t_ms)
 
+    def _liq(self, coin: str, side: str, entry: float, qty: float, margin: float) -> float:
+        tiers = self.mkt.ctxs().get(coin, {}).get("margin_tiers") or [(0.0, 50)]
+        mm, _, mmr = maintenance(entry * qty, tiers)
+        return liq_price(entry, qty, margin, mm, side, mmr)
+
     def _close(self, coin: str, px: float, t_ms: int, reason: str) -> None:
+        """closedPnl is the price PnL (like Hyperliquid's fills); funding is reported separately."""
         p = self.state["positions"].pop(coin)
         sgn = 1 if p["side"] == "long" else -1
-        pnl = sgn * (px - p["entry"]) * p["size"] - p["funding"]
-        fee = px * p["size"] * self.cfg.taker_fee
-        if reason == "liquidated" or pnl < -p["margin"]:  # isolated: the margin is the most you can lose,
-            pnl, fee = -p["margin"], 0.0                    # and a liquidation is booked as losing all of it
-        self.state["cash"] += p["margin"] + pnl - fee
-        self._fill(coin, f"Close {p['side'].capitalize()}", px, p["size"], fee, pnl, t_ms)
-        log.info("paper %s %s closed (%s) at %s pnl %.2f", coin, p["side"], reason, px, pnl)
+        total = sgn * (px - p["entry"]) * p["size"] - p["funding"]
+        fee = px * p["size"] * self.taker
+        if reason == "liquidated" or total < -p["margin"]:  # isolated: the margin is the most you can lose,
+            total, fee = -p["margin"], 0.0                  # and a liquidation is booked as losing all of it
+        self.state["cash"] += p["margin"] + total - fee
+        self._fill(coin, f"Close {p['side'].capitalize()}", px, p["size"], fee, total + p["funding"], t_ms,
+                   funding=p["funding"], liquidation=reason == "liquidated")
+        log.info("paper %s %s closed (%s) at %s pnl %.2f", coin, p["side"], reason, px, total)
 
     # ------------------------------------------------------------------ simulation
     def _process(self, coin: str, c: dict) -> None:
@@ -121,7 +132,7 @@ class PaperTrader:
                 continue  # candle began before the order existed: its range may predate the order
             if (o["side"] == "long" and lo <= o["entry"]) or (o["side"] == "short" and hi >= o["entry"]):
                 self.state["orders"].remove(o)
-                self._open(o, o["entry"], self.cfg.maker_fee, max(t, o["created_ms"]))
+                self._open(o, o["entry"], self.maker, max(t, o["created_ms"]))
 
         p = self.state["positions"].get(coin)
         if not p or t + c.get("span", MIN_MS) <= p["opened_ms"]:
@@ -168,6 +179,7 @@ class PaperTrader:
                 except Exception as e:  # noqa: BLE001
                     log.warning("paper candles %s: %s", coin, e)
                     candles = []
+                self._accrue_funding(coin, now_ms)  # charge funding up to now before a close can happen
                 for c in candles:
                     if c["t"] >= cursor:
                         self._process(coin, c)
@@ -176,7 +188,6 @@ class PaperTrader:
                     self.state["cursor"][coin] = candles[-1]["t"]
                 mark = self._mark(coin)
                 self._process(coin, {"t": now_ms, "h": mark, "l": mark, "span": 0})
-                self._accrue_funding(coin, now_ms)
             active = {o["coin"] for o in self.state["orders"]} | set(self.state["positions"])
             self.state["cursor"] = {k: v for k, v in self.state["cursor"].items() if k in active}
             self._save()
@@ -188,22 +199,17 @@ class PaperTrader:
             if coin in self.state["positions"] or any(o["coin"] == coin for o in self.state["orders"]):
                 raise RuntimeError(f"paper: {coin} already has a position or resting order")
             mark = self._mark(coin)
-            marketable = (side == "long" and mark <= entry) or (side == "short" and mark >= entry)
-            px = (mark * (1 + self.slip) if side == "long" else mark * (1 - self.slip)) if marketable else entry
-            fee_rate = self.cfg.taker_fee if marketable else self.cfg.maker_fee
-            need = px * qty / leverage + px * qty * fee_rate
+            if (side == "long" and mark <= entry) or (side == "short" and mark >= entry):
+                raise RuntimeError("Post only order would have immediately matched (paper ALO)")
+            need = entry * qty / leverage + entry * qty * self.maker
             if need > self.state["cash"] + 1e-9:
                 raise RuntimeError(f"paper: insufficient margin (need ${need:.2f}, available ${self.state['cash']:.2f})")
-            now_ms = int(time.time() * 1000)
             o = {"oid": self._oid(), "coin": coin, "side": side, "qty": qty, "entry": entry, "sl": sl, "tp": tp,
-                 "leverage": int(leverage), "created_ms": now_ms}
-            if marketable:
-                self._open(o, px, fee_rate, now_ms)
-            else:
-                self.state["orders"].append(o)
-                self.state["statuses"][str(o["oid"])] = "open"
+                 "leverage": int(leverage), "created_ms": int(time.time() * 1000)}
+            self.state["orders"].append(o)
+            self.state["statuses"][str(o["oid"])] = "open"
             self._save()
-            return {"entry_oid": o["oid"], "filled_now": marketable, "statuses": []}
+            return {"entry_oid": o["oid"], "filled_now": False, "statuses": []}
 
     def protect_position(self, coin: str, side: str, size: float, sl: float, tp: float) -> None:
         with self._lock:
@@ -213,6 +219,20 @@ class PaperTrader:
             p["sl"], p["tp"] = sl, tp
             p["sl_oid"], p["tp_oid"] = self._oid(), self._oid()
             self._save()
+
+    def add_margin(self, coin: str, usd: float) -> None:
+        with self._lock:
+            p = self.state["positions"].get(coin)
+            if not p or usd > self.state["cash"]:
+                raise RuntimeError("paper: cannot add margin")
+            p["margin"] += usd
+            self.state["cash"] -= usd
+            p["liq"] = self._liq(coin, p["side"], p["entry"], p["size"], p["margin"])
+            self._save()
+
+    def fees(self) -> Fees:
+        f = PROTOCOL.fees
+        return Fees(f.maker_pct, f.taker_pct, f.slippage_pct, "base tier (paper)")
 
     def cancel(self, coin: str, oid: int) -> None:
         with self._lock:
@@ -270,6 +290,12 @@ class PaperTrader:
     def fills_since(self, since_s: float) -> list[dict]:
         with self._lock:
             return [f for f in self.state["fills"] if f["time"] >= since_s * 1000]
+
+    def funding_paid(self, coin: str, since_s: float) -> float:
+        with self._lock:
+            done = sum(float(f.get("funding", 0)) for f in self.state["fills"] if f["coin"] == coin and f["time"] >= since_s * 1000)
+            live = self.state["positions"].get(coin, {}).get("funding", 0.0)
+            return done + live
 
     def account(self) -> dict:
         with self._lock:

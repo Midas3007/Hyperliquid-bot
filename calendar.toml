@@ -1,0 +1,27 @@
+# Scheduled events the protocol checks. Times are UTC (ISO 8601).
+#
+# Module 0: a high-impact US release (CPI, FOMC, NFP) inside the planned hold = skip.
+# Module 2: a token unlock of >= 1% of circulating supply inside the hold window + 24h = skip.
+#
+# Missing data = FAIL. If the planned hold (+24h for unlocks) runs past `covered_until`, the check fails
+# and the bot will not trade. Keep these lists current, or answer PROTOCOL.md open question Q1.
+
+[macro]
+# Sources: bls.gov/schedule/news_release/empsit.htm, bls.gov/schedule/news_release/cpi.htm, federalreserve.gov.
+covered_until = "2026-12-31T23:59:00Z"
+events = [
+  { name = "NFP",  time = "2026-11-06T13:30:00Z" },
+  { name = "NFP",  time = "2026-12-04T13:30:00Z" },
+  { name = "FOMC", time = "2026-12-09T19:00:00Z" },   # verify on federalreserve.gov
+  { name = "CPI",  time = "2026-12-10T13:30:00Z" },
+  { name = "NFP",  time = "2027-01-08T13:30:00Z" },
+  { name = "CPI",  time = "2027-01-13T13:30:00Z" },   # BLS 2027 dates not final when written
+]
+
+[unlocks]
+# No free unlock feed is wired in yet (open question Q1). Empty `covered_until` = no data = every coin
+# fails the unlock check. To trade, list the unlocks for your coins and set covered_until, e.g.:
+#   covered_until = "2026-11-30T23:59:00Z"
+#   events = [ { coin = "SUI", time = "2026-12-01T00:00:00Z", supply_pct = 1.3 } ]
+covered_until = ""
+events = []

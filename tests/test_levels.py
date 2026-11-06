@@ -2,7 +2,7 @@ import math
 import random
 
 from hlbot import indicators as ind
-from hlbot.levels import Level, build_levels, find_confluence, plan_setup
+from hlbot.levels import build_levels
 
 
 def synth(n, step_ms, start=100.0, vol=0.004, seed=1):
@@ -29,26 +29,6 @@ def test_indicators_basic():
     assert math.isclose(p["R1"] - p["P"], 0.382 * 20)
     vr = ind.realized_vol_rank(synth(24 * 30, 3_600_000, vol=0.01))
     assert 0 <= vr["rank"] <= 100 and vr["label"] in ("LOW", "NORMAL", "HIGH", "EXTREME")
-
-
-def test_confluence_requires_two_methods():
-    lv = [Level(99.0, "BB", "5m", "lower"), Level(99.05, "VWAP", "5m", "-1sd"), Level(98.0, "FIB", "5m", "S1")]
-    conf = find_confluence(lv, 100.0, "long", 2.0, 0.25)
-    assert conf and set(conf.methods) == {"BB", "VWAP"}
-    assert find_confluence([Level(99.0, "BB", "5m", "lower")], 100.0, "long", 2.0, 0.25) is None
-
-
-def test_plan_setup_respects_rules():
-    levels = {
-        "5m": [Level(99.0, "BB", "5m", "lower"), Level(99.1, "VWAP", "5m", "vwap"), Level(99.05, "VP", "5m", "VAL")],
-        "4h": [Level(98.6, "SWING", "4h", "low"), Level(96.5, "FIB", "4h", "S1"), Level(110.0, "BB", "4h", "upper")],
-        "1d": [Level(120.0, "FIB", "1d", "R1")],
-    }
-    s, why = plan_setup("X", "long", 100.0, levels, min_sl_pct=1.5, max_sl_pct=8, min_rr=3, max_entry_dist_pct=2, tol_pct=0.25)
-    assert s, why
-    assert s.sl_pct >= 1.5 - 1e-9  # 98.6 swing is too close -> widened to the floor
-    assert s.rr >= 3 - 1e-9
-    assert s.tp > s.entry > s.sl
 
 
 def test_build_levels_runs_on_synthetic_data():

@@ -1,4 +1,10 @@
-"""Order execution on Hyperliquid via an API (agent) wallet - it can trade but cannot withdraw."""
+"""Order execution on Hyperliquid via an API (agent) wallet - it can trade but cannot withdraw.
+
+Entries are post-only (ALO): Hyperliquid rejects an ALO order that would cross the book instead of filling it
+as a taker, so a mistyped price can never fill at market. SL and TP are reduce-only market triggers, which
+Hyperliquid fires on the MARK price. With grouping "normalTpsl" the TP/SL become active once the entry fills
+completely; a partial fill gets position-level TP/SL from protect_position() on the next sync.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +16,7 @@ from hyperliquid.exchange import Exchange
 
 from .config import Config
 from .market import Market
-from .risk import round_price
+from .rules.sizing import round_price
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +62,7 @@ class Trader:
         is_buy = side == "long"
         orders = [
             {"coin": coin, "is_buy": is_buy, "sz": qty, "limit_px": self._px(coin, entry),
-             "order_type": {"limit": {"tif": "Gtc"}}, "reduce_only": False},
+             "order_type": {"limit": {"tif": "Alo"}}, "reduce_only": False},
             self._trigger(coin, not is_buy, qty, sl, "sl"),
             self._trigger(coin, not is_buy, qty, tp, "tp"),
         ]
@@ -76,6 +82,12 @@ class Trader:
         errors = [s["error"] for s in st if "error" in s]
         if errors:
             raise RuntimeError("; ".join(errors))
+
+    def add_margin(self, coin: str, usd: float) -> None:
+        """Add isolated margin to a position (Module 7: restore the 1.5% liq buffer after a fill)."""
+        r = self.ex.update_isolated_margin(round(usd, 2), coin)
+        if not isinstance(r, dict) or r.get("status") != "ok":
+            raise RuntimeError(f"add margin failed: {r}")
 
     def cancel(self, coin: str, oid: int) -> None:
         self.ex.cancel(coin, oid)
@@ -103,6 +115,15 @@ class Trader:
     # ------------------------------------------------------------------ queries
     def account(self) -> dict:
         return self.mkt.account(self.address)
+
+    def funding_paid(self, coin: str, since_s: float) -> float:
+        """Funding paid on `coin` since `since_s` (positive = paid, negative = received)."""
+        rows = self.ex.info.user_funding_history(self.address, int(since_s * 1000), int(time.time() * 1000))
+        return -sum(float(r["delta"]["usdc"]) for r in rows
+                    if r.get("delta", {}).get("type") == "funding" and r["delta"].get("coin") == coin)
+
+    def fees(self):
+        return self.mkt.user_fees(self.address)
 
     def open_orders(self) -> list[dict]:
         return self.ex.info.frontend_open_orders(self.address)
