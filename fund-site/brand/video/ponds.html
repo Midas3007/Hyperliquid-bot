@@ -1,0 +1,227 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#efe8da}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Two Ponds": a sumi-e ink painting. Kiyoshi means pure, clear water. Two ponds (Uniswap and Textile) hold the
+// same water at slightly different levels; a golden koi leaps the gap and carries the difference across. A whole
+// day passes in ten seconds (5 Nov 2026: 260 trades, +$25.83 before gas, from Telegram /today). An enso and a red
+// seal close it. 44 s, timed to score-ponds.py (66 BPM). The leap times below are shared with the score.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 44
+const INK = '#1d1a17', INK2 = '#4a4540', PAPER = '#f1ebde', RED = '#b3261e', GOLD = '#d9a62e', GOLD2 = '#f4cd62'
+const SERIF = 'Caladea, "Liberation Serif", serif', JP = 'IPAGothic, "WenQuanYi Zen Hei", sans-serif'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const inout = (t, a, b, f = .8) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+const R = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+const hash = (i) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x) }
+
+// ---------- the leaps (shared with the score) ----------
+const LEAPS = [{ t: 12.6, d: 2.0, dir: 1, v: '+$0.12' }, { t: 16.4, d: 2.0, dir: -1, v: '+$0.07' }]
+for (let k = 0; k < 11; k++) LEAPS.push({ t: 20.2 + k * .88, d: 1.4, dir: k % 2 ? -1 : 1, v: ['+$0.04', '+$0.11', '+$0.02', '+$0.09', '+$0.15', '+$0.03', '+$0.06', '+$0.21', '+$0.05', '+$0.08', '+$0.13'][k], koi: k % 3 === 1 ? 'kohaku' : 'gold' })
+window.LEAPS = LEAPS
+
+// ---------- paper and the far mountains (pre-rendered) ----------
+let PAPERC = null, HILLS = null
+function build() {
+  const p = document.createElement('canvas'); p.width = 1920; p.height = 1080; const x = p.getContext('2d'), r = R(3)
+  x.fillStyle = PAPER; x.fillRect(0, 0, 1920, 1080)
+  for (let i = 0; i < 40; i++) { const X = r() * 1920, Y = r() * 1080, rad = 60 + r() * 300, gr = x.createRadialGradient(X, Y, 0, X, Y, rad); gr.addColorStop(0, `rgba(170,150,110,${.03 + r() * .04})`); gr.addColorStop(1, 'rgba(170,150,110,0)'); x.fillStyle = gr; x.fillRect(X - rad, Y - rad, rad * 2, rad * 2) }
+  x.lineCap = 'round'
+  for (let i = 0; i < 2600; i++) { const X = r() * 1920, Y = r() * 1080, a = r() * TAU, L = 6 + r() * 26; x.strokeStyle = `rgba(120,100,70,${.04 + r() * .06})`; x.lineWidth = .6 + r() * .8; x.beginPath(); x.moveTo(X, Y); x.quadraticCurveTo(X + Math.cos(a + .6) * L * .5, Y + Math.sin(a + .6) * L * .5, X + Math.cos(a) * L, Y + Math.sin(a) * L); x.stroke() }
+  const id = x.getImageData(0, 0, 1920, 1080), d = id.data; for (let i = 0; i < d.length; i += 4) { const n = .96 + r() * .06; d[i] *= n; d[i + 1] *= n; d[i + 2] *= n }
+  x.putImageData(id, 0, 0); PAPERC = p
+  const h = document.createElement('canvas'); h.width = 2400; h.height = 700; const y = h.getContext('2d')
+  const ridge = (base, amp, seed, col, blur) => { y.save(); y.filter = `blur(${blur}px)`; y.fillStyle = col; y.beginPath(); y.moveTo(0, 700)
+    for (let X = 0; X <= 2400; X += 8) { const v = base - amp * (Math.abs(Math.sin(X / 260 + seed)) * .6 + Math.sin(X / 97 + seed * 2) * .15 + Math.sin(X / 41 + seed) * .05) - amp * .5 * Math.exp(-(((X - 900 - seed * 200) / 220) ** 2)); y.lineTo(X, v) }
+    y.lineTo(2400, 700); y.closePath(); y.fill()
+    const gr = y.createLinearGradient(0, base - amp, 0, 700); gr.addColorStop(0, 'rgba(241,235,222,0)'); gr.addColorStop(.35, 'rgba(241,235,222,0)'); gr.addColorStop(.8, 'rgba(241,235,222,.9)'); gr.addColorStop(1, 'rgba(241,235,222,1)'); y.fillStyle = gr; y.globalCompositeOperation = 'source-atop'; y.fillRect(0, 0, 2400, 700); y.restore() }
+  ridge(420, 260, .4, 'rgba(60,56,52,.16)', 6); ridge(520, 200, 1.7, 'rgba(50,46,42,.24)', 3); ridge(640, 150, 2.9, 'rgba(40,36,32,.34)', 1.5)
+  HILLS = h
+}
+
+// ---------- brush ----------
+// a stroke along points with a pressure profile; dry-brush streaks near the end
+function brush(pts, f, width, color = INK, alpha = 1, seed = 1) {
+  if (f <= 0) return
+  const n = Math.floor(clamp(f) * (pts.length - 1)); g.save(); g.globalAlpha = alpha; g.fillStyle = color
+  for (let i = 0; i <= n; i++) { const u = i / (pts.length - 1), pr = Math.min(1, u * 9) * (1 - .78 * u ** 1.6), [x, y] = pts[i], w = width * pr * (.94 + .06 * Math.sin(i * .045 + seed))
+    if (u > .7 && hash(i * 7 + seed) < (u - .7) * 1.6) { for (let s = -2; s <= 2; s++) if (hash(i + s * 31 + seed) > .45) { g.beginPath(); g.arc(x + s * w * .22, y + s * w * .12, w * .12, 0, TAU); g.fill() } continue }
+    g.beginPath(); g.arc(x, y, Math.max(.5, w / 2), 0, TAU); g.fill() }
+  g.restore()
+}
+const ensoPts = (cx, cy, r, a0 = -2.2, sweep = 5.95, seed = 2) => Array.from({ length: 1100 }, (_, i) => { const u = i / 1099, a = a0 + sweep * u, rr = r * (1 + .025 * Math.sin(u * 9 + seed) + .015 * Math.sin(u * 23 + seed)); return [cx + Math.cos(a) * rr, cy + Math.sin(a) * rr * .98] })
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fan(cx, cy, r, color, a = 1, open = 1) { if (a <= 0) return; g.save(); g.globalAlpha *= a; g.fillStyle = color; const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const s = A0 + i * w * open + .012, e = A0 + (i + 1) * w * open - .012; g.beginPath(); g.moveTo(cx + Math.cos(s) * r * .06, cy + Math.sin(s) * r * .06); g.lineTo(cx + Math.cos(s) * r, cy + Math.sin(s) * r); g.lineTo(cx + Math.cos(e) * r, cy + Math.sin(e) * r); g.lineTo(cx + Math.cos(e) * r * .06, cy + Math.sin(e) * r * .06); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .05; g.beginPath(); g.arc(cx, cy + r * .05, r * .06, 0, TAU); g.stroke(); g.restore() }
+function txt(s, x, y, size, color, alpha = 1, o = {}) { if (alpha <= .003) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.fillText(s, x, y); g.restore() }
+function wash(x, y, rx, ry, color, blur) { g.save(); g.filter = `blur(${blur}px)`; g.fillStyle = color; g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, TAU); g.fill(); g.restore() }
+
+// ---------- the ponds ----------
+const PONDS = [{ x: 560, y: 700, rx: 330, ry: 104, name: 'Uniswap' }, { x: 1360, y: 712, rx: 330, ry: 104, name: 'Textile' }]
+function pond(p, t, a, i) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha = a
+  wash(p.x, p.y + 10, p.rx * 1.08, p.ry * 1.25, 'rgba(40,36,32,.18)', 18)
+  const gr = g.createRadialGradient(p.x - 80, p.y - 30, 20, p.x, p.y, p.rx); gr.addColorStop(0, 'rgba(120,135,140,.18)'); gr.addColorStop(1, 'rgba(50,60,66,.42)')
+  g.fillStyle = gr; g.beginPath(); g.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, TAU); g.fill()
+  // reflections of the sky: a few pale horizontal strokes
+  g.strokeStyle = 'rgba(241,235,222,.5)'; g.lineCap = 'round'; for (let k = 0; k < 5; k++) { const yy = p.y - p.ry * .5 + k * p.ry * .25, w = p.rx * (.5 - Math.abs(k - 2) * .09), sh = Math.sin(t * .6 + k + i) * 16; g.lineWidth = 2.2; g.beginPath(); g.moveTo(p.x - w + sh, yy); g.lineTo(p.x + w * .6 + sh, yy); g.stroke() }
+  // slow ripples
+  for (let k = 0; k < 3; k++) { const q = ((t * .18 + k / 3 + i * .17) % 1); g.strokeStyle = `rgba(29,26,23,${.18 * (1 - q)})`; g.lineWidth = 1.4; g.beginPath(); g.ellipse(p.x + 60 - i * 120, p.y + 4, p.rx * .15 + q * p.rx * .6, (p.ry * .15 + q * p.ry * .6), 0, 0, TAU); g.stroke() }
+  // stones on the rim: soft ink blots
+  for (let k = 0; k < 11; k++) { const an = (i ? 3.6 : 2.2) + (k < 6 ? k * .16 : 2.9 + (k - 6) * .2) + hash(k + i * 50) * .1, sx = p.x + Math.cos(an) * p.rx * (1.0 + hash(k * 3 + i) * .06), sy = p.y + Math.sin(an) * p.ry * (1.05 + hash(k * 5 + i) * .12), s = 10 + hash(k * 7 + i) ** 2 * 44
+    wash(sx, sy, s * 1.6, s * .62, `rgba(29,26,23,${.3 + hash(k * 9 + i) * .4})`, 2); wash(sx - s * .3, sy - s * .2, s * .5, s * .18, 'rgba(241,235,222,.35)', 2) }
+  g.restore()
+  // reeds: quick tapered strokes on the far side
+  for (const [cx, cnt] of [[p.x + (i ? 210 : -230), 6], [p.x + (i ? -150 : 170), 4]]) for (let k = 0; k < cnt; k++) {
+    const bx = cx + (k - cnt / 2) * 9, by = p.y - p.ry * .92, hgt = 80 + hash(k * 2 + i + cx) * 120, lean = (hash(k + cx) - .5) * 90, sway = Math.sin(t * .7 + k * .6) * 10
+    const pts = Array.from({ length: 60 }, (_, j) => { const u = j / 59; return [bx + (lean + sway) * u * u, by - hgt * u] })
+    brush(pts, 1, 5.5, INK, a * .85, k + i * 10 + cx) }
+  txt(p.name.toUpperCase(), p.x, p.y + p.ry + 78, 26, INK2, a, { spacing: 12 })
+}
+// the gap, marked on a small ruler between the ponds: the right pond's level a hair lower
+function ruler(t, a) {
+  if (a <= 0) return
+  const x = 960, y0 = 560, y1 = 720
+  g.save(); g.globalAlpha = a; g.strokeStyle = INK; g.lineWidth = 2; g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke()
+  for (let k = 0; k <= 8; k++) { g.lineWidth = k % 4 ? 1 : 2; g.beginPath(); g.moveTo(x - (k % 4 ? 8 : 14), y0 + k * 20); g.lineTo(x + (k % 4 ? 8 : 14), y0 + k * 20); g.stroke() }
+  g.strokeStyle = RED; g.lineWidth = 3; g.beginPath(); g.moveTo(x - 60, 632); g.lineTo(x - 6, 632); g.moveTo(x + 6, 646); g.lineTo(x + 60, 646); g.stroke()
+  g.restore()
+  txt('the gap', x, 530, 26, RED, a, { italic: true })
+}
+
+// ---------- koi ----------
+function koi(x, y, ang, s, t, kind = 'gold', sub = 0, a = 1) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha = a; g.translate(x, y); g.rotate(ang); g.scale(s, s * (1 - sub * .5))
+  const N = 12, L = 120, spine = Array.from({ length: N }, (_, i) => { const u = i / (N - 1); return [L / 2 - u * L, Math.sin(t * 9 - u * 4) * 7 * u * u] })
+  const wdt = (u) => 22 * Math.sin(Math.PI * Math.min(1, .15 + u * 1.05)) ** .8 * (1 - u * .55)
+  const left = spine.map(([px, py], i) => [px, py - wdt(i / (N - 1))]), right = spine.map(([px, py], i) => [px, py + wdt(i / (N - 1))]).reverse()
+  const tail = spine[N - 1], tw = Math.sin(t * 9 - 4) * .5
+  // tail fin and pectoral fins, translucent
+  g.fillStyle = kind === 'gold' ? 'rgba(244,205,98,.55)' : 'rgba(240,236,226,.7)'; g.strokeStyle = INK; g.lineWidth = 1.4
+  g.beginPath(); g.moveTo(tail[0] + 4, tail[1]); g.quadraticCurveTo(tail[0] - 30, tail[1] - 34 + tw * 20, tail[0] - 46, tail[1] - 26 + tw * 26); g.quadraticCurveTo(tail[0] - 26, tail[1] + tw * 10, tail[0] - 46, tail[1] + 26 + tw * 26); g.quadraticCurveTo(tail[0] - 30, tail[1] + 34 + tw * 20, tail[0] + 4, tail[1]); g.fill(); g.stroke()
+  for (const sgn of [-1, 1]) { g.beginPath(); g.ellipse(L * .18, sgn * 24, 16, 7, sgn * .7 + Math.sin(t * 6) * .2, 0, TAU); g.fill(); g.stroke() }
+  // the body
+  g.beginPath(); [...left, ...right].forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py))); g.closePath()
+  const gr = g.createLinearGradient(0, -22, 0, 22)
+  if (kind === 'gold') { gr.addColorStop(0, GOLD2); gr.addColorStop(.5, GOLD); gr.addColorStop(1, '#a87818') } else { gr.addColorStop(0, '#fbf8f1'); gr.addColorStop(1, '#ded8cc') }
+  g.fillStyle = gr; g.fill()
+  if (kind === 'kohaku') { g.save(); g.clip(); g.fillStyle = RED; for (const [px, py, rx, ry] of [[30, -4, 26, 14], [-14, 6, 20, 12], [-40, -2, 12, 8]]) { g.beginPath(); g.ellipse(px, py, rx, ry, .3, 0, TAU); g.fill() } g.restore() }
+  if (kind === 'gold') { g.save(); g.clip(); g.strokeStyle = 'rgba(255,240,190,.5)'; g.lineWidth = 1; for (let k = -50; k < 60; k += 9) { g.beginPath(); g.arc(k, -6, 7, .3, Math.PI - .3); g.stroke() } g.restore() } // scales
+  g.strokeStyle = INK; g.lineWidth = 1.8; g.beginPath(); [...left, ...right].forEach(([px, py], i) => (i ? g.lineTo(px, py) : g.moveTo(px, py))); g.closePath(); g.stroke()
+  g.fillStyle = INK; g.beginPath(); g.arc(L / 2 - 14, -8, 2.6, 0, TAU); g.arc(L / 2 - 14, 8, 2.6, 0, TAU); g.fill()
+  g.restore()
+}
+function splash(x, y, q, a = 1) { // q: 0..1 after impact
+  if (q < 0 || q > 1) return
+  g.save(); g.globalAlpha = a * (1 - q)
+  for (let k = 0; k < 3; k++) { const r = 20 + q * (90 + k * 40); g.strokeStyle = INK; g.lineWidth = 2.2 - k * .5; g.beginPath(); g.ellipse(x, y, r, r * .3, 0, 0, TAU); g.stroke() }
+  g.fillStyle = INK; for (let k = 0; k < 14; k++) { const an = -Math.PI / 2 + (hash(k) - .5) * 2.2, v = 60 + hash(k + 5) * 90, px = x + Math.cos(an) * v * q * 1.4, py = y + Math.sin(an) * v * q * 2 + 260 * q * q; g.beginPath(); g.arc(px, py, 3.5 * (1 - q) + 1, 0, TAU); g.fill() }
+  g.restore()
+}
+// a koi circling in its pond between leaps
+function swimmer(p, t, phase, kind, a) {
+  const an = t * .55 + phase, x = p.x + Math.cos(an) * p.rx * .55, y = p.y + Math.sin(an) * p.ry * .5
+  koi(x, y, an + Math.PI / 2, .75, t + phase, kind, 1, a * .75)
+}
+function leap(L, t) {
+  const q = (t - L.t) / L.d
+  const A = L.dir > 0 ? PONDS[0] : PONDS[1], Bp = L.dir > 0 ? PONDS[1] : PONDS[0]
+  const x0 = A.x + L.dir * 120, x1 = Bp.x - L.dir * 120, y0 = A.y, y1 = Bp.y
+  if (q >= 0 && q <= 1) {
+    const x = lerp(x0, x1, q), hgt = L.d > 1.6 ? 330 : 260, y = lerp(y0, y1, q) - Math.sin(Math.PI * q) * hgt
+    const dy = lerp(y1 - y0, y1 - y0, q) - Math.cos(Math.PI * q) * Math.PI * hgt, ang = Math.atan2(dy, (x1 - x0)) * (L.dir > 0 ? 1 : 1)
+    koi(x, y, Math.atan2(dy, x1 - x0), 1.05 + .2 * Math.sin(Math.PI * q), t, L.koi ?? 'gold', 0, 1)
+    // a few drops trailing from the fish
+    for (let k = 1; k < 6; k++) { const qq = q - k * .03; if (qq < 0) continue; const tx = lerp(x0, x1, qq), ty = lerp(y0, y1, qq) - Math.sin(Math.PI * qq) * hgt + k * 6; g.fillStyle = `rgba(29,26,23,${.5 - k * .08})`; g.beginPath(); g.arc(tx, ty, 3 - k * .4, 0, TAU); g.fill() }
+  }
+  splash(x0, y0, (t - L.t) / 1.0, .8)
+  splash(x1, y1, (t - L.t - L.d) / 1.1, 1)
+  const lq = (t - L.t - L.d) / 1.5; if (lq > 0 && lq < 1) txt(L.v, x1, y1 - 70 - lq * 60, L.d > 1.6 ? 40 : 30, GOLD, Math.sin(Math.PI * lq), { weight: 700 })
+}
+
+// ---------- the day passing (20 - 30 s): a red sun, then the moon ----------
+function sky(t) {
+  const q = clamp((t - 19.8) / 10.4)
+  if (q > 0 && q < 1) {
+    const sunq = clamp(q / .62), mq = clamp((q - .55) / .45)
+    if (sunq < 1) { const x = lerp(260, 1660, sunq), y = 470 - Math.sin(Math.PI * sunq) * 190; g.save(); g.globalAlpha = Math.sin(Math.PI * sunq) ** .5 * .85; g.fillStyle = RED; g.beginPath(); g.arc(x, y, 62, 0, TAU); g.fill(); g.restore() }
+    if (mq > 0) { const x = lerp(320, 1600, mq), y = 460 - Math.sin(Math.PI * mq) * 180; g.save(); g.globalAlpha = Math.sin(Math.PI * mq) ** .5 * .6; g.strokeStyle = INK2; g.lineWidth = 3; g.beginPath(); g.arc(x, y, 50, 0, TAU); g.stroke(); g.fillStyle = 'rgba(29,26,23,.08)'; g.fill(); g.restore() }
+  }
+}
+// cherry petals in the calm
+function petals(t, a) {
+  if (a <= 0) return
+  for (let i = 0; i < 26; i++) { const T = (t * (.06 + hash(i) * .05) + hash(i + 3)) % 1, x = (hash(i + 7) * 2200 - 140) + T * 260 + Math.sin(t * 1.2 + i) * 40, y = -40 + T * 1160, rot = t * (1 + hash(i)) + i
+    g.save(); g.globalAlpha = a * .85; g.translate(x, y); g.rotate(rot); g.fillStyle = i % 4 ? '#e9b8b4' : '#d98f8a'; g.beginPath(); g.ellipse(0, 0, 9, 5, 0, 0, TAU); g.fill(); g.restore() }
+}
+function hanko(x, y, s, a) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha = a; g.translate(x, y); g.rotate(-.04)
+  g.fillStyle = RED; g.beginPath(); g.roundRect(-s / 2, -s / 2, s, s, s * .08); g.fill()
+  g.fillStyle = PAPER; g.font = `400 ${s * .72}px ${JP}`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('清', 0, s * .04)
+  g.strokeStyle = PAPER; g.lineWidth = s * .04; g.strokeRect(-s * .42, -s * .42, s * .84, s * .84)
+  g.fillStyle = 'rgba(241,235,222,.55)'; for (let k = 0; k < 40; k++) { g.beginPath(); g.arc((hash(k) - .5) * s, (hash(k + 9) - .5) * s, hash(k + 4) * 2.2, 0, TAU); g.fill() } // worn ink
+  g.restore()
+}
+function counter(t) {
+  const a = inout(t, 20.4, 30.4, .6); if (a <= 0) return
+  const q = clamp((t - 20.4) / 9.6), n = Math.round(260 * q), v = (25.83 * q).toFixed(2)
+  txt('5 NOVEMBER · ONE DAY', 960, 92, 26, INK2, a, { spacing: 12 })
+  txt(`${n} leaps   ·   +$${v}`, 960, 146, 58, INK, a, { weight: 700 })
+}
+function captions(t) {
+  const C = [[1.0, 5.4, 'Kiyoshi: pure, clear water.'], [6.0, 9.0, 'Two ponds.'], [9.2, 12.2, 'The same water, at slightly different levels.'],
+    [12.6, 16.0, 'Where the levels differ, the koi leaps,'], [16.4, 19.6, 'and carries the difference across.'], [20.6, 25.0, 'Thousands of times a week.'],
+    [25.4, 29.8, 'One small difference at a time.'], [30.6, 36.2, 'Patient. Precise. Always awake.']]
+  for (const [a, b, s] of C) txt(s, 960, 990, 50, INK, inout(t, a, b, .6), { italic: true })
+}
+function draw(t) {
+  if (!PAPERC) build()
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  g.drawImage(PAPERC, 0, 0)
+  // 0-6: an ink drop blooms and an enso is painted; then the camera settles on the ponds
+  const scene = smooth((t - 5) / 2.2), endq = smooth((t - 36.6) / 1.6)
+  const hillA = scene * (1 - endq), drift = t * 6
+  sky(t)
+  if (hillA > 0) { g.save(); g.globalAlpha = hillA; g.drawImage(HILLS, -240 - drift, 80); g.restore() }
+  // the opening enso
+  const oa = 1 - smooth((t - 5.2) / 1.4)
+  if (oa > 0) {
+    const bloom = smooth((t - .3) / 1.2); wash(960, 470, 40 * bloom + 6, 40 * bloom + 6, `rgba(29,26,23,${.75 * oa})`, 6 + bloom * 10)
+    brush(ensoPts(960, 470, 230), smooth((t - 1.2) / 2.6), 34, INK, oa, 3)
+  }
+  const pa = scene * (1 - endq)
+  ruler(t, inout(t, 9.4, 19.8, .6) * (1 - endq))
+  PONDS.forEach((p, i) => pond(p, t, pa, i))
+  // swimmers in the ponds (hidden while a leap of theirs is in the air)
+  const inAir = LEAPS.some((L) => t >= L.t && t <= L.t + L.d)
+  swimmer(PONDS[0], t, 0, 'gold', pa * (inAir ? .35 : 1)); swimmer(PONDS[1], t, 2.4, 'kohaku', pa * .9)
+  for (const L of LEAPS) leap(L, t)
+  petals(t, inout(t, 30.2, 37.6, 1.2))
+  counter(t); captions(t)
+  // the close: an enso around the gold fan, the name, and the seal
+  if (t > 36.4) {
+    const lt = t - 36.4
+    brush(ensoPts(960, 430, 220, -1.9, 5.85, 5), smooth(lt / 2.2), 30, INK, 1, 7)
+    fan(960, 470, 120, GOLD, smooth((lt - 1.2) / .8), smooth((lt - 1.2) / 1.4))
+    txt('MIDAS × KIYOSHI', 960, 760, 78, INK, smooth((lt - 2.0) / .8), { weight: 700, spacing: 18 })
+    txt('Celo FX arbitrage, around the clock', 960, 832, 36, INK2, smooth((lt - 2.6) / .8), { italic: true })
+    const hs = smooth((lt - 3.2) / .25), sq = 1 + (1 - hs) * .6; hanko(1480, 760, 88 * sq, hs)
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .45, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(120,100,70,0)'); vg.addColorStop(1, 'rgba(120,100,70,.22)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .8) + clamp((t - (DUR - 1.2)) / 1.2); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready.then(() => build())
+</script>
+</body></html>
