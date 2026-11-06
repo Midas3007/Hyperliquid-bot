@@ -25,7 +25,7 @@ const R = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^
 const B = (n) => n * BAR
 
 // ---------- pre-rendered: marble, film grain, the hands ----------
-let MARBLE = null, GRAIN = [], HANDS = null
+let MARBLE = null, GRAIN = [], HANDS = null, ENG = null, TMP = null
 function build() {
   const m = document.createElement('canvas'); m.width = 1300; m.height = 760; const x = m.getContext('2d'), id = x.createImageData(1300, 760), d = id.data
   const turb = (X, Y) => Math.sin(X * .011 + Math.sin(Y * .017) * 2.2) * .5 + Math.sin(X * .023 - Y * .019 + Math.sin(X * .007) * 3) * .3 + Math.sin((X + Y) * .041) * .2
@@ -39,9 +39,34 @@ function build() {
   const r = R(7)
   for (let k = 0; k < 4; k++) { const n = document.createElement('canvas'); n.width = 480; n.height = 270; const z = n.getContext('2d'), gd = z.createImageData(480, 270)
     for (let i = 0; i < gd.data.length; i += 4) { const v = 128 + (r() - .5) * 90; gd.data[i] = gd.data[i + 1] = gd.data[i + 2] = v; gd.data[i + 3] = 255 } z.putImageData(gd, 0, 0); GRAIN.push(n) }
-  return new Promise((res) => { const im = new Image(); im.onload = () => { HANDS = im; res() }; im.src = IMG.hands })
+  return new Promise((res) => { const im = new Image(); im.onload = () => { HANDS = im; engrave(); res() }; im.src = IMG.hands })
 }
 
+function engrave() {
+  const w = 2000, h = 506, cv = document.createElement('canvas'); cv.width = w; cv.height = h
+  const x = cv.getContext('2d', { willReadFrequently: true }); x.drawImage(HANDS, 0, 0)
+  const d = x.getImageData(0, 0, w, h).data, out = x.createImageData(w, h), o = out.data
+  for (let X = 0; X < w; X++) {
+    const lSleeve = X < 418, lCuff = X >= 418 && X < 462, rSleeve = X > 1684, rCuff = X > 1646 && X <= 1684, strap = X > 1586 && X < 1616
+    for (let Y = 0; Y < h; Y++) {
+      const i = (Y * w + X) * 4, al = d[i + 3] / 255; if (al < .05) continue
+      let lum = clamp(((d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11) / 255 - .12) / .62)
+      if (lSleeve || rSleeve) { const c = lSleeve ? Y + .32 * X : Y + .02 * X, m = ((c % 21) + 21) % 21; lum = Math.abs(m - 10.5) < 1.1 ? .9 : lum * .3 + .04 } // dark wool, pinstripes
+      else if (lCuff || rCuff) lum = .72 + lum * .28 // white shirt cuff
+      else if (strap) lum = .06 // the watch strap
+      const v = Y + 4 * Math.sin(X * .013) + 2 * Math.sin(X * .037 + Y * .01), per = 5.2, f = ((v % per) + per) % per
+      const cov = clamp((Math.pow(1 - lum, .9) * 2.4 + .25) / 2 - Math.abs(f - per / 2) + .5)
+      if (cov > 0) { o[i] = 243; o[i + 1] = 215; o[i + 2] = 122; o[i + 3] = Math.round(255 * cov * al) }
+    }
+  }
+  x.putImageData(out, 0, 0)
+  const gold = (cx, cy, r) => { const gr = x.createRadialGradient(cx - r * .35, cy - r * .4, r * .1, cx, cy, r); gr.addColorStop(0, '#fff3c4'); gr.addColorStop(.5, '#e7c25a'); gr.addColorStop(1, '#8a6a1c'); x.fillStyle = gr; x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.fill() }
+  gold(440, 118, 15); x.fillStyle = 'rgba(60,40,10,.6)'; x.beginPath(); x.arc(440, 118, 6, 0, TAU); x.fill() // the cufflink
+  gold(1601, 168, 30); x.fillStyle = '#14100a'; x.beginPath(); x.arc(1601, 168, 22, 0, TAU); x.fill() // the watch: case and dial
+  x.strokeStyle = '#e7c25a'; x.lineWidth = 2.4; x.beginPath(); x.moveTo(1601, 168); x.lineTo(1601, 152); x.moveTo(1601, 168); x.lineTo(1613, 172); x.stroke()
+  for (let k = 0; k < 12; k++) { const a = k / 12 * TAU; x.fillStyle = '#e7c25a'; x.fillRect(1601 + Math.cos(a) * 18 - 1, 168 + Math.sin(a) * 18 - 1, 2, 2) }
+  ENG = cv; TMP = document.createElement('canvas'); TMP.width = w; TMP.height = h
+}
 // ---------- the line field: N engraved lines, each M points, morphing between shapes ----------
 const N = 46, M = 420
 const PRICE = [1.0000, 1.2120, 1.2460, 1.2996, 1.4235, 1.4606, 1.5072, 1.5642, 1.6677]
@@ -62,8 +87,8 @@ const SHAPES = {
   seal: (i, u, t) => SHAPES.rosette(i, u, t, .42),
 }
 // the sequence: [shape, time it is fully formed]
-const SEQ = [['rosette', 4.6], ['chart', B(2) + 1.4], ['waves', B(4) + 2.0], ['spark', B(6) + 1.6], ['coin', B(8) + 1.3], ['border', B(10) + 1.4], ['seal', B(12) + 1.4]]
-const MORPH = 2.4 // seconds each morph takes
+const SEQ = [['rosette', 4.6], ['chart', B(2) + 1.4], ['waves', B(4) + 2.0], ['spark', B(6) + 1.6], ['coin', B(8) + 1.3], ['border', B(10) + 1.4], ['seal', B(12) + 2.4]]
+const MORPH = 3.2 // seconds each morph takes
 function lineState(t) {
   let i = 0; while (i < SEQ.length - 1 && t >= SEQ[i + 1][1] - MORPH) i++
   const [a] = SEQ[i], next = SEQ[Math.min(SEQ.length - 1, i + 1)], b = next[0], start = next[1] - MORPH
@@ -71,15 +96,17 @@ function lineState(t) {
   return { a, b, p }
 }
 function drawLines(t, color, alpha, width = 1.15) {
+  if (alpha <= .003) return
   const { a, b, p } = lineState(t), draw = smooth(t / 4.2) // the first rosette draws itself in
   g.save(); g.strokeStyle = color; g.lineWidth = width; g.lineJoin = 'round'
   for (let i = 0; i < N; i++) {
-    const k = smooth(clamp((p - (i / N) * .35) / .65)), sw = Math.sin(Math.PI * k) // stagger; a swirl mid-morph
     const n = Math.max(2, Math.floor(M * (t < 4.2 ? clamp(draw * 1.25 - i / N * .25) : 1))); if (n < 3) continue
     g.globalAlpha = alpha * (.42 + .4 * Math.sin(i * .37 + t * .4) ** 2)
     g.beginPath()
     for (let j = 0; j < n; j++) { const u = j / (M - 1), [x0, y0] = SHAPES[a](i, u, t), [x1, y1] = SHAPES[b](i, u, t)
-      const x = lerp(x0, x1, k) + sw * 40 * Math.sin(u * 9 + i * .3 + t), y = lerp(y0, y1, k) + sw * 40 * Math.cos(u * 7 - i * .2 + t)
+      // a wave of change rolls along each strand, strands a beat apart; a soft lift while in flight
+      const k = smooth(clamp((p - .26 * (i / N) - .3 * u) / .44)), lift = Math.sin(Math.PI * k) * 14
+      const x = lerp(x0, x1, k) + lift * Math.sin(u * 5 + i * .15 + t * .6), y = lerp(y0, y1, k) + lift * Math.cos(u * 4 - i * .1 + t * .5)
       j ? g.lineTo(x, y) : g.moveTo(x, y) }
     g.stroke()
   }
@@ -111,59 +138,68 @@ function microRing(r, text, size, a, rot) { if (a <= 0) return; g.save(); g.glob
   const n = Math.floor(TAU * r / (size * .78)); for (let k = 0; k < n; k++) { g.save(); g.rotate(k / n * TAU); g.fillText(text[k % text.length], 0, -r); g.restore() } g.restore() }
 
 function chartLabels(t) {
-  const a = inout(t, B(2) + .6, B(4) - .6); if (a <= 0) return
+  const a = inout(t, B(2) + .6, B(4) - .6, 1.3); if (a <= 0) return
   DAYS.forEach((d, i) => { const u = i / NS, x = chartX(u), y = chartY(u), k = a * smooth((t - B(2) - .4 - i * .25) / .5)
     dot(x, y, 22, 'rgba(243,215,122,.7)', k); txt(d, x, y + 74, 22, SOFT, k, { font: MONO }); txt(`$${PRICE[i].toFixed(2)}`, x, y - 50, 24, GOLD2, k * (i === 0 || i === NS ? 1 : .7), { font: MONO, weight: 600 }) })
 }
 function waveLabels(t) {
-  const a = inout(t, B(4) + 1.4, B(6) - .7); if (a <= 0) return
+  const a = inout(t, B(4) + 1.4, B(6) - .5, 1.3); if (a <= 0) return
   txt('UNISWAP', -800, -250, 24, SOFT, a, { font: MONO, spacing: 8, align: 'left' }); txt('TEXTILE', -800, 260, 24, SOFT, a, { font: MONO, spacing: 8, align: 'left' })
   const pulse = .6 + .4 * Math.sin(t * 2.4) ** 2; dot(0, 0, 160, 'rgba(243,215,122,.55)', a * pulse)
   txt('the gap', 0, 0, 28, GOLD2, a, { italic: true })
 }
 function hands(t) {
-  const a = inout(t, B(6) - 1.0, B(8) + .3, 1.6); if (a <= 0 || !HANDS) return
-  const reach = smooth((t - B(6) + 1) / 5.5), w = 2000, h = 506, gx = 1005, gy = 252 // gap between the fingertips, in image px
-  const sc = 1.05, close = (1 - reach) * 90
-  g.save(); g.globalAlpha = a
-  // left hand (God's) and right hand (Adam's) drawn as two halves so they can drift toward each other
-  g.drawImage(HANDS, 0, 0, gx, h, -gx * sc - close, -gy * sc, gx * sc, h * sc)
-  g.drawImage(HANDS, gx, 0, w - gx, h, close, -gy * sc, (w - gx) * sc, h * sc)
-  g.restore()
+  // the hands draw themselves out of the spark (and back into it): a soft-edged reveal from the fingertips outward
+  const rin = smooth((t - B(6) + 1.2) / 2.6), rout = smooth((t - B(8) + .2) / 2.4), R = rin * (1 - rout)
+  if (R <= .002 || !ENG) return
+  const w = 2000, h = 506, gx = 1005, gy = 252, sc = 1.05, close = (1 - smooth((t - B(6) + 1.2) / 6)) * 90
+  const y = TMP.getContext('2d'); y.globalCompositeOperation = 'source-over'; y.clearRect(0, 0, w, h); y.drawImage(ENG, 0, 0)
+  const rad = 60 + R * 1250, gr = y.createRadialGradient(gx, gy, Math.max(1, rad - 320), gx, gy, rad); gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)')
+  y.globalCompositeOperation = 'destination-in'; y.fillStyle = gr; y.fillRect(0, 0, w, h)
+  dot(0, 0, 900, 'rgba(255,214,140,.07)', R)
+  g.drawImage(TMP, 0, 0, gx, h, -gx * sc - close, -gy * sc, gx * sc, h * sc)
+  g.drawImage(TMP, gx, 0, w - gx, h, close, -gy * sc, (w - gx) * sc, h * sc)
 }
 function sparkGlow(t) {
-  const a = inout(t, B(6) + .6, B(8) + 1.0, 1.0); if (a <= 0) return
+  const a = smooth((t - B(6) + 1.0) / 1.6) * (1 - smooth((t - B(8) + .6) / 1.6)); if (a <= 0) return
   const fl = .75 + .25 * Math.sin(t * 7) * Math.sin(t * 3.1)
   dot(0, 0, 180, 'rgba(255,214,120,.35)', a * fl); dot(0, 0, 60, 'rgba(255,246,220,.95)', a * fl)
   for (let k = 0; k < 12; k++) { const an = k / 12 * TAU + t * .3, len = 40 + 30 * Math.sin(t * 4 + k); g.save(); g.globalAlpha = a * .5; g.strokeStyle = GOLD2; g.lineWidth = 1.5; g.beginPath(); g.moveTo(Math.cos(an) * 18, Math.sin(an) * 18); g.lineTo(Math.cos(an) * len, Math.sin(an) * len); g.stroke(); g.restore() }
 }
 function coin(t) {
-  const a = inout(t, B(8) + .4, B(10) + .2, 1.0); if (a <= 0) return
-  const spin = Math.cos(t * .55), sx = .25 + .75 * Math.abs(spin), r = 140
-  g.save(); g.globalAlpha = a; g.scale(sx, 1)
-  const gr = g.createRadialGradient(-r * .35, -r * .4, r * .1, 0, 0, r * 1.05); gr.addColorStop(0, '#fff1bf'); gr.addColorStop(.35, GOLD2); gr.addColorStop(.75, GOLD); gr.addColorStop(1, DEEP)
-  g.fillStyle = gr; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill()
-  g.strokeStyle = 'rgba(90,64,16,.6)'; g.lineWidth = 3; g.beginPath(); g.arc(0, 0, r * .86, 0, TAU); g.stroke()
-  fan(2, r * .08 + 2, r * .5, 'rgba(90,64,16,.55)'); fan(-1.5, r * .08 - 1.5, r * .5, 'rgba(255,248,220,.6)'); fan(0, r * .08, r * .5, '#c79b2c')
-  // a specular sweep across the face
-  const sw = ((t * .35) % 1.6) - .3; const lg = g.createLinearGradient(-r + sw * 2 * r, -r, -r + sw * 2 * r + 80, r); lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.35)'); lg.addColorStop(1, 'rgba(255,255,255,0)')
-  g.globalCompositeOperation = 'source-atop'; g.fillStyle = lg; g.fillRect(-r, -r, 2 * r, 2 * r)
+  const grow = smooth((t - B(8) + .9) / 2.0); if (grow <= 0) return
+  const toSeal = smooth((t - B(10) + .3) / 2.6), toFan = smooth((t - B(12) + .5) / 2.4)
+  const px = lerp(lerp(0, 440, toSeal), 0, toFan), py = lerp(lerp(0, 200, toSeal), 10, toFan)
+  const size = lerp(.15, 1, grow) * lerp(1, .53, toSeal) * lerp(1, 1.4, toFan), fade = 1 - toFan
+  const spin = lerp(Math.cos(t * .55), 1, toSeal), sx = .25 + .75 * Math.abs(spin), r = 140
+  g.save(); g.translate(px, py); g.scale(size * sx, size)
+  // the gold coin, turning into red wax as it reaches the certificate
+  for (const [col, al] of [['gold', 1 - toSeal], ['wax', toSeal]]) {
+    if (al * fade <= .003) continue
+    g.save(); g.globalAlpha = al * fade * clamp(grow * 1.5)
+    const gr = g.createRadialGradient(-r * .35, -r * .4, r * .1, 0, 0, r * 1.05)
+    if (col === 'gold') { gr.addColorStop(0, '#fff1bf'); gr.addColorStop(.35, GOLD2); gr.addColorStop(.75, GOLD); gr.addColorStop(1, DEEP) } else { gr.addColorStop(0, '#d0505a'); gr.addColorStop(.6, '#9c1e28'); gr.addColorStop(1, '#5e0d14') }
+    g.fillStyle = gr; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill()
+    g.strokeStyle = col === 'gold' ? 'rgba(90,64,16,.6)' : 'rgba(60,6,12,.6)'; g.lineWidth = 3; g.beginPath(); g.arc(0, 0, r * .86, 0, TAU); g.stroke()
+    fan(2, r * .08 + 2, r * .5, col === 'gold' ? 'rgba(90,64,16,.55)' : 'rgba(60,6,12,.6)'); fan(-1.5, r * .08 - 1.5, r * .5, col === 'gold' ? 'rgba(255,248,220,.6)' : 'rgba(240,150,150,.5)'); fan(0, r * .08, r * .5, col === 'gold' ? '#c79b2c' : '#8a1822')
+    if (col === 'gold') { const sw = ((t * .35) % 1.6) - .3, lg = g.createLinearGradient(-r + sw * 2 * r, -r, -r + sw * 2 * r + 80, r); lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.35)'); lg.addColorStop(1, 'rgba(255,255,255,0)'); g.beginPath(); g.arc(0, 0, r, 0, TAU); g.clip(); g.fillStyle = lg; g.fillRect(-r, -r, 2 * r, 2 * r) }
+    g.restore()
+  }
   g.restore()
-  const k = smooth((t - B(8) - 1.2) / .8) * (1 - smooth((t - B(10) + .4) / .8))
-  txt('SEASON 2 · SINCE 29 OCT', 260, -86, 22, SOFT, k, { font: MONO, spacing: 6, align: 'left' }); txt('1,830 trades', 260, -32, 52, WHITE, k, { weight: 700, align: 'left' }); txt('+$153.78 before gas', 260, 24, 30, GOLD2, k, { font: MONO, weight: 600, align: 'left' }); txt('77% profitable · share price +67%', 260, 70, 22, SOFT, k, { font: MONO, align: 'left' })
+  const k = smooth((t - B(8) - .6) / 1.2) * (1 - smooth((t - B(10) + .9) / 1.2)), dy = (1 - smooth((t - B(8) - .6) / 1.2)) * 14 - smooth((t - B(10) + .9) / 1.2) * 14
+  txt('SEASON 2 · SINCE 29 OCT', 330, -86 + dy, 22, SOFT, k, { font: MONO, spacing: 6, align: 'left' }); txt('1,830 trades', 330, -32 + dy, 52, WHITE, k, { weight: 700, align: 'left' }); txt('+$153.78 before gas', 330, 24 + dy, 30, GOLD2, k, { font: MONO, weight: 600, align: 'left' }); txt('77% profitable · share price +67%', 330, 70 + dy, 22, SOFT, k, { font: MONO, align: 'left' })
 }
 function certificate(t) {
-  const a = inout(t, B(10) + .6, B(12) + .4, 1.2); if (a <= 0) return
-  g.save(); g.globalAlpha = a * .92; g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 60; g.shadowOffsetY = 26
+  const gp = smooth((t - B(10) - .2) / 2.2), go = smooth((t - B(12) + 2.7) / 2.0), a = gp * (1 - go); if (a <= .003) return
+  const s = lerp(.93, 1, gp) * lerp(1, .95, go)
+  g.save(); g.scale(s, s); g.globalAlpha = a * .92; g.shadowColor = 'rgba(0,0,0,.6)'; g.shadowBlur = 60; g.shadowOffsetY = 26
   const gr = g.createLinearGradient(-700, -410, 700, 410); gr.addColorStop(0, '#efe4c6'); gr.addColorStop(1, '#ddcfa8'); g.fillStyle = gr; g.fillRect(-700, -410, 1400, 820); g.restore()
-  const k = (d) => a * smooth((t - B(10) - 1.2 - d) / .7)
-  txt('THE GENESIS PASS', 0, -250, 30, INK, k(0), { spacing: 18, weight: 700 })
-  txt('MIDAS × KIYOSHI', 0, -150, 84, INK, k(.2), { weight: 700, spacing: 12 })
-  txt('a membership of the fund, on Celo', 0, -70, 30, '#5a4a36', k(.4), { italic: true })
-  txt('Nº 001', -440, 210, 34, INK, k(.6), { font: MONO, weight: 600 })
-  txt('IN CODE WE TRUST', 0, 230, 26, '#5a4a36', k(.7), { spacing: 10 })
-  // the seal: red, with the fan
-  const sk = k(.9); if (sk > 0) { g.save(); g.globalAlpha = sk; g.fillStyle = '#9c1e28'; g.beginPath(); g.arc(440, 200, 74, 0, TAU); g.fill(); g.restore(); fan(440, 210, 46, '#e8b8b0', sk * .85) }
+  const k = (d) => a * smooth((t - B(10) - 1.0 - d) / 1.1), lift = (d) => (1 - smooth((t - B(10) - 1.0 - d) / 1.1)) * 12
+  txt('THE GENESIS PASS', 0, -250 + lift(0), 30, INK, k(0), { spacing: 18, weight: 700 })
+  txt('MIDAS × KIYOSHI', 0, -150 + lift(.25), 84, INK, k(.25), { weight: 700, spacing: 12 })
+  txt('a membership of the fund, on Celo', 0, -70 + lift(.5), 30, '#5a4a36', k(.5), { italic: true })
+  txt('Nº 001', -440, 210 + lift(.75), 34, INK, k(.75), { font: MONO, weight: 600 })
+  txt('IN CODE WE TRUST', 0, 230 + lift(.9), 26, '#5a4a36', k(.9), { spacing: 10 })
 }
 function captions(t) {
   const C = [[.9, 4.9, 'Fiat lux.'], [B(2) - .1, B(4) - .2, 'Let there be liquidity.'], [B(4) + 1.2, B(6) - .8, 'Two markets, never quite equal.'],
@@ -173,7 +209,7 @@ function captions(t) {
 function endCard(t) {
   const lt = t - B(12) - .2; if (lt < 0) return
   const a = smooth(lt / 1.2)
-  fan(0, 10, 92, GOLD, a, smooth((lt - .2) / 1.2))
+  fan(0, 10, 92, GOLD, smooth((lt - .6) / 1.6), smooth((lt - .4) / 1.6))
   txt('MIDAS × KIYOSHI', 0, 220, 76, WHITE, smooth((lt - .8) / .9), { weight: 700, spacing: 18 })
   txt('Let there be liquidity', 0, 296, 36, SOFT, smooth((lt - 1.4) / .9), { italic: true })
 }
@@ -188,9 +224,8 @@ function draw(t) {
   g.save(); toScreen()
   if (t > B(10) - .2) certificate(t)
   const ink = smooth((t - B(10) - .4) / 1.4) * (1 - smooth((t - B(12)) / 1.2)) // the lines turn to dark ink on the certificate
-  const lineCol = ink > .5 ? '#5a4326' : GOLD2
   hands(t)
-  drawLines(t, lineCol, t < B(12) + 1 ? 1 : 1, 1.15)
+  drawLines(t, GOLD2, 1 - ink, 1.15); drawLines(t, '#5a4326', ink, 1.15)
   if (t < 6.4) microRing(388, 'FIAT LUX · ', 13, inout(t, 1.6, 6.2, 1.0), t * .05)
   chartLabels(t); waveLabels(t); sparkGlow(t); coin(t); endCard(t)
   g.restore()
