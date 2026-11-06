@@ -77,3 +77,13 @@ same hours: the share of shared gaps won, profit per hour, error count and skipp
   ($25.83; the small gap is where the day's edges fall). Before the review: redo the baseline (the ~$13.5 and ~$9.5
   a day, and the 1,887 / 1,820 trips) with the /today method, which `scripts/day-stats.ts` now uses, and check the
   trade-size PDF's figures the same way. The share price is the final check.
+- **Nov 6, 14:00–14:27 Lagos (peak): Mel +$3.03 vs our +$1.22, from the chain.** Both bots wait about 2 minutes for
+  Textile on many trades (Mel: buy 13:12:19 UTC, sell 13:14:24); Mel's dashboard shows only the sale time, so its
+  trips look back to back. The gap came from: (1) size: Mel traded its whole ~$288 every time, we traded $65–$162 on
+  6 of 11 trades (the 0.8 first-trade share, the Textile-hold limit and the size picker); during Mel's best minutes
+  (14:11–14:16, +$0.66–0.69 a trip) we were flattening the 14:09 leftover, then did an $81 trip; (2) losers: one
+  Textile-first trade (−$0.23 at 14:09) and two flattens sold on Uniswap (−$0.18 at 14:20, −$0.03 at 14:24);
+  (3) "incomplete" trades: after the 2-minute wait the firm Textile quote no longer covered the cost (same rule as
+  Mel), which happens more when the peak minimum (0.3 bps) accepts thin gaps like +$0.05 on $323; (4) both bots hit
+  the same wARS pool in the same block at 14:22:49. For the review: full size when Textile holds nothing, a higher
+  peak minimum to survive a 2-minute hold, and flatten waiting for Textile before selling on Uniswap at a loss.
