@@ -41,8 +41,9 @@ hidden until the vault address is set. Choices made while building:
 - 🔴 Independent audit before raising the cap.
 
 **Optional, any time after Phase 1**
-- 🟡 Kiyoshi Pass NFT gating (decided 6 Nov): replaces the approved-wallet list, sets fees by passes held, and is
-  needed to use shares received by transfer (see "Transferable shares and NFT gating").
+- 🟡 Kiyoshi Pass NFT gating (decided 6 Nov): 100 passes; replaces the approved-wallet list; fees by passes held
+  (20% / 15% / 10% / 7% for 1-4); needed to use shares received by transfer (see "Transferable shares and NFT
+  gating").
 - 🟢 Host the bot on a cloud server instead of the phone (**built 29 Oct: Render worker, see kiyoshi/HOSTING.md;
   the daily restart became a pause inside the bot from 20:00 UTC until the keeper reports the day settled**): a small always-on VPS (or a cloud container) running
   Kiyoshi under a process manager that restarts it, with the bot key in the server's secret store, logs and
@@ -179,8 +180,33 @@ These are now part of the plan, not options. They override the Pass notes furthe
 - **Shares need a pass to be used.** If someone transfers shares to a wallet without a pass, the shares arrive
   but stay locked (no withdrawing, no moving them on) until that wallet holds a pass.
 
-Still to decide: the fee for each pass count, the pass supply, and what happens to locked shares that never
-get a pass (see the suggestions under review).
+**Details (decided by Midas, 6 Nov):**
+
+| Passes held (counted) | Performance fee on profit |
+|---|---|
+| 1 | 20% |
+| 2 | 15% |
+| 3 | 10% |
+| 4 or more | 7% (at most 4 passes count) |
+
+- **Counting:** passes are counted when the fee is charged (at withdrawal or transfer), and only passes the wallet
+  has held for at least 7 days. Buying or borrowing passes just before an exit does not lower the fee.
+- **Transfers and instant withdrawals** use the same tier rate as the holder's performance fee (instant
+  withdrawals keep their extra 0.3% paid into the fund). The contract's 20% fee cap still holds: the top tier is
+  20%. 10% of every manager fee still goes to the gas reserve.
+- **Locked shares:** shares sent to a wallet without a pass stay locked. Within 30 days they can be sent back to
+  the sender (to undo a mistake), or unlocked by getting a pass. After 30 days with no pass they join the next
+  scheduled withdrawal automatically, at the 1-pass rate, so money is never stuck.
+- **Selling your last pass** locks your shares the same way: get a pass back within 30 days, or they are
+  withdrawn at the next settlement.
+- **Safety:** the pass contract's address can only change after the 48-hour delay. Pausing or gating can never
+  stop the normal scheduled withdrawal (locked shares included, through the 30-day rule).
+- **Royalties** on pass resales are enforced (ERC-721C or the built-in resale page), since passes carry fee value.
+- **Supply: 100 passes.** That is also the most members the fund can have.
+- **Site:** shows each member's passes counted, their fee tier and any locked shares with the days left; checks
+  for a pass before the deposit button; check whether MiniPay shows NFTs.
+- **Still invite-based.** The pass does not open the fund to the public; Midas still decides who gets one. It
+  just replaces adding wallets to the list by hand.
 
 ## Kiyoshi Pass (membership NFT) ⚪ optional, later
 
