@@ -12,6 +12,27 @@ you:  y
 bot:  Placed #1 ... (later) #1 entry filled ... (later) #1 CLOSED (tp) +$4.90 + post-trade study
 ```
 
+## Paper trading: prove it before you fund it
+
+Set `PAPER_TRADING=true` and the bot runs exactly the same analysis on **live Hyperliquid prices**, but fills
+are simulated and no order reaches the exchange. It needs no wallet: only `TELEGRAM_BOT_TOKEN`,
+`ANTHROPIC_API_KEY` and `PAPER_TRADING=true` (optionally `PAPER_BALANCE`, default $100).
+
+- Paper trades go to their own journal (`paper.db`), so they never mix with real ones.
+- Fills are modelled conservatively, so paper results flatter the strategy as little as possible:
+  - a limit entry fills only when a 1-minute candle that started after the order trades through it
+  - SL and TP exits pay 0.05% slippage plus taker fees
+  - when a candle touches both SL and TP, the SL wins
+  - the TP isn't counted in the minute the entry fills
+  - hourly funding is charged
+  - a position with no SL is liquidated and its whole margin is lost
+- `/stats` gives the track record: win rate, expectancy per trade, average R-multiple, profit factor and max drawdown.
+  It also says whether the sample is big enough (30+ trades) to trust.
+- `/paperreset 100` restarts the simulated account.
+
+Run paper mode until `/stats` shows positive expectancy over 30+ trades. Then switch `PAPER_TRADING` off and
+add the wallet variables below.
+
 ## Run it from your phone (about 20 minutes, all in a mobile browser)
 
 You need four things: a Telegram bot, a Hyperliquid API wallet, an Anthropic API key, and a
@@ -53,6 +74,7 @@ Each `start` costs a few cents.
 | `y` / `y 1` / `y 2` / `n` | Place the trade / pick long or short when both are shown / discard |
 | `/status` | Balance, positions, pending entries |
 | `/journal` | Recent trades and realized PnL |
+| `/stats` | Track record: win rate, expectancy, R-multiples, profit factor, drawdown |
 | `/close SOL` | Market-close a position |
 | `/cancel` | Cancel all resting orders (the bot re-attaches SL/TP to any open position) |
 | `/mode A` · `/mode B` | Protocol sizing vs capped-risk sizing |
@@ -60,6 +82,7 @@ Each `start` costs a few cents.
 | `/size 80` | Mode A: % of balance used as margin |
 | `/lessons` · `/approve N` · `/reject N` | Rules proposed by post-trade studies |
 | `/pump` | BTC post-pump reversal check now |
+| `/paperreset 100` | Paper mode: restart the simulated account at $100 |
 
 ## How each module maps to Hyperliquid
 
@@ -88,6 +111,6 @@ Claude's analysis does not make losses impossible. Only trade money you can lose
 ```
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pytest
-python -m pytest -q          # offline tests: risk math, levels, full start->close flow with fakes
+python -m pytest -q          # offline tests: risk math, levels, paper fills, stats, full start->close flow
 cp .env.example .env && python main.py
 ```

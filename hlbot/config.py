@@ -39,6 +39,11 @@ class Config:
     anthropic_model: str = field(default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5"))
     anthropic_effort: str = field(default_factory=lambda: os.getenv("ANTHROPIC_EFFORT", "high"))
 
+    # --- paper trading: live prices, simulated fills, no real orders --------
+    paper: bool = field(default_factory=lambda: _b("PAPER_TRADING", False))
+    paper_balance: float = field(default_factory=lambda: _f("PAPER_BALANCE", 100.0))
+    paper_slippage_pct: float = field(default_factory=lambda: _f("PAPER_SLIPPAGE_PCT", 0.05))
+
     # --- runtime -----------------------------------------------------------
     data_dir: str = field(default_factory=lambda: os.getenv("DATA_DIR", "./data"))
     timezone: str = field(default_factory=lambda: os.getenv("TIMEZONE", "UTC"))
@@ -109,13 +114,20 @@ class Config:
     def is_mainnet(self) -> bool:
         return self.network != "testnet"
 
+    @property
+    def network_label(self) -> str:
+        net = "mainnet" if self.is_mainnet else "testnet"
+        if self.paper:
+            return f"PAPER (simulated fills on live {net} prices, no real money)"
+        return "MAINNET (real money)" if self.is_mainnet else "testnet"
+
     def missing(self) -> list[str]:
         out = []
-        for name, val in (
-            ("TELEGRAM_BOT_TOKEN", self.telegram_token),
-            ("HL_ACCOUNT_ADDRESS", self.hl_account_address),
-            ("HL_API_PRIVATE_KEY", self.hl_api_private_key),
-        ):
+        required = [("TELEGRAM_BOT_TOKEN", self.telegram_token)]
+        if not self.paper:  # paper trading needs no wallet
+            required += [("HL_ACCOUNT_ADDRESS", self.hl_account_address),
+                         ("HL_API_PRIVATE_KEY", self.hl_api_private_key)]
+        for name, val in required:
             if not val:
                 out.append(name)
         if not os.getenv("ANTHROPIC_API_KEY"):

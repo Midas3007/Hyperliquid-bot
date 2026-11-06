@@ -25,6 +25,8 @@ def _statuses(resp: dict) -> list[dict]:
 
 
 class Trader:
+    is_paper = False
+
     def __init__(self, cfg: Config, mkt: Market):
         self.cfg = cfg
         self.mkt = mkt
@@ -99,6 +101,9 @@ class Trader:
         return r
 
     # ------------------------------------------------------------------ queries
+    def account(self) -> dict:
+        return self.mkt.account(self.address)
+
     def open_orders(self) -> list[dict]:
         return self.ex.info.frontend_open_orders(self.address)
 

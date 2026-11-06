@@ -30,7 +30,7 @@ from .store import Store
 
 log = logging.getLogger(__name__)
 
-INTERVAL_MS = {"5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 FNG_URL = "https://api.alternative.me/fng/?limit=1"
 DERIBIT_DVOL_URL = "https://www.deribit.com/api/v2/public/get_volatility_index_data"
@@ -182,8 +182,12 @@ class Market:
             start = end - INTERVAL_MS[interval] * n
             return [_candle(c) for c in self.info.candles_snapshot(coin, interval, start, end)]
 
-        ttl = 30 if interval in ("5m", "15m") else 300
+        ttl = 30 if interval in ("1m", "5m", "15m") else 300
         return self._cached(f"c:{coin}:{interval}:{n}", ttl, load)
+
+    def candles_range(self, coin: str, interval: str, start_ms: int, end_ms: int) -> list[dict]:
+        """Uncached candles between two timestamps (used by paper trading to replay price since the last check)."""
+        return [_candle(c) for c in self.info.candles_snapshot(coin, interval, int(start_ms), int(end_ms))]
 
     def book_imbalance(self, coin: str, depth_pct: float = 1.0) -> dict | None:
         try:

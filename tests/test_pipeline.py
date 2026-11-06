@@ -65,6 +65,9 @@ class FakeTrader:
     def __init__(self, mkt):
         self.mkt, self.placed, self.closed = mkt, [], []
 
+    def account(self):
+        return self.mkt.account("0xabc")
+
     def place_bracket(self, coin, side, qty, entry, sl, tp, lev):
         self.placed.append((coin, side, qty, entry, sl, tp, lev))
         return {"entry_oid": 42, "filled_now": False, "statuses": []}

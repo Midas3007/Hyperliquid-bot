@@ -3,7 +3,8 @@
   start ($14)            run the autopilot (Modules 1-7) and get a confirmation card
   start ($14) margin $5  same, with a custom margin amount
   y | y 1 | y 2 | n      confirm / pick long or short / cancel the card
-  /status /journal /close COIN /cancel /mode A|B /risk 15 /size 80 /lessons /approve N /reject N /pump /help
+  /status /journal /stats /close COIN /cancel /mode A|B /risk 15 /size 80 /lessons /approve N /reject N /pump
+  /paperreset 100 (paper mode) /help
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ n - discard the card
 
 /status - balance, positions, pending orders
 /journal - recent trades + realized PnL
+/stats - track record: win rate, expectancy, R-multiples, drawdown
 /close COIN - market-close a position (cancels its TP/SL)
 /cancel - cancel all resting orders
 /mode A or /mode B - protocol sizing vs capped-risk sizing
@@ -37,7 +39,8 @@ n - discard the card
 /size 80 - mode A: % of balance used as margin
 /lessons - rules learned from post-trade studies
 /approve N, /reject N - accept or drop a proposed rule
-/pump - run the BTC post-pump reversal check now"""
+/pump - run the BTC post-pump reversal check now
+/paperreset 100 - paper mode: restart the simulated account at $100"""
 
 START_RE = re.compile(r"^\s*start\b(?:\s*\(\s*\$?\s*([\d.]+)\s*\))?(?:.*?margin\s*\$?\s*([\d.]+))?", re.I)
 YES_RE = re.compile(r"^\s*y(?:es)?\s*([12])?\s*$", re.I)
@@ -114,6 +117,28 @@ class Bot:
     async def cmd_journal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
             await self._reply(update, await asyncio.to_thread(self.engine.journal))
+
+    async def cmd_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, await asyncio.to_thread(self.engine.stats))
+
+    async def cmd_paperreset(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._guard(update):
+            return
+        if not self.engine.paper:
+            await self._reply(update, "Only available in paper mode (PAPER_TRADING=true).")
+            return
+        if self.engine.store.trades("open") or self.engine.store.trades("pending"):
+            await self._reply(update, "Close or cancel the open/pending paper trade first.")
+            return
+        try:
+            v = float(ctx.args[0]) if ctx.args else CFG.paper_balance
+            assert 10 <= v <= 1_000_000
+        except Exception:  # noqa: BLE001
+            await self._reply(update, "Usage: /paperreset 100   ($10 - $1,000,000)")
+            return
+        self.engine.trader.reset(v)
+        await self._reply(update, f"Paper account reset to ${v:,.2f}. /stats now counts from here.")
 
     async def cmd_close(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update):
@@ -235,13 +260,14 @@ class Bot:
             log.exception("oi snapshot failed")
 
     async def on_startup(self, app: Application) -> None:
-        net = "MAINNET (real money)" if CFG.is_mainnet else "testnet"
+        net = CFG.network_label
         await self._push(app, f"Bot online - {net}. Sizing mode {self.engine.mode_label()}. Send /help.")
 
     def run(self) -> None:
         app = Application.builder().token(CFG.telegram_token).post_init(self.on_startup).build()
         for name, fn in {
             "help": self.cmd_help, "start": self.cmd_help, "status": self.cmd_status, "journal": self.cmd_journal,
+            "stats": self.cmd_stats, "paperreset": self.cmd_paperreset,
             "close": self.cmd_close, "cancel": self.cmd_cancel, "mode": self.cmd_mode, "risk": self.cmd_risk,
             "size": self.cmd_size, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump,

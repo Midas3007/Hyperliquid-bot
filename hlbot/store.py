@@ -39,9 +39,9 @@ HARDCODED_LESSONS = [
 
 
 class Store:
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, filename: str = "bot.db"):
         os.makedirs(data_dir, exist_ok=True)
-        self.path = os.path.join(data_dir, "bot.db")
+        self.path = os.path.join(data_dir, filename)
         self._lock = threading.Lock()
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
@@ -87,6 +87,10 @@ class Store:
         if status:
             return self._q("SELECT * FROM trades WHERE status=? ORDER BY id DESC LIMIT ?", (status, limit))
         return self._q("SELECT * FROM trades ORDER BY id DESC LIMIT ?", (limit,))
+
+    def closed_since(self, ts: float) -> list[dict]:
+        """Closed trades (oldest first) closed at or after `ts` - the input for /stats."""
+        return self._q("SELECT * FROM trades WHERE status='closed' AND closed_at>=? ORDER BY closed_at", (ts,))
 
     def trade(self, tid: int) -> dict | None:
         rows = self._q("SELECT * FROM trades WHERE id=?", (tid,))

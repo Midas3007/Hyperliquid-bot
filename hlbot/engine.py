@@ -13,8 +13,8 @@ from .analyst import Analyst
 from .config import Config
 from .levels import build_levels, fmt, nearest
 from .market import Market
+from .stats import format_stats, summarize
 from .store import Store
-from .trader import Trader
 
 log = logging.getLogger(__name__)
 
@@ -35,9 +35,15 @@ def pct(a: float, b: float) -> float:
 class Engine:
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.store = Store(cfg.data_dir)
+        # paper trading keeps its own journal so simulated and real results never mix
+        self.store = Store(cfg.data_dir, "paper.db" if cfg.paper else "bot.db")
         self.mkt = Market(cfg, self.store)
-        self.trader = Trader(cfg, self.mkt)
+        if cfg.paper:
+            from .paper import PaperTrader
+            self.trader = PaperTrader(cfg, self.mkt, self.store)
+        else:
+            from .trader import Trader
+            self.trader = Trader(cfg, self.mkt)
         self.analyst = Analyst(cfg)
         self.pending: Proposal | None = None
         self._last_pump_alert = 0.0
@@ -59,6 +65,10 @@ class Engine:
     def now(self) -> datetime:
         return datetime.now(self.cfg.tz)
 
+    @property
+    def paper(self) -> bool:
+        return bool(getattr(self.trader, "is_paper", False))
+
     def mode_label(self) -> str:
         if self.mode == "A":
             return f"A (protocol: {self.margin_pct:g}% margin, 15-25x)"
@@ -76,7 +86,7 @@ class Engine:
         if self.store.trades("open") or self.store.trades("pending"):
             return "A trade is already open/pending. One at a time - check /status."
 
-        acct = self.mkt.account(self.cfg.hl_account_address)
+        acct = self.trader.account()
         api_bal = acct["account_value"]
         lines = []
         if api_bal <= 0 and acct["spot_usdc"] > 0:
@@ -154,7 +164,7 @@ class Engine:
         return self.pending
 
     def _card(self, head, gate, fng, cand, chosen, verdict, friday) -> str:
-        out = ["CONFIRMATION CARD", *head]
+        out = ["CONFIRMATION CARD" + (" - PAPER TRADE (no real money)" if self.paper else ""), *head]
         if fng:
             out.append(f"Fear & Greed: {fng['value']} ({fng['label']})")
         d = cand.ctx
@@ -230,7 +240,7 @@ class Engine:
             plan={"card": p.text, "option": st.option_brief(opt), "context": p.context},
         )
         state = "FILLED" if res["filled_now"] else "resting"
-        return (f"Placed #{tid}: {s.coin} {s.side.upper()} limit {fmt(s.entry)} x {z.qty:g} ({state}), "
+        return (f"{'[PAPER] ' if self.paper else ''}Placed #{tid}: {s.coin} {s.side.upper()} limit {fmt(s.entry)} x {z.qty:g} ({state}), "
                 f"SL {fmt(s.sl)} / TP {fmt(s.tp)} attached, {z.leverage}x isolated.\n"
                 f"Unfilled entries auto-cancel after {self.cfg.entry_ttl_hours:g}h.")
 
@@ -238,7 +248,7 @@ class Engine:
     def sync(self) -> list[str]:
         """Detect fills/closes, guarantee SL/TP on open positions, run studies."""
         msgs: list[str] = []
-        acct = self.mkt.account(self.cfg.hl_account_address)
+        acct = self.trader.account()
         positions = {p["coin"]: p for p in acct["positions"]}
         orders = self.trader.open_orders()
 
@@ -271,8 +281,9 @@ class Engine:
         return msgs
 
     def _on_closed(self, t: dict) -> list[str]:
-        since = t["filled_at"] or t["created_at"]
-        fills = [f for f in self.trader.fills_since(since - 5) if f["coin"] == t["coin"]]
+        # from order creation, not filled_at: sync notices a fill up to a minute late, which used to drop the
+        # opening fill and its fee. One trade at a time, so no earlier trade's fills fall in this window.
+        fills = [f for f in self.trader.fills_since(t["created_at"] - 5) if f["coin"] == t["coin"]]
         closing = [f for f in fills if "Close" in f.get("dir", "")]
         pnl = sum(float(f.get("closedPnl", 0)) for f in closing) - sum(float(f.get("fee", 0)) for f in fills)
         qty = sum(float(f["sz"]) for f in closing)
@@ -387,8 +398,8 @@ class Engine:
 
     # ----------------------------------------------------------- status
     def status(self) -> str:
-        acct = self.mkt.account(self.cfg.hl_account_address)
-        out = [f"Network: {'MAINNET' if self.cfg.is_mainnet else 'testnet'} | sizing mode {self.mode_label()}",
+        acct = self.trader.account()
+        out = [f"Network: {self.cfg.network_label} | sizing mode {self.mode_label()}",
                f"Account value ${acct['account_value']:.2f} | available ${acct['withdrawable']:.2f}"
                + (f" | spot USDC ${acct['spot_usdc']:.2f}" if acct["spot_usdc"] else "")]
         for p in acct["positions"]:
@@ -398,6 +409,17 @@ class Engine:
         if len(out) == 2:
             out.append("No positions or pending entries.")
         return "\n".join(out)
+
+    def stats(self) -> str:
+        if self.paper:
+            rows = self.store.closed_since(self.trader.reset_at)
+            s = summarize(rows, self.trader.start_balance)
+            label = f"PAPER track record (since reset, start ${self.trader.start_balance:.2f})"
+        else:
+            rows = self.store.closed_since(0)
+            s = summarize(rows)
+            label = "LIVE track record (all closed trades)"
+        return format_stats(s, label)
 
     def journal(self, n: int = 10) -> str:
         rows = [t for t in self.store.trades(limit=50) if t["status"] in ("closed", "open", "pending")][:n]
