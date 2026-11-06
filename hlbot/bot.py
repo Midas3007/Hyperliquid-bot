@@ -1,4 +1,7 @@
-"""Telegram interface - Module 12 command set. Only the chat in TELEGRAM_CHAT_ID can control the bot.
+"""HEVI's Telegram interface - Module 12 command set. Only the chat in TELEGRAM_CHAT_ID can control the bot.
+
+With autopilot on (protocol.toml [autopilot], the v3.1 default) HEVI scans, places, manages and reports on its
+own; the commands below are for watching it, pausing it, or trading by hand.
 
   start ($X)                  pre-flight -> BTC gate -> sweeps -> deep dive -> filters -> rank -> confirmation card
   y | y 1 | y 2               execute (Module 10 checklist). 1 = long, 2 = short when both are shown
@@ -18,7 +21,7 @@ import logging
 import re
 import time
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .config import CFG
@@ -26,9 +29,19 @@ from .engine import Engine, Proposal
 
 log = logging.getLogger(__name__)
 
-HELP = """Hyperliquid compounding bot - Protocol v{v}
+HELP = """HEVI - Hyperliquid trading bot, protocol v{v}
+{mode}
 
-start ($14) - full autopilot run -> confirmation card ($14 = your equity; the API figure is checked)
+Autopilot scans every {scan:g} min (Mon-Thu UTC) and places any setup that passes every rule. You don't need to
+do anything; you'll get a message for every trade and a daily report at {report}:00 UTC.
+
+/status - mode, equity, peak, drawdown, breakers, positions
+/pause - stop opening new trades (open positions stay protected) | /resume
+how is it going - live price, uPnL in $ and R, distance to TP/SL, funding, time left
+review - stats in R (also /review)
+
+Manual trading (works with autopilot paused):
+start ($14) - full run -> confirmation card ($14 = your equity; the API figure is checked)
 y / y 1 / y 2 - place the trade (1 = long, 2 = short when both are shown)
 nah / skip / try another - re-sweep fresh candidates (max 2 per session)
 n - discard the card
@@ -44,6 +57,11 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /lessons - rules and hypotheses; /approve N promotes one (needs 5+ supporting trades and 20 closed)
 /pump - BTC post-pump check now
 /paperreset 100 - paper mode: restart the simulated account"""
+
+COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("review", "Track record in R"),
+            ("journal", "Recent trades"), ("pause", "Stop opening new trades"), ("resume", "Resume autopilot"),
+            ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
+            ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"), ("help", "How HEVI works")]
 
 START_RE = re.compile(r"^\s*start\b(?:\s*\(?\s*\$?\s*([\d.]+)\s*\)?)?(.*)$", re.I)
 YES_RE = re.compile(r"^\s*y(?:es)?\s*([12])?\s*$", re.I)
@@ -83,6 +101,9 @@ class Bot:
         self.engine = Engine(CFG)
         self.chat_id = CFG.telegram_chat_id
         self._busy = asyncio.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._app: Application | None = None
+        self._fills_on = False
 
     # ------------------------------------------------------------ plumbing
     def _authorized(self, update: Update) -> bool:
@@ -151,7 +172,17 @@ class Bot:
     # ------------------------------------------------------------ slash commands
     async def cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
-            await self._reply(update, HELP.format(v=self.engine.P.version))
+            e, A = self.engine, self.engine.P.autopilot
+            await self._reply(update, HELP.format(v=e.P.version, mode=f"Mode: {e.label()}", scan=A.scan_every_min,
+                                                  report=A.report_hour_utc))
+
+    async def cmd_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, self.engine.set_paused(True))
+
+    async def cmd_resume(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, self.engine.set_paused(False))
 
     async def cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
@@ -268,7 +299,8 @@ class Bot:
             await self._reply(update, "Usage: /paperreset 100   ($1 - $1,000,000)")
             return
         e.trader.reset(v)
-        await self._reply(update, f"Paper account reset to ${v:,.2f}. Reviews and breakers now count from here.")
+        await self._reply(update, f"Paper account reset to ${v:,.2f}. Reviews, breakers and the go-live gate now "
+                                  "count from here.")
 
     # ------------------------------------------------------------ jobs
     async def _job(self, ctx: ContextTypes.DEFAULT_TYPE, fns) -> None:
@@ -297,10 +329,56 @@ class Bot:
     async def job_hourly(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await self._job(ctx, [self.engine.hourly])
 
+    async def job_autopilot(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        self._ensure_fill_stream()
+        if self._busy.locked():
+            return
+        async with self._busy:  # a scan and a manual command never interleave
+            await self._job(ctx, [self.engine.autopilot_tick])
+
+    # ------------------------------------------------------------ instant protection on fills
+    def _ensure_fill_stream(self) -> None:
+        """Live mode: subscribe to the account's fills so a (partial) fill gets TP/SL within a second, instead of
+        waiting for the 20-second sync."""
+        if self._fills_on or not self.engine.live or not CFG.hl_account_address:
+            return
+        try:
+            self.engine.mkt.flow.subscribe_extra({"type": "userFills", "user": CFG.hl_account_address}, self._on_fill)
+            self._fills_on = True
+        except Exception:  # noqa: BLE001
+            log.exception("fill stream subscribe failed (20s sync still runs)")
+
+    def _on_fill(self, msg: dict) -> None:
+        if self._loop and self._app and not (msg.get("data") or {}).get("isSnapshot"):
+            asyncio.run_coroutine_threadsafe(self._instant_sync(), self._loop)
+
+    async def _instant_sync(self) -> None:
+        if self._app is None or self._busy.locked():
+            return
+
+        class _Ctx:
+            application = self._app
+
+        await self._job(_Ctx(), [self.engine.sync])
+
     async def on_startup(self, app: Application) -> None:
         e = self.engine
-        await self._push(app, f"Bot online - {CFG.network_label}. Protocol v{e.P.version}, risk {e.user_risk_pct:g}% "
-                              "per trade. Send /help.")
+        self._loop, self._app = asyncio.get_running_loop(), app
+        try:  # the name, description and command menu people see in Telegram
+            if (await app.bot.get_my_name()).name != "HEVI":
+                await app.bot.set_my_name("HEVI")
+            await app.bot.set_my_short_description("HEVI - autonomous Hyperliquid trading bot")
+            await app.bot.set_my_description(
+                "HEVI trades Hyperliquid perpetuals on its own under a strict risk protocol: every trade has its "
+                "stop-loss and take-profit on the exchange, risk is capped per trade, and circuit breakers pause it "
+                "after losses. Only its owner can control it.")
+            await app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
+        except Exception:  # noqa: BLE001
+            log.warning("could not set the bot's Telegram profile (rate limit?) - continuing", exc_info=True)
+        auto = ("autopilot ON: scanning every %g min, Mon-Thu UTC" % e.P.autopilot.scan_every_min
+                if e.autopilot_on else "autopilot PAUSED" if e.paused else "autopilot off")
+        await self._push(app, f"HEVI online - {e.label()}.\nProtocol v{e.P.version}, risk {e.user_risk_pct:g}% per "
+                              f"trade, {auto}. First scan after a {e.P.autopilot.warmup_min:g}-min warm-up. /help")
 
     def run(self) -> None:
         app = Application.builder().token(CFG.telegram_token).post_init(self.on_startup).build()
@@ -309,6 +387,7 @@ class Bot:
             "review": self.cmd_review, "stats": self.cmd_review, "risk": self.cmd_risk, "close": self.cmd_close,
             "cancel": self.cmd_cancel, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
+            "pause": self.cmd_pause, "resume": self.cmd_resume,
         }.items():
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text))
@@ -316,4 +395,5 @@ class Bot:
         jq.run_repeating(self.job_sync, interval=20, first=20)   # partial fills get TP/SL within ~20s
         jq.run_repeating(self.job_pump, interval=900, first=120)
         jq.run_repeating(self.job_hourly, interval=3600, first=30)
+        jq.run_repeating(self.job_autopilot, interval=60, first=45)
         app.run_polling(allowed_updates=Update.ALL_TYPES)

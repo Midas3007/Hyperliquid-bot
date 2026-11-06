@@ -1,4 +1,4 @@
-"""Protocol v3.0 engine. Gathers live data, calls the pure rules in hlbot/rules, and runs:
+"""HEVI's engine (protocol v3.1). Gathers live data, calls the pure rules in hlbot/rules, and runs:
 
   Module 12 autopilot   start ($X) -> pre-flight -> BTC gate -> sweeps -> deep dive -> filters -> rank -> card
   Module 10 execution   'y' -> re-check everything -> Module 13 final check -> post-only bracket -> verify
@@ -6,7 +6,9 @@
   Module 8 breakers     evaluated from the trade log every run, announced automatically
   Module 11 logging     trade log in R (MAE/MFE, fees, funding), skip log with 48h outcomes, reviews
 
-No order is placed without the user's explicit 'y', except protocol-mandated cancels and closes.
+  Autopilot (v3.1)      scans on a schedule and places trades that pass every rule, with no 'y' needed
+
+With autopilot off, no order is placed without the user's 'y', except protocol-mandated cancels and closes.
 """
 
 from __future__ import annotations
@@ -38,7 +40,8 @@ log = logging.getLogger(__name__)
 H = 3600
 DAY = 86400
 MS = {"5m": 300_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
-EXIT_TYPES = ("tp", "sl", "time", "discretion", "override", "friday", "mismatch", "liquidated")
+EXIT_TYPES = ("tp", "sl", "time", "discretion", "early", "override", "friday", "mismatch", "liquidated")
+NEWS_RULE = ("M3", "news")
 
 
 @dataclass
@@ -96,31 +99,78 @@ class Engine:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.P = proto.load(cfg.protocol_path) if cfg.protocol_path else proto.PROTOCOL
-        # paper trading keeps its own journal so simulated and real results never mix
-        self.store = Store(cfg.data_dir, "paper.db" if cfg.paper else "bot.db")
-        self.mkt = Market(cfg, self.store)
-        if cfg.paper:
-            from .paper import PaperTrader
-            self.trader = PaperTrader(cfg, self.mkt, self.store)
-        else:
-            from .trader import Trader
-            self.trader = Trader(cfg, self.mkt)
+        # market history (OI / whale snapshots) is shared by paper and live, so going live never restarts the warm-up
+        self.mkt = Market(cfg, Store(cfg.data_dir, "market.db"))
         self.analyst = Analyst(cfg)
+        graduated = cfg.mode == "prove" and bool(self.mkt.store.get("graduated")) and cfg.has_wallet
+        self._set_trader(cfg.mode == "live" or graduated)
         self._init_state()
+
+    def _set_trader(self, live: bool) -> None:
+        """Paper and live keep separate journals, so simulated and real results never mix."""
+        self.live = live
+        if live:
+            from .trader import Trader
+            self.store = Store(self.cfg.data_dir, "bot.db")
+            self.trader = Trader(self.cfg, self.mkt)
+        else:
+            from .paper import PaperTrader
+            self.store = Store(self.cfg.data_dir, "paper.db")
+            self.trader = PaperTrader(self.cfg, self.mkt, self.store)
 
     def _init_state(self) -> None:
         self.pending: Proposal | None = None
         self.session: dict = {"day": None, "shown": set(), "resweeps": 0, "blocked": [], "stated": None}
         self._alerted: set[str] = set()
         self._last_pump_alert = 0.0
+        self._started = time.time()
+        self._last_scan = 0.0
+        self._scans: dict = {"day": None, "n": 0, "last": None}
+        self._auto_run = False
 
     # ------------------------------------------------------------------ helpers
     @property
     def paper(self) -> bool:
         return bool(getattr(self.trader, "is_paper", False))
 
+    def label(self) -> str:
+        net = "" if self.cfg.is_mainnet else " (testnet)"
+        if self.live:
+            return "LIVE - real money" + net
+        if self.cfg.mode == "prove":
+            return "PROVING - paper trades on live prices until the record earns real money" + net
+        return "PAPER - simulated fills on live prices" + net
+
+    @property
+    def paused(self) -> bool:
+        return bool(self.mkt.store.get("paused", False))
+
+    def set_paused(self, on: bool) -> str:
+        self.mkt.store.set("paused", on)
+        if on:
+            return ("HEVI paused: no new trades. An open position keeps its TP/SL and is still managed "
+                    "(time stop, Friday flatten). /resume to continue.")
+        return "HEVI resumed: autopilot is scanning again."
+
+    @property
+    def autopilot_on(self) -> bool:
+        return self.P.autopilot.enabled and not self.paused
+
     def calendar(self) -> proto.Calendar:
         return proto.load_calendar(self.cfg.calendar_path) if self.cfg.calendar_path else proto.load_calendar()
+
+    def _macro_events(self) -> tuple[list[tuple[str, float]], float | None]:
+        """High-impact US releases: this week's free ForexFactory feed plus calendar.toml.
+        Coverage is the further of the two; no coverage = FAIL (missing data)."""
+        cal = self.calendar()
+        manual = [(e.name, e.ts) for e in cal.macro]
+        try:
+            feed, feed_cov = self.mkt.macro_calendar(tuple(self.P.schedule.macro_events))
+        except Exception as e:  # noqa: BLE001
+            log.warning("macro feed: %s", e)
+            feed, feed_cov = [], None
+        covs = [c for c in (cal.macro_covered_until, feed_cov) if c]
+        return sorted(set(manual + feed), key=lambda x: x[1]), (max(covs) if covs else None)
 
     @property
     def user_risk_pct(self) -> float:
@@ -166,11 +216,11 @@ class Engine:
             else:
                 x["na"]["whale_ls"] = f"only {wh.get('holders', 0)} of the top {wh['accounts_scanned']} accounts hold it"
         use("whale_ls", ratio, mkt.stamp("whales"), "top leaderboard positions")
-        x["whale_24h"] = self.store.whale_at(coin, DAY)
-        oi_then = self.store.oi_at(coin, DAY)
+        x["whale_24h"] = self.mkt.store.whale_at(coin, DAY)
+        oi_then = self.mkt.store.oi_at(coin, DAY)
         use("oi_24h", mx.pct_change(d["oi_usd"], oi_then and oi_then["oi_usd"]), cts, "own hourly OI snapshots",
             zero=False)
-        oi30 = self.store.oi_at(coin, 30 * DAY, tolerance_s=DAY)
+        oi30 = self.mkt.store.oi_at(coin, 30 * DAY, tolerance_s=DAY)
         x["oi_30d"] = mx.pct_change(d["oi_usd"], oi30 and oi30["oi_usd"])
         use("funding_8h", d["funding_8h_pct"], cts, "Hyperliquid hourly funding x 8")
         try:
@@ -266,9 +316,8 @@ class Engine:
         user = self.user_risk_pct
         risk = min(user, P.risk.half_pct, user / 2) if half else user
         hold = sch.planned_hold(now, P.schedule, P.entry)
-        cal = self.calendar()
-        macro, _ = sch.macro_in_window([(e.name, e.ts) for e in cal.macro], cal.macro_covered_until, hold[0], hold[1],
-                                       P.schedule)
+        events, covered = self._macro_events()
+        macro, _ = sch.macro_in_window(events, covered, hold[0], hold[1], P.schedule)
         fng = self.mkt.fear_greed()
         fng_v, why = usable(Datum(fng and fng["value"], "alternative.me F&G", self.mkt.stamp("fng")), now,
                             P.data.stale_after_min, zero_is_missing=False)
@@ -310,7 +359,8 @@ class Engine:
             out.append("Module 1: BTC -4% or worse on the day - no new trades today.")
         out += [f"Module 8: {b}" for b in run.breakers.blocked]
         if run.macro_hits is None:
-            out.append("Module 0: the macro calendar doesn't cover the planned hold - update calendar.toml.")
+            out.append("Module 0: no macro calendar covers the planned hold (feed unreachable and calendar.toml "
+                       "out of date) - missing data = FAIL.")
         return out
 
     def _cancel_stale_orders(self) -> None:
@@ -330,29 +380,26 @@ class Engine:
         ctxs = self.mkt.ctxs()
         pool = [c for c, d in ctxs.items() if d["volume_usd"] > P.screener.sweep1_min_volume_usd]
         self.mkt.flow.ensure(pool)
-        cal = self.calendar()
-        unlock_ev = [(e.coin, e.ts, e.supply_pct) for e in cal.unlocks]
+        cal = self.calendar() if P.screener.unlock_check else None
+        unlock_ev = [(e.coin, e.ts, e.supply_pct) for e in cal.unlocks] if cal else []
         sl_exits = [(e.coin, e.closed_at) for e in self._exits() if e.exit_type in ("sl", "liquidated")]
         rows, notes, cache = [], [], {}
         for c in pool:
             open_ = self.mkt.day_open(c)
             flow = self.mkt.buy_sell(c)
             rows.append(screen.Row(c, ctxs[c]["volume_usd"], flow and flow["ratio"], mx.pct_change(ctxs[c]["mark"], open_)))
-        wh = self.mkt.whales()
 
         def skip(coin: str) -> str | None:
             if coin in exclude:
                 return "shown earlier this session"
             if coin in cache:
                 return cache[coin]
-            row = next(r for r in rows if r.coin == coin)
             fails = screen.auto_skips(
-                P.screener, coin=coin, day_change_pct=row.day_change_pct,
+                P.screener, coin=coin,
                 unlock=screen.unlock_in_window(unlock_ev, cal.unlocks_covered_until, coin, run.hold[0], run.hold[1],
-                                               P.screener),
+                                               P.screener) if cal else None,
                 vol_label=self._vol_label(coin, now),
-                whale_ls=(wh.get(coin) or {}).get("ratio") if (wh.get(coin) or {}).get("holders", 0) >= P.deep_dive.whale_min_holders else None,
-                whale_is_true=True, cooldown=screen.cooldown_until(coin, sl_exits, now, P.screener))
+                cooldown=screen.cooldown_until(coin, sl_exits, now, P.screener))
             if brk.reentry_blocked(coin, run.entries_today, run.band):
                 fails.append(Check("M1", "no re-entries", False, "BTC half-risk band: already traded today", hard=True))
             why = "; ".join(f"{f.rule}: {f.detail}" for f in fails) if fails else None
@@ -528,15 +575,7 @@ class Engine:
         cands, notes = self._screen(run, exclude)
         if not cands:
             return "\n".join(run.lines + ["", "Screener: no coin passes the sweeps and automatic skips."] + notes[:10])
-        news = self._rate_news([c for c, _ in cands], run)
-        self.session["news"] = news
-        evals: list[Eval] = []
-        for coin, tag in cands:
-            try:
-                evals += self._evaluate(coin, tag, run, news.get(coin))
-            except Exception as e:  # noqa: BLE001
-                log.exception("deep dive %s", coin)
-                notes.append(f"{coin}: deep dive failed ({e})")
+        evals = self._deep_dive(cands, run, notes)
         self.session["shown"].update(c for c, _ in cands)
         ok = sorted((e for e in evals if e.ok), key=lambda e: (e.score, e.net_rr), reverse=True)
         for e in evals:
@@ -571,18 +610,48 @@ class Engine:
         runner = next((e for e in ok if e.coin != best.coin), None)
         for p in plans:
             p.runner_up = f"{runner.coin} {runner.side} {runner.score}/6, 1:{runner.net_rr:.2f}" if runner else "none"
-        return self._propose(plans, run, news, stated)
+        return self._propose(plans, run, self.session.get("news") or {}, stated)
+
+    def _deep_dive(self, cands: list[tuple[str, str]], run: Run, notes: list[str]) -> list[Eval]:
+        """Two passes so Claude only reads news where it can change the outcome: every rule except news first,
+        then news ratings for coins whose setup passes everything else (or, with autopilot off, only soft rules)."""
+        def dive(coin: str, tag: str, news) -> list[Eval]:
+            try:
+                return self._evaluate(coin, tag, run, news)
+            except Exception as e:  # noqa: BLE001
+                log.exception("deep dive %s", coin)
+                notes.append(f"{coin}: deep dive failed ({e})")
+                return []
+
+        def worth_news(evs: list[Eval]) -> bool:
+            for e in evs:
+                rest = [c for c in failed(e.checks) if (c.module, c.rule) != NEWS_RULE]
+                if e.plan and (not rest or (not self.autopilot_on and not any(c.hard for c in rest))):
+                    return True
+            return False
+
+        first = {c: dive(c, tag, None) for c, tag in cands}
+        want = [c for c, _ in cands if worth_news(first[c])]
+        news = self._rate_news(want, run) if want else {}
+        self.session["news"] = news
+        out: list[Eval] = []
+        for c, tag in cands:
+            out += dive(c, tag, news[c]) if c in news else first[c]
+        return out
 
     def _propose(self, plans: list[Plan], run: Run, news: dict, stated: float | None) -> Proposal:
         P = self.P
         body = run.lines + [""]
         for i, p in enumerate(plans, 1):
             body.append(render(p, P, run.now, self.paper, i if len(plans) > 1 else None))
-        if len(plans) > 1:
+        if self._auto_run:
+            body.append("HEVI autopilot: every rule passed - placing it now.")
+        elif len(plans) > 1:
             body.append("Reversal signals present: both setups shown. Type  y 1  (long) or  y 2  (short).")
         else:
             body.append('Type "y" to confirm.  (nah / skip / try another = re-sweep, n = discard)')
-        body.append(f"Card expires in {P.execution.card_ttl_min:g} min.")
+        if not self._auto_run:
+            body.append(f"Card expires in {P.execution.card_ttl_min:g} min.")
         self.pending = Proposal(uuid.uuid4().hex[:6], run.now, plans, "\n".join(body), news, stated)
         return self.pending
 
@@ -656,9 +725,10 @@ class Engine:
         acct_pos = self.trader.account()["positions"]
         problems = final_check(fresh, P, now=now, open_positions=len(acct_pos) + len(self.store.trades("open")),
                                pending_entries=len(self.store.trades("pending")), breakers_blocked=run.breakers.blocked,
-                               confirmed_by_user=True)
+                               authorized=True)
         if problems:
             self.pending = None
+            self.store.add_event("hard_block", "; ".join(problems))
             return "Module 13 check failed - not placing:\n" + "\n".join(f"- {b}" for b in problems)
 
         # 2-3. isolated leverage, then exactly the card: ALO limit + reduce-only SL/TP (mark-price triggers)
@@ -931,17 +1001,26 @@ class Engine:
             btc = mx.pct_change(self.mkt.ctxs()["BTC"]["mark"], self.mkt.day_open("BTC"))
         except Exception:  # noqa: BLE001
             btc = None
-        cal = self.calendar()
+        events, _ = self._macro_events()
         end = sch.time_stop_at(t["filled_at"] or now, P.schedule)
-        ahead = [(e.name, e.ts) for e in cal.macro if now <= e.ts <= end and e.name in P.schedule.macro_events]
+        ahead = [(n, ts) for n, ts in events if now <= ts <= end and n in P.schedule.macro_events]
         out = []
         for s in sch.early_exit_suggestions(t["side"], btc, ahead, P.schedule):
             key = f"{t['id']}:{s.split(' ')[0]}:{s[-14:]}"
             if key not in self._alerted:
                 self._alerted.add(key)
-                out.append(f"#{t['id']} {t['coin']} early-exit suggestion: {s}. Your call: /close {t['coin']} to exit "
-                           "(logged as discretion), or hold the bracket.")
+                out.append(self._early_exit(t, s))
         return out
+
+    def _early_exit(self, t: dict, why: str) -> str:
+        """Objective early-exit trigger: autopilot acts on it (exit type 'early', later compared with what the
+        bracket would have made); with autopilot off it is only a suggestion."""
+        if self.autopilot_on and self.P.autopilot.act_on_early_exits:
+            self.store.add_event("early_exit", f"#{t['id']} {t['coin']}: {why}")
+            self._close(t, "early")
+            return f"HEVI closed #{t['id']} {t['coin']} early: {why}. Result follows."
+        return (f"#{t['id']} {t['coin']} early-exit suggestion: {why}. Your call: /close {t['coin']} to exit "
+                "(logged as discretion), or hold the bracket.")
 
     def pump_watch(self) -> str | None:
         P = self.P
@@ -963,14 +1042,14 @@ class Engine:
         self.mkt.record_oi()
         P = self.P
         wh = self.mkt.whales()
-        self.store.add_whales([(c, w["ratio"]) for c, w in wh.items()
-                               if w.get("ratio") is not None and w.get("holders", 0) >= P.deep_dive.whale_min_holders])
+        self.mkt.store.add_whales([(c, w["ratio"]) for c, w in wh.items()
+                                   if w.get("ratio") is not None and w.get("holders", 0) >= P.deep_dive.whale_min_holders])
         self.mkt.flow.ensure([c for c, d in self.mkt.ctxs().items() if d["volume_usd"] > P.screener.sweep1_min_volume_usd])
         for sk in self.store.skips_due(time.time() - P.review.skip_check_after_h * H):
             self.store.set_skip_outcome(sk["id"], self._first_touch(sk["coin"], sk["side"], sk["entry"], sk["sl"], sk["tp"],
                                                                     sk["ts"], sk["ts"] + P.review.skip_check_after_h * H))
         for t in self.store.closed(self._since()):
-            if t.get("exit_type") == "discretion" and t.get("bracket_r") is None and t["filled_at"]:
+            if t.get("exit_type") in ("discretion", "early") and t.get("bracket_r") is None and t["filled_at"]:
                 end = sch.time_stop_at(t["filled_at"], P.schedule)
                 if time.time() >= end:
                     self.store.update_trade(t["id"], bracket_r=self._bracket_r(t, end))
@@ -1029,8 +1108,7 @@ class Engine:
         except Exception:  # noqa: BLE001
             return []
         if r.get("thesis_breaking"):
-            return [f"#{t['id']} {t['coin']} early-exit suggestion: thesis-breaking news - {r['reason']}. "
-                    f"Your call: /close {t['coin']} (logged as discretion)."]
+            return [self._early_exit(t, f"thesis-breaking news - {r['reason']}")]
         return []
 
     # ------------------------------------------------------------------ Module 11 study + review
@@ -1088,6 +1166,124 @@ class Engine:
     def discretion_restricted(self) -> bool:
         return rvw.discretion_restricted(self.logged(), self.P.review)
 
+    # ------------------------------------------------------------------ autopilot (v3.1)
+    def autopilot_tick(self) -> list[str]:
+        """Called every minute. Daily report, go-live gate, self-review after a breaker pause, and - when flat,
+        inside the entry window and due - a full scan whose winning setup is placed without waiting for 'y'."""
+        P, A, now = self.P, self.P.autopilot, time.time()
+        msgs: list[str] = []
+        if not A.enabled:
+            return msgs
+        day = brk.utc_day_start(now)
+        if self._scans["day"] != day:
+            self._scans = {"day": day, "n": 0, "last": None}
+        if time.gmtime(now).tm_hour >= A.report_hour_utc and self.mkt.store.get("report_day") != day:
+            self.mkt.store.set("report_day", day)
+            msgs.append(self.daily_report())
+        msgs += self._maybe_graduate(now)
+        if self.paused or self.pending:
+            return msgs
+        if not sch.entry_window_open(now, P.schedule) or sch.must_be_flat(now, P.schedule):
+            return msgs
+        if self.store.trades("open") or self.store.trades("pending"):
+            return msgs
+        if now - self._started < A.warmup_min * 60 or now - self._last_scan < A.scan_every_min * 60:
+            return msgs
+        self._last_scan = now
+        self._scans["n"] += 1
+        msgs += self._self_review(now)
+        self._auto_run = True
+        try:
+            res = self.start(None)
+            if not isinstance(res, Proposal):
+                self._scans["last"] = _first_reason(res)
+                return msgs
+            card, out = res.text, None
+            for _ in range(2):  # a re-issued card (price moved > 0.3%) gets one more full check
+                plans = self.pending.plans
+                out = self.confirm(None if len(plans) == 1 else _pick(plans))
+                if not isinstance(out, Proposal):
+                    break
+                card = out.text
+            if isinstance(out, Proposal):
+                self.pending = None
+                self._scans["last"] = "price kept moving while placing; next scan will re-check"
+                return msgs
+            self._scans["last"] = out.splitlines()[0]
+            if "Placed #" in out:
+                msgs.append(card + "\n\n" + out)
+            elif any(k in out for k in ("rejected", "Mismatch", "Module 13")):
+                msgs.append("HEVI autopilot could not place a setup:\n" + out)  # problems are worth a message
+            return msgs
+        finally:
+            self._auto_run = False
+            self.pending = None
+
+    def _self_review(self, now: float) -> list[str]:
+        """A breaker that waits for a review (3 straight SLs, after the 48h pause): HEVI runs the review itself.
+        The 50% drawdown stop is different: it also needs a new protocol version, so it stays stopped."""
+        try:
+            eq = self.trader.account()["account_value"]
+        except Exception:  # noqa: BLE001
+            return []
+        st = self._breakers(now, eq, None, self.store.entries_since(brk.utc_day_start(now)))
+        if any("send 'review'" in b for b in st.blocked):
+            return ["HEVI self-review (required after the circuit-breaker pause):\n" + self.review()]
+        return []
+
+    def _maybe_graduate(self, now: float) -> list[str]:
+        """MODE=prove: switch from paper to real money once the paper record passes the go-live gate."""
+        A = self.P.autopilot
+        if self.cfg.mode != "prove" or self.live:
+            return []
+        ok, why = rvw.go_live_ready(self.logged(), A)
+        if not ok:
+            return []
+        day = brk.utc_day_start(now)
+        if not self.cfg.has_wallet:
+            if self.mkt.store.get("graduate_nag") == day:
+                return []
+            self.mkt.store.set("graduate_nag", day)
+            return [f"HEVI's paper record passed the go-live gate ({why}). Add HL_ACCOUNT_ADDRESS and "
+                    "HL_API_PRIVATE_KEY to switch to real money automatically."]
+        if self.store.trades("open") or self.store.trades("pending"):
+            return []  # wait until the paper book is flat
+        self.mkt.store.set("graduated", {"at": now, "why": why, "version": self.P.version})
+        self._set_trader(True)
+        self.store.add_event("go_live", why)
+        return [f"HEVI is going LIVE. Paper record: {why}. The next setup that passes every rule uses real money, "
+                f"sized at {self.user_risk_pct:g}% risk per trade."]
+
+    def go_live_status(self) -> str:
+        if self.live:
+            return "live"
+        if self.cfg.mode == "paper":
+            return "paper only (MODE=paper)"
+        return "go-live gate: " + rvw.go_live_ready(self.logged(), self.P.autopilot)[1]
+
+    def daily_report(self) -> str:
+        now = time.time()
+        day = brk.utc_day_start(now)
+        try:
+            acct = self.trader.account()
+        except Exception as e:  # noqa: BLE001
+            return f"HEVI daily report: account unavailable ({e})"
+        eq = acct["account_value"]
+        peak = max(self.store.peak_equity(self._since()), eq)
+        st = self._breakers(now, eq, None, self.store.entries_since(day))
+        today = [t for t in self.store.closed(max(day, self._since()))]
+        r = sum(t.get("result_r") or 0 for t in today)
+        usd = sum(t.get("pnl") or 0 for t in today)
+        out = [f"HEVI daily report - {time.strftime('%a %d %b', time.gmtime(now))} (UTC)",
+               f"Mode: {self.label()} | {self.go_live_status()}",
+               f"Equity ${eq:,.2f} | peak ${peak:,.2f} | drawdown {st.drawdown_pct:.1f}%",
+               f"Closed today: {len(today)} trade(s), ${usd:+.2f} ({r:+.2f}R)"]
+        for p in acct["positions"]:
+            out.append(f"Open: {p['coin']} {p['side']} {p['size']:g} @ {fmt(p['entry'])}, uPnL ${p['upnl']:+.2f}")
+        out.append(f"Scans today: {self._scans['n']}" + (f" | last: {self._scans['last']}" if self._scans["last"] else ""))
+        out.append(f"Breakers: {st.status()}" + (" | autopilot PAUSED" if self.paused else ""))
+        return "\n".join(out)
+
     # ------------------------------------------------------------------ commands
     def set_risk(self, pct: float) -> str:
         P = self.P
@@ -1124,7 +1320,8 @@ class Engine:
         acct = self.trader.account()
         st = self._breakers(time.time(), acct["account_value"], None, self.store.entries_since(brk.utc_day_start(time.time())))
         peak = max(self.store.peak_equity(self._since()), acct["account_value"])
-        out = [f"Network: {self.cfg.network_label} | protocol v{self.P.version}",
+        out = [f"HEVI - {self.label()} | protocol v{self.P.version} | autopilot "
+               + ("PAUSED" if self.paused else "on" if self.P.autopilot.enabled else "off"),
                f"Equity ${acct['account_value']:.2f} | available ${acct['withdrawable']:.2f} | peak ${peak:.2f} "
                f"(drawdown {st.drawdown_pct:.1f}%)" + (f" | spot USDC ${acct['spot_usdc']:.2f}" if acct.get("spot_usdc") else ""),
                f"Risk {self.user_risk_pct:g}% | breakers: {st.status()}"]
@@ -1158,6 +1355,22 @@ class Engine:
                     self.store.add_event("discretion", f"#{t['id']} {coin}: {reason}")
         self.trader.close(coin)
         return f"{coin} market close sent (logged as a discretionary exit). Result, R and study will follow."
+
+
+def _pick(plans: list[Plan]) -> int:
+    """Two setups on one coin (reversal signals): the higher score, then net R/R; long is the default on a tie."""
+    best = max(range(len(plans)), key=lambda i: (plans[i].score, plans[i].sizing.net_rr, plans[i].side == "long"))
+    return best + 1
+
+
+def _first_reason(text: str) -> str:
+    """One line for the daily report: why the last scan placed nothing."""
+    lines = [ln.strip() for ln in str(text).splitlines() if ln.strip()]
+    for i, ln in enumerate(lines):
+        if ln.startswith(("No trade today", "Screener:")):
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            return (ln + " " + nxt).strip()[:200]
+    return (lines[-1] if lines else "no result")[:200]
 
 
 def _plan_json(p: Plan) -> dict:

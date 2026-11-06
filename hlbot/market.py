@@ -6,7 +6,8 @@ Hyperliquid stand-ins for Bybit/Bitget metrics (see PROTOCOL.md, "Hyperliquid ma
   * whale L/S       -> live positions of the largest accounts on Hyperliquid's public leaderboard
   * volatility      -> Deribit DVOL percentile (BTC/ETH IV), 30-day realized-vol percentile otherwise (RV)
   * OI / whale trend -> snapshots recorded hourly by this bot (history builds up over time)
-  * news            -> public RSS feeds filtered by coin
+  * news            -> public crypto RSS feeds + a per-coin Google News RSS search (no API key)
+  * macro calendar  -> ForexFactory's free weekly calendar feed (CPI / FOMC / NFP), calendar.toml as fallback
   * MMR             -> Hyperliquid margin tables (maintenance rate = 1 / (2 x max leverage of the tier))
   * fees            -> the account's own rates from the userFees endpoint
 
@@ -46,7 +47,16 @@ RSS_FEEDS = [
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "https://decrypt.co/feed",
     "https://bitcoinmagazine.com/.rss/full/",
+    "https://www.theblock.co/rss.xml",
+    "https://cryptoslate.com/feed/",
+    "https://bitcoinist.com/feed/",
+    "https://www.newsbtc.com/feed/",
+    "https://cryptopotato.com/feed/",
 ]
+GOOGLE_NEWS_URL = "https://news.google.com/rss/search"
+FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+# How each protocol event name appears in the ForexFactory feed (US, high impact)
+FF_EVENTS = {"CPI": ("CPI",), "FOMC": ("FOMC", "Federal Funds Rate"), "NFP": ("Non-Farm Employment Change",)}
 COIN_NAMES = {
     "BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "XRP": "Ripple", "DOGE": "Dogecoin",
     "HYPE": "Hyperliquid", "SUI": "Sui", "AVAX": "Avalanche", "LINK": "Chainlink", "ADA": "Cardano",
@@ -56,7 +66,43 @@ COIN_NAMES = {
     "TIA": "Celestia", "SEI": "Sei", "INJ": "Injective", "FET": "Fetch.ai", "BONK": "Bonk",
     "TRUMP": "TRUMP", "FARTCOIN": "Fartcoin", "PUMP": "Pump.fun", "XPL": "Plasma", "WLD": "Worldcoin",
 }
-UA = {"User-Agent": "Mozilla/5.0 (hl-compounding-bot)"}
+UA = {"User-Agent": "Mozilla/5.0 (HEVI trading bot)"}
+
+
+def parse_rss(content: bytes, source: str) -> list[dict]:
+    """RSS items -> [{title, summary, ts, source}]. Google News titles end in ' - Publisher'; that is kept as source."""
+    out = []
+    for it in ET.fromstring(content).iter("item"):
+        title = (it.findtext("title") or "").strip()
+        src = (it.findtext("source") or "").strip() or source
+        if src != source and title.endswith(" - " + src):
+            title = title[: -len(src) - 3].strip()
+        desc = re.sub(r"<[^>]+>", " ", it.findtext("description") or "")[:400]
+        try:
+            ts = parsedate_to_datetime(it.findtext("pubDate") or "").timestamp()
+        except Exception:  # noqa: BLE001
+            ts = 0
+        out.append({"title": title, "summary": " ".join(desc.split()), "ts": ts, "source": src})
+    return out
+
+
+def parse_ff_calendar(rows: list[dict], names: tuple) -> list[tuple[str, float]]:
+    """ForexFactory weekly feed -> [(protocol event name, utc ts)] for high-impact US releases."""
+    from datetime import datetime
+
+    out = []
+    for r in rows:
+        if r.get("country") != "USD" or str(r.get("impact", "")).lower() != "high":
+            continue
+        title = r.get("title", "")
+        name = next((n for n in names if any(k.lower() in title.lower() for k in FF_EVENTS.get(n, ()))), None)
+        if not name:
+            continue
+        try:
+            out.append((name, datetime.fromisoformat(r["date"]).timestamp()))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
 
 
 def _candle(c: dict) -> dict:
@@ -82,8 +128,15 @@ class FlowCollector:
         self._trades: dict[str, deque] = defaultdict(deque)
         self._since: dict[str, float] = {}
         self._subs: dict[str, int] = {}
+        self._extra: list[tuple[dict, object]] = []  # e.g. the account's fill stream
         self._last_msg = 0.0
         self._lock = threading.Lock()
+
+    def subscribe_extra(self, sub: dict, cb) -> None:
+        """Extra websocket subscription that is re-made after every reconnect."""
+        self._extra.append((sub, cb))
+        if self._info is not None:
+            self._info.subscribe(sub, cb)
 
     def _on_trades(self, msg: dict) -> None:
         now = time.time()
@@ -106,6 +159,11 @@ class FlowCollector:
         if self._info is None:
             self._info = Info(self.base_url, skip_ws=False)
             self._last_msg = time.time()
+            for sub, cb in self._extra:
+                try:
+                    self._info.subscribe(sub, cb)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("subscribe %s failed: %s", sub, e)
         for coin in coins:
             if coin in self._subs:
                 continue
@@ -244,13 +302,14 @@ class Market:
             try:
                 f = self.info.user_fees(address)
                 return Fees(float(f["userAddRate"]) * 100, float(f["userCrossRate"]) * 100, P.fees.slippage_pct,
-                            "your Hyperliquid fee tier")
+                            "your Hyperliquid fee tier", P.fees.slippage_on_tp)
             except Exception as e:  # noqa: BLE001
                 log.warning("userFees: %s", e)
                 return None
 
         got = self._cached(f"fees:{address}", 600, load) if address else None
-        return got or Fees(P.fees.maker_pct, P.fees.taker_pct, P.fees.slippage_pct, "base-tier default")
+        return got or Fees(P.fees.maker_pct, P.fees.taker_pct, P.fees.slippage_pct, "base-tier default",
+                           P.fees.slippage_on_tp)
 
     def account(self, address: str) -> dict:
         st = self.info.user_state(address)
@@ -363,31 +422,72 @@ class Market:
         return self._cached("whales", self.cfg.whale_cache_min * 60, load)
 
     def news(self, coin: str, limit: int = 5) -> list[dict]:
+        """Latest headlines about `coin`, newest first: general crypto RSS feeds plus a Google News search."""
         def load_all():
             items = []
             for url in RSS_FEEDS:
                 try:
-                    root = ET.fromstring(self._http.get(url, timeout=10).content)
+                    items += parse_rss(self._http.get(url, timeout=10).content, url.split("/")[2])
                 except Exception as e:  # noqa: BLE001
                     log.info("rss %s: %s", url, e)
-                    continue
-                for it in root.iter("item"):
-                    title = (it.findtext("title") or "").strip()
-                    desc = re.sub(r"<[^>]+>", " ", it.findtext("description") or "")[:400]
-                    try:
-                        ts = parsedate_to_datetime(it.findtext("pubDate") or "").timestamp()
-                    except Exception:  # noqa: BLE001
-                        ts = 0
-                    items.append({"title": title, "summary": " ".join(desc.split()), "ts": ts, "source": url.split("/")[2]})
-            items.sort(key=lambda x: x["ts"], reverse=True)
             return items
 
         sym = base_symbol(coin)
         name = COIN_NAMES.get(sym)
+
+        def load_google():
+            q = f'"{name}" crypto when:2d' if name else f'"{sym}" crypto when:2d'
+            try:
+                r = self._http.get(GOOGLE_NEWS_URL, params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+                                   timeout=10)
+                return parse_rss(r.content, "news.google.com")
+            except Exception as e:  # noqa: BLE001
+                log.info("google news %s: %s", coin, e)
+                return []
+
         pat = re.compile(rf"\b{re.escape(sym)}\b" + (rf"|\b{re.escape(name)}\b" if name else ""), re.I if name else 0)
-        out = [i for i in self._cached("rss", 600, load_all) if pat.search(i["title"]) or pat.search(i["summary"])]
+        pool = self._cached("rss", 600, load_all) + self._cached(f"gnews:{coin}", 600, load_google)
+        seen, out = set(), []
+        for i in sorted(pool, key=lambda x: x["ts"], reverse=True):
+            key = re.sub(r"\W+", " ", i["title"].lower()).strip()
+            if key in seen or not (pat.search(i["title"]) or pat.search(i["summary"])):
+                continue
+            seen.add(key)
+            out.append(i)
         return [{"title": i["title"], "summary": i["summary"][:200], "age_h": round((time.time() - i["ts"]) / 3600, 1),
                  "source": i["source"]} for i in out[:limit]]
+
+    def macro_calendar(self, names: tuple) -> tuple[list[tuple[str, float]], float | None]:
+        """This week's high-impact US releases from ForexFactory's free feed, and how far that covers.
+        Entries are Mon-Thu and every hold ends by Friday 20:00 UTC, so this week's calendar covers any hold."""
+        def load():
+            try:
+                rows = self._http.get(FF_CALENDAR_URL, timeout=15).json()
+            except Exception as e:  # noqa: BLE001
+                log.warning("macro calendar feed: %s", e)
+                return None
+            if not isinstance(rows, list) or not rows:
+                return None
+            return parse_ff_calendar(rows, names), rows
+
+        got = self._cached("ffcal", 3600, load)
+        if got is None:
+            self._cache.pop("ffcal", None)
+            return [], None
+        events, rows = got
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        monday = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        friday_flat = monday + timedelta(days=4, hours=20)
+        dates = []
+        for r in rows:
+            try:
+                dates.append(datetime.fromisoformat(r["date"]).astimezone(timezone.utc))
+            except Exception:  # noqa: BLE001
+                pass
+        # the feed must actually be this week's (not a stale copy) to count as coverage
+        current = any(monday - timedelta(days=1) <= d <= friday_flat for d in dates) and now.weekday() < 5
+        return events, (friday_flat.timestamp() if current else None)
 
     # -- OI history ----------------------------------------------------------
     def record_oi(self) -> None:

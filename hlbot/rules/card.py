@@ -56,7 +56,7 @@ def render(p: Plan, P: Protocol, now: float, paper: bool, index: int | None = No
             "micro": f"Micro {z.risk_pct:.1f}% (forced by the ${P.exchange.min_order_usd:g} minimum)"}[z.risk_mode]
     stop = schedule.time_stop_at(now + P.entry.cancel_after_h * 3600, P.schedule)
     tag = f"[{index}] " if index else ""
-    head = f"# {tag}Open Limit Order - Protocol v{P.version} (Hyperliquid)" + (" - PAPER" if paper else "")
+    head = f"# {tag}HEVI - Open Limit Order - Protocol v{P.version} (Hyperliquid)" + (" - PAPER" if paper else "")
     lines = [
         head,
         "--------------------------",
@@ -75,7 +75,8 @@ def render(p: Plan, P: Protocol, now: float, paper: bool, index: int | None = No
         f"Risk @ SL:   ~${z.loss_at_sl:,.2f} ({z.loss_at_sl / p.equity * 100:.1f}% of equity, costs incl.)",
         f"Net @ TP:    ~${z.net_reward:,.2f} (+{z.net_reward / p.equity * 100:.1f}% of equity)",
         f"Net R/R:     1:{z.net_rr:.2f} OK",
-        f"Costs:       fees ~${z.entry_fee + z.exit_fee_tp:.2f} ({p.fees.source}) | funding ~${z.funding_cost:.2f} (48h)",
+        f"Costs:       fees ~${z.entry_fee + z.exit_fee_tp:.2f} ({p.fees.source}) | TP slippage ~${z.slippage_tp:.2f} | "
+        f"funding ~${z.funding_cost:.2f} (48h)",
         f"Time stop:   {_when(stop)} UTC latest (48h after fill / Fri {P.schedule.friday_flat_hour}:00 UTC)",
         f"Risk mode:   {mode} | Breakers: {p.breakers}",
         f"Setup score: {p.score}/6" + (f" ({', '.join(p.score_points)})" if p.score_points else "")
@@ -94,12 +95,13 @@ def render(p: Plan, P: Protocol, now: float, paper: bool, index: int | None = No
 
 
 def final_check(p: Plan, P: Protocol, *, now: float, open_positions: int, pending_entries: int,
-                breakers_blocked: list[str], confirmed_by_user: bool) -> list[str]:
-    """Module 13 hard rules, re-checked on the exact order about to be sent. Overrides never bypass these."""
+                breakers_blocked: list[str], authorized: bool) -> list[str]:
+    """Module 13 hard rules, re-checked on the exact order about to be sent. Overrides never bypass these.
+    `authorized`: the user typed 'y', or autopilot is on (v3.1)."""
     z, r = p.sizing, P.risk
     bad = []
-    if not confirmed_by_user:
-        bad.append("no explicit 'y' from the user")
+    if not authorized:
+        bad.append("not authorized: no 'y' from the user and autopilot is off")
     if not (p.sl and p.tp):
         bad.append("TP and SL must be attached at entry")
     if open_positions or pending_entries:

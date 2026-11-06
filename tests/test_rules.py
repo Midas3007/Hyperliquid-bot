@@ -81,6 +81,10 @@ def test_sweeps_walk_past_skips():
     out = screen.sweeps(rows, s, skip=lambda c: "skip" if c == "A" else None)
     # sweep 1 (vol > $50M, by buy/sell): A skipped, D too small -> B, C. Sweep 2 (vol > $100M, by day change): E.
     assert out == [("B", "sweep 1: buy/sell"), ("C", "sweep 1: buy/sell"), ("E", "sweep 2: momentum")]
+    # sweep 3 (v3.1): heaviest sell flow, so trend shorts can be found
+    rows += [screen.Row("G", 60e6, 0.3, -2.0), screen.Row("H", 60e6, 0.6, -1.0), screen.Row("I", 30e6, 0.1, -5.0)]
+    out = screen.sweeps(rows, s, skip=lambda c: None)
+    assert [c for c, tag in out if tag == "sweep 3: sell flow"] == ["G", "H"]
 
 
 def test_cooldowns_same_for_every_coin():
@@ -96,15 +100,16 @@ def test_cooldowns_same_for_every_coin():
 
 def test_auto_skips():
     s = P.screener
-    kw = dict(day_change_pct=1.0, unlock=(False, "none"), vol_label="NORMAL", whale_ls=1.8, whale_is_true=True,
-              cooldown=None)
-    assert screen.auto_skips(s, coin="SOL", **kw) == []
+    kw = dict(unlock=None, vol_label="NORMAL", cooldown=None)
+    assert screen.auto_skips(s, coin="SOL", **kw) == []  # v3.1: unlock check off, so missing unlock data is fine
     assert screen.auto_skips(s, coin="USDE", **kw)[0].rule == "stablecoin"
-    assert screen.auto_skips(s, coin="SOL", **{**kw, "day_change_pct": -8.5})[0].rule == "down > 8%"
-    assert screen.auto_skips(s, coin="SOL", **{**kw, "unlock": None})[0].hard  # no unlock data = FAIL
+    assert screen.auto_skips(s, coin="kPEPE", **kw) == []
     x = screen.auto_skips(s, coin="SOL", **{**kw, "vol_label": "EXTREME"})[0]
     assert x.rule == "EXTREME volatility" and x.hard
-    assert screen.auto_skips(s, coin="SOL", **{**kw, "whale_ls": 0.9})[0].rule == "whale L/S < 1:1"
+    assert screen.auto_skips(s, coin="SOL", **{**kw, "cooldown": (TUE, "SL 2h ago")})[0].rule == "cooldown"
+    on = dataclasses.replace(s, unlock_check=True)
+    assert screen.auto_skips(on, coin="SOL", **kw)[0].hard  # with the check on, no unlock data = FAIL
+    assert screen.auto_skips(on, coin="SOL", **{**kw, "unlock": (True, "unlock 2%")})[0].rule == "token unlock"
     ev = [("SUI", TUE + 30 * 3600, 2.0), ("SUI", TUE + 10 * 86400, 5.0), ("ETH", TUE + 3600, 9.0)]
     assert screen.unlock_in_window(ev, TUE + 5 * 86400, "SUI", TUE, TUE + 10 * 3600, s)[0] is True  # hold + 24h
     assert screen.unlock_in_window(ev, TUE + 5 * 86400, "SOL", TUE, TUE + 10 * 3600, s)[0] is False
@@ -153,14 +158,17 @@ def lv(price, method, name, tf="4h"):
     return Level(price, method, tf, name)
 
 
-def test_entry_confluence_needs_all_four_methods():
+def test_entry_confluence_needs_three_of_four_methods():
     e = P.entry
+    assert e.min_methods == 3
     five = [lv(99.60, "BB", "lower", "5m"), lv(99.62, "VWAP", "-1sd", "5m"), lv(99.58, "FIB", "S1", "5m"),
             lv(99.64, "VP", "VAL", "5m"), lv(98.0, "BB", "mid", "5m")]
     c, _ = bracket.entry_confluence(five, 100.0, "long", e)
-    assert c and c.methods == ("BB", "FIB", "VP", "VWAP") and c.price == pytest.approx(99.61)
-    c, why = bracket.entry_confluence(five[:3], 100.0, "long", e)
-    assert c is None and "4 of" in why
+    assert c and c.methods == ("BB", "FIB", "VP", "VWAP") and c.price == pytest.approx(99.61)  # 4 beats 3
+    c, _ = bracket.entry_confluence(five[:3], 100.0, "long", e)
+    assert c and c.methods == ("BB", "FIB", "VWAP")
+    c, why = bracket.entry_confluence(five[:2], 100.0, "long", e)
+    assert c is None and "3 of" in why
     far = [dataclasses.replace(x, price=x.price - 1.0) for x in five[:4]]  # ~1.4% away > 1% proximity
     assert bracket.entry_confluence(far, 100.0, "long", e)[0] is None
     assert bracket.entry_confluence(five, 100.0, "short", e)[0] is None  # nothing above price
@@ -368,16 +376,35 @@ def plan(**kw):
 def test_card_and_final_check():
     p = plan()
     text = render(p, P, TUE, paper=True)
-    for s in ("Protocol v3.0", "PAPER", "post-only (ALO)", "Isolated", "Leverage:    22x", "Net R/R:     1:3.09",
-              "mark-price trigger", "Risk mode:   Normal 10%"):
+    for s in ("HEVI", "Protocol v3.1", "PAPER", "post-only (ALO)", "Isolated", "Leverage:    22x", "Net R/R:     1:3.06",
+              "mark-price trigger", "Risk mode:   Normal 10%", "TP slippage ~$0.08"):
         assert s in text, s
     assert final_check(p, P, now=TUE + 60, open_positions=0, pending_entries=0, breakers_blocked=[],
-                       confirmed_by_user=True) == []
+                       authorized=True) == []
     bad = final_check(p, P, now=TUE + 20 * 60, open_positions=1, pending_entries=0, breakers_blocked=["SL today"],
-                      confirmed_by_user=False)
+                      authorized=False)
     assert len(bad) == 5  # no y, open position, breaker, stale card data, stale equity - and nothing else
     fri = ts(2026, 11, 13, 9)
     assert any("Friday" in b for b in final_check(plan(data_ts=fri, equity_ts=fri), P, now=fri, open_positions=0,
-                                                  pending_entries=0, breakers_blocked=[], confirmed_by_user=True))
+                                                  pending_entries=0, breakers_blocked=[], authorized=True))
     assert any("4H level" in b for b in final_check(plan(tp_label="1d BB upper"), P, now=TUE, open_positions=0,
-                                                    pending_entries=0, breakers_blocked=[], confirmed_by_user=True))
+                                                    pending_entries=0, breakers_blocked=[], authorized=True))
+
+
+def test_go_live_gate():
+    a = P.autopilot
+    ok, why = review.go_live_ready([lt(3.0)] * 5, a)
+    assert not ok and "5/20" in why
+    ok, _ = review.go_live_ready([lt(3.0)] * 6 + [lt(-1.0, "sl")] * 14, a)  # +0.2R/trade, PF 1.29
+    assert ok
+    ok, why = review.go_live_ready([lt(3.0)] * 5 + [lt(-1.0, "sl")] * 15, a)  # 0R/trade
+    assert not ok and "expectancy" in why
+    ok, why = review.go_live_ready([lt(0.3)] * 10 + [lt(-0.25, "sl")] * 10, a)  # +0.025R/trade
+    assert not ok
+
+
+def test_early_exits_reviewed_against_bracket():
+    s = review.summarize([lt(-0.4, "early", bracket_r=-1.0), lt(0.5, "early", bracket_r=3.0)], P.review, P.risk)
+    e = s["early"]
+    assert (e["n"], e["compared"]) == (2, 2) and e["actual_r"] == pytest.approx(0.1) and e["bracket_r"] == 2.0
+    assert "Early exits (objective triggers) 2" in review.format_review(s, "R", P.review)

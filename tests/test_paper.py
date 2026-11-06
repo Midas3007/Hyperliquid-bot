@@ -41,7 +41,7 @@ def bar(t_ms, h, lo):
 def pt(tmp_path, monkeypatch):
     clock = Clock(T0)
     monkeypatch.setattr(paper_mod, "time", clock)
-    cfg = Config(data_dir=str(tmp_path), paper=True, paper_balance=100.0)  # fees + 0.05% slippage from protocol.toml
+    cfg = Config(data_dir=str(tmp_path), mode="paper", paper_balance=100.0)  # fees + 0.05% slippage from protocol.toml
     store = Store(cfg.data_dir, "paper.db")
     tr = PaperTrader(cfg, PMkt(), store)
     tr.clock = clock

@@ -1,11 +1,21 @@
-# Futures Challenge Protocol v3.0 — Hyperliquid
+# HEVI — Futures Challenge Protocol v3.1 — Hyperliquid
 
 2026-11-06 · @Midas · adapted from Bybit v2.0 (canonical) and Bitget v2.1 ($1 micro phase)
 
-This is the human-readable spec. The bot enforces it through the rules engine in `hlbot/rules/`: pure, unit-tested
-functions. Every threshold lives in one file, `protocol.toml`. Scheduled events (macro releases, token unlocks) live
-in `calendar.toml`. Where v2.0 and v2.1 differ, v2.1's logic is used, and when a conflict remains **the stricter
-rule wins**. Values marked **[Qn]** are defaults waiting on an answer in [Open questions](#open-questions).
+This is the human-readable spec that HEVI runs. HEVI enforces it through the rules engine in `hlbot/rules/`: pure,
+unit-tested functions. Every threshold lives in one file, `protocol.toml`. Where v2.0 and v2.1 differ, v2.1's logic
+is used, and when a conflict remains **the stricter rule wins**. Every v3.0 open question is now settled; see
+[Decisions](#decisions-v31).
+
+**v3.1 in one paragraph:**
+
+- **Autopilot.** HEVI trades on its own: no `y`, no input.
+- **Every rule stays.** A trade still has to pass every filter, the sizing and the Module 13 final check.
+  Autopilot never uses overrides.
+- **Prove, then live.** By default HEVI paper-trades until its record shows an edge, then switches to real money
+  by itself.
+- **Token-unlock skip dropped**, by your decision.
+- **Everything else** follows the recommendations below.
 
 | Module | Code | Tests |
 |---|---|---|
@@ -21,16 +31,16 @@ rule wins**. Values marked **[Qn]** are defaults waiting on an answer in [Open q
 | 9 Management | `rules/schedule.py`, `engine.manage` | `test_schedule_windows`, `test_time_stop_*` |
 | 10 Execution | `engine.confirm`, `engine._post_fill` | `test_full_flow_*`, `test_reissue_*` |
 | 11 Logging and review | `store.py`, `rules/review.py` | `test_review_and_recalibration` |
-| 12 Autopilot and commands | `engine.start/resweep/override`, `bot.parse` | `test_pipeline` |
+| 12 Autopilot and commands | `engine.autopilot_tick`, `engine.start/resweep/override`, `bot.parse` | `test_pipeline::test_autopilot_*` |
 | 13 Hard rules | `rules/card.final_check` (runs on the exact order, overrides can't bypass it) | `test_card_and_final_check` |
 
 ---
 
 ## Role, goal and conventions
 
-The bot proposes and calculates, the rules decide, and you confirm. If a rule blocks a trade, the bot names the
-rule and stops. "No trade today" is a valid, complete result. The goal is $1,000 equity, through maximum long-run
-compounded growth without ruin.
+HEVI calculates, the rules decide, and HEVI acts. You watch, and can `/pause` at any time. If a rule blocks a
+trade, HEVI logs which rule and moves on. "No trade today" is a valid, complete result. The goal is $1,000 equity,
+through maximum long-run compounded growth without ruin.
 
 - **UTC everywhere.** Days, windows and "daily change" (% from the 00:00 UTC open) are all UTC. v1's `TIMEZONE`
   setting is gone.
@@ -39,7 +49,7 @@ compounded growth without ruin.
 - **R** = the dollar loss if the SL hits, fees and slippage included. Every result is logged in R.
 - **Missing, stale (older than 15 min), zero or null data = FAIL** for that check. The bot never estimates a
   missing value. Failing on missing data is a hard failure: no override can pass it.
-- Every number on a card is recomputed from live data, and recomputed again when you type `y`.
+- Every number on a card is recomputed from live data, and recomputed again right before the order is sent.
 - Claude never sets prices, sizes, leverage or direction, and never picks the trade. Ranking is deterministic.
   Claude rates news headlines, writes the post-trade study as a hypothesis, and flags thesis-breaking news on an
   open position.
@@ -50,18 +60,18 @@ compounded growth without ruin.
 
 - **Equity** = perp account value from `clearinghouseState` (`marginSummary.accountValue`). Available =
   `withdrawable`. Spot USDC doesn't count; move it Spot → Perps. A dedicated sub-account is recommended as the
-  challenge firewall **[Q15]**.
+  challenge firewall.
 - **Volatility source**, labelled on every card: BTC and ETH use Deribit DVOL percentile (**IV**). Everything else
   uses the 30-day realized-volatility percentile (**RV**). A 0 reading = missing data.
 - **Whale L/S** = live positions of the 60 largest Hyperliquid leaderboard accounts (by account value), weighted
-  by notional. With fewer than 5 of them holding the coin, it's N/A **[Q2]**. Hyperliquid has no all-accounts
+  by notional. With fewer than 5 of them holding the coin, it's N/A. Hyperliquid has no all-accounts
   ratio, so Crowd L/S is always N/A and its rules never apply.
 - **Fees** come from your account's `userFees` rates (maker = `userAddRate`, taker = `userCrossRate`). The
   fallback is the base tier: 0.015% maker / 0.045% taker.
 - **API key:** an API (agent) wallet can trade but cannot withdraw. Your main wallet's key never goes into the
   bot, and the bot never logs secrets.
 
-**Every session (`start`):**
+**Every scan (autopilot every 30 min, or `start`):**
 
 1. Confirm equity from the API. If your stated `$X` differs by more than 5%, the bot sizes on the lower number and
    says so.
@@ -69,9 +79,11 @@ compounded growth without ruin.
    cancelled.
 3. Check circuit breakers (Module 8).
 4. Check the trading window (Module 9).
-5. Check high-impact US releases (CPI, FOMC, NFP) inside the planned hold, using `calendar.toml`.
-   - If one falls inside the hold, the bot skips. This is a soft block, so you can override it.
-   - If the calendar doesn't cover the hold, it fails: missing data **[Q16]**.
+5. Check high-impact US releases (CPI, FOMC, NFP) inside the planned hold.
+   - Sources: the free ForexFactory weekly feed, which covers every possible hold because holds end by Friday
+     20:00 UTC, plus `calendar.toml` as a manual fallback.
+   - If a release falls inside the hold, HEVI skips. Overriding is manual-only.
+   - If neither source covers the hold, it fails as missing data.
 
 ## Module 1 — BTC gate
 
@@ -87,10 +99,10 @@ x = BTC perp % change from today's 00:00 UTC daily-candle open. The gate is re-c
 **Post-pump check.** Reversal risk is flagged when 2 or more of these hold:
 
 - funding is at least 0.03%/8h and rising (the latest hourly rate is above the average of the 8 before it)
-- OI is up at least 2% in 24h while the last completed 4H candle moved less than 0.5% **[Q7]**
+- OI is up at least 2% in 24h while the last completed 4H candle moved less than 0.5%
 - the last completed 4H or 1D candle shows a rejection wick at structural resistance (upper wick at least 50% of
   the candle's range, high within 0.2% of the level, close back below it)
-- whale L/S is up at least 10% versus 24h ago **[Q7]**
+- whale L/S is up at least 10% versus 24h ago
 
 Inputs that are N/A can't raise a flag, and the card lists them.
 
@@ -100,19 +112,25 @@ Inputs that are N/A can't raise a flag, and the card lists them.
 
 Run in the same order every session:
 
-- **Sweep 1:** highest taker buy/sell ratio, 24h notional volume above $50M, top 5 **[Q8]**.
+- **Sweep 1:** highest taker buy/sell ratio, 24h notional volume above $50M, top 5.
 - **Sweep 2:** strongest momentum (UTC-day % change, positive only), volume above $100M, top 3.
+- **Sweep 3 (v3.1):** heaviest sell flow (lowest buy/sell ratio), volume above $50M, top 3. Shorts mirror sweep 1,
+  so trend shorts can be found.
 - Each sweep walks down its ranking past automatically skipped coins until it has its quota.
 
 **Automatic skips:**
 
 - stablecoins
-- down more than 8% on the UTC day
-- a token unlock of at least 1% of circulating supply inside the hold window + 24h. No unlock data = FAIL **[Q1]**
 - EXTREME volatility (85th percentile or higher; a hard rule)
-- true whale L/S below 1:1
 - coin on cooldown
 - in the BTC half-risk band, a coin already traded today
+
+**Moved or dropped in v3.1:**
+
+- "Down more than 8%" and "true whale L/S below 1:1" now apply per direction through the Module 3 hard filters.
+  Longs are filtered exactly as before; shorts get the mirrored versions.
+- The token-unlock skip is off (`unlock_check = false`, your decision). Setting it to `true` brings back the
+  `calendar.toml` check.
 
 **Cooldowns, the same for every coin:**
 
@@ -130,12 +148,12 @@ Every input carries a source and a timestamp.
 | Price, UTC-day change | mark price (asset contexts); 1D candle open at 00:00 UTC |
 | 14-day ADR | 14 completed UTC daily candles, mean (high − low) / open |
 | 4H and 1H ATR(14), % of price | completed 4H / 1H candles |
-| Buy/sell ratio | taker buy vs sell notional from the websocket trade stream, 60-min window. N/A until 30 min of trades **[Q3]** |
+| Buy/sell ratio | taker buy vs sell notional from the websocket trade stream, 60-min window. N/A until 30 min of trades |
 | Whale L/S | top-60 leaderboard positions (Module 0) |
-| OI 24h delta, 30d growth | current OI from asset contexts vs the bot's own hourly snapshots **[Q14]** |
+| OI 24h delta, 30d growth | current OI from asset contexts vs the bot's own hourly snapshots |
 | Funding (8h) + trend | asset contexts × 8; `fundingHistory` for "rising" |
 | Volatility | IV (DVOL) or RV percentile, labelled |
-| News | last 3 matching headlines from public RSS, rated by Claude, plus any thesis-breaking catalyst in the hold **[Q13]** |
+| News | last 3 matching headlines from 9 public crypto RSS feeds plus a per-coin Google News search (no key), rated by Claude, plus any thesis-breaking catalyst in the hold |
 | S/R on 5m, 4H, 1D | Bollinger, Fibonacci pivots, VWAP and Volume Profile on each timeframe, plus 4H swing points |
 | Contract specs | `szDecimals`, margin table (max leverage and MMR by size), `onlyIsolated` |
 
@@ -144,14 +162,14 @@ Every input carries a source and a timestamp.
 | Signal | Long | Short |
 |---|---|---|
 | UTC-day change | not down > 8% (red = caution) | not up > 8% |
-| Whale L/S | ≥ 1.5 | ≤ 1/1.5 (0.67) **[Q10]** |
-| OI 24h | growing or flat (≥ −1%) **[Q7]** | same |
+| Whale L/S | ≥ 1.5 | ≤ 1/1.5 (0.67) |
+| OI 24h | growing or flat (≥ −1%) | same |
 | Volatility | LOW / NORMAL / HIGH (caution) — EXTREME = skip | same |
 | News | 2+ of the last 3 bullish, no thesis-breaking catalyst | 2+ of 3 bearish |
 | TP | passes Module 4 | same |
 | Net R/R | ≥ 1:3 (Module 7) | same |
 
-Volatility bands are LOW < 25th, NORMAL 25–75th, HIGH 75–85th and EXTREME ≥ 85th percentile **[Q6]**.
+Volatility bands are LOW < 25th, NORMAL 25–75th, HIGH 75–85th and EXTREME ≥ 85th percentile.
 
 **Ranking.** +1 each for:
 
@@ -168,7 +186,7 @@ The highest score wins; ties go to the higher net R/R. The card names the runner
 
 - **Anchor:** the first real 4H structural level in the trade's direction, beyond the current price. "Real
   structure" means 4H swing highs/lows, 4H volume-profile POC/VAH/VAL and weekly Fibonacci pivots, with levels
-  within 0.15% merged into one zone **[Q5]**. Bollinger bands and VWAP are dynamic, so they are not structure.
+  within 0.15% merged into one zone. Bollinger bands and VWAP are dynamic, so they are not structure.
 - **Clean air:** because the TP anchors to the *first* such level, nothing significant sits between entry and TP.
 - **Front-run:** the TP sits before the level by max(0.2%, 0.1 × 4H ATR).
 - **Reachability:** TP distance must be ≤ 1.2× the 14-day ADR.
@@ -185,20 +203,21 @@ Long is the default but needs 4 of 5 triggers. Shorts need 2 or more of theirs. 
 |---|---|---|
 | buy/sell > 3x | sell/buy > 3x | rejection wick at 1D/4H structure |
 | whale L/S > 1.5 | whale L/S < 0.7 | funding ≥ 0.03%/8h and rising |
-| funding 0.00–0.03%/8h | funding ≤ −0.03%/8h (shorts pay it; counted in net R/R) | OI ≤ −5% on a ≥ +3% day **[Q7]** |
+| funding 0.00–0.03%/8h | funding ≤ −0.03%/8h (shorts pay it; counted in net R/R) | OI ≤ −5% on a ≥ +3% day |
 | BTC normal band or better | BTC's last 4H close broke below 4H structure | whale L/S flips below 1 after a ≥ +5% day |
 | F&G > 50 | F&G < 40 | BTC IV jumps into HIGH/EXTREME on a ≥ +3% BTC day |
 
 - **Reversal 2+:** the bot shows long and short setups (long only if long also qualifies) and you choose with
   `y 1` / `y 2`.
-- **Long and trend short both qualify:** this is a conflict, and the coin is skipped **[Q11]**.
+- **Long and trend short both qualify:** this is a conflict, and the coin is skipped.
 
 ## Module 6 — Entry discipline
 
 - **Post-only limit.** Hyperliquid's ALO (add-liquidity-only) time-in-force rejects an order that would cross the
   book, so the maker fee is guaranteed and a mistyped price can't fill at market.
-- **5m confluence:** all 4 methods (Bollinger, VWAP, Fibonacci, Volume Profile) within 0.25% of each other
-  **[Q4]**, on the passive side of price, within 1% of it. 5m sets timing only; the SL anchors to 4H.
+- **5m confluence:** at least 3 of the 4 methods (Bollinger, VWAP, Fibonacci, Volume Profile) within 0.25% of
+  each other; a 4-method cluster wins when there is one. It sits on the passive side of price, within 1% of it. 5m
+  sets timing only; the SL anchors to 4H.
 - **TP and SL attached to the entry:** sent as one `normalTpsl` group with the entry. They are reduce-only market
   triggers that fire on the **mark price**.
 - **Cancel an unfilled limit when any of these happen** (never chase):
@@ -207,9 +226,11 @@ Long is the default but needs 4 of 5 triggers. Shorts need 2 or more of theirs. 
   - price covers half the distance to TP unfilled
   - a 4H candle closes beyond the SL level
   - Friday 00:00 UTC arrives
-- **Partial fill:** Hyperliquid activates `normalTpsl` children only after the entry fills completely. On a
-  partial fill the bot places position-level TP/SL sized to the position on its next sync (every 20s), resizes
-  them as the fill grows, and cancels the remainder on any cancel trigger **[Q12]**.
+- **Partial fill:** Hyperliquid activates `normalTpsl` children only after the entry fills completely.
+  - In live mode HEVI subscribes to your account's fill stream, so any fill triggers an immediate sync that
+    places position-level TP/SL, usually within a second.
+  - The 20-second sync is the backstop.
+  - Position TP/SL is resized as the fill grows, and the remainder is cancelled on any cancel trigger.
 
 ## Module 7 — Risk and sizing
 
@@ -233,14 +254,16 @@ Size by dollar risk. Leverage only decides how much margin is posted.
   (1 − MMR × side). It must sit at least 1.5% beyond the SL, measured against max(entry, SL). After a fill the bot
   reads the exchange's own liquidation price; if the buffer is short it adds isolated margin
   (`updateIsolatedMargin`), or closes the position if that fails.
-- **Net R/R** = (qty × TP move − maker entry fee − taker exit fee − funding cost over the 48h time stop) ÷
-  (notional × (SL% + C)). It must be at least 1:3. Funding counts only when this side pays it.
+- **Net R/R** = (qty × TP move − maker entry fee − taker exit fee − **TP slippage** − funding cost over the 48h time
+  stop) ÷ (notional × (SL% + C)). It must be at least 1:3. Funding counts only when this side pays it.
+- **v3.1:** the TP is a market trigger, so its fill slips too (`slippage_on_tp`). That matches v2.0's own $7.66
+  example.
 - **Loss check:** the loss at the SL must equal the planned R within 5%. Coarse size steps on small accounts can
   fail this; the bot skips rather than size wrong.
 
 **Micro phase (v2.1, rebuilt for Hyperliquid's $10 minimum order):**
 
-- It applies below **$6** equity **[Q9]**.
+- It applies below **$6** equity.
 - If normal risk buys less than the minimum, risk rises **only as far as the minimum needs**, up to 15%.
 - It is never allowed in a half-risk state.
 - If the minimum needs more than 15%, the coin is skipped.
@@ -251,16 +274,16 @@ Size by dollar risk. Leverage only decides how much margin is posted.
 **Bybit v2.0 Module 7 example.** Equity $25, risk 10%, entry $92.50, SL 1.5%, MMR 1% (a 50x-max coin), TP +5.1%,
 funding 0.01%/8h.
 
-| | Bybit v2.0 | Hyperliquid v3.0 |
+| | Bybit v2.0 | Hyperliquid v3.1 |
 |---|---|---|
 | C | 0.125% | 0.11% |
 | Notional → qty | $153.8 → 1.66 | $155.28 → **1.67** ($154.48) |
 | Leverage | 22x | **22x** (floor(1/0.045)) |
 | Margin | ≈ $6.98 | **$7.02** |
 | Liq | ≈ $89.22 (2.0% beyond SL) | **$89.19** (2.08% beyond the $91.11 SL) |
-| Net reward | ≈ $7.66 | **$7.69** (after $0.02 maker, $0.07 taker, $0.09 funding over 48h) |
+| Net reward | ≈ $7.66 | **$7.61** (after $0.02 maker, $0.07 taker, $0.08 TP slippage, $0.09 funding over 48h) |
 | Loss at SL | $2.50 | **$2.49** (within 0.5% of R) |
-| Net R/R | 1:3.07 | **1:3.09** |
+| Net R/R | 1:3.07 | **1:3.06** (1:3.09 without TP slippage, as in v3.0) |
 
 On a 10x-max coin (MMR 5%) the same trade gets 10x leverage (the formula gives 11, capped at the coin), $15.45
 margin and liquidation at $87.63.
@@ -287,15 +310,18 @@ Breakers fire automatically and are announced, not asked.
 
 - **SL hit:** no new entries until 00:00 UTC.
 - **2 consecutive SLs:** half risk until the next TP.
-- **3 consecutive SLs:** a 48h pause, then you must send `review` before trading again. "Consecutive" counts SL
-  exits since the last TP; time stops and discretionary exits don't reset the streak (the stricter reading).
+- **3 consecutive SLs:** a 48h pause, then a full review before trading again. With autopilot on, HEVI runs the
+  review itself and sends it to you. "Consecutive" counts SL exits since the last TP; time stops and
+  discretionary exits don't reset the streak (the stricter reading).
 - **Equity 30%+ below peak:** half risk until back within 15% of peak.
-- **Equity 50%+ below peak:** stop for 7 days, then `review`, then restart only on a new `version` in
-  `protocol.toml`.
+- **Equity 50%+ below peak:** stop for 7 days, then a review, then restart only on a new `version` in
+  `protocol.toml`. **This is the one thing HEVI never does by itself:** after losing half the account, a human
+  decides.
 - **Max 2 new entries per UTC day:** 1 in the BTC half-risk band, with no re-entries into a coin traded today.
 - **Paper mode:** breakers count from the last `/paperreset`.
 
-**Overrides.** `override: [reason]` takes the closest candidate that failed **soft** rules only (for example news,
+**Overrides (manual trading only; autopilot never overrides).** `override: [reason]` takes the closest
+candidate that failed **soft** rules only (for example news,
 whale, OI, direction count, confluence, macro release, cooldown). The card shows `OVERRIDE` and the rules it
 bypasses. The trade is logged with the reason, and overrides get their own line in every review. Hard rules
 (Module 13), sizing and missing data can never be overridden.
@@ -306,15 +332,18 @@ bypasses. The trade is logged with the reason, and overrides get their own line 
 - **Friday:** unfilled entries cancel at Fri 00:00 UTC, and every position closes by Fri 20:00 UTC.
 - **Time stop:** close at market 48h after the fill.
 - The bot never moves the SL, adds to a position, or removes TP/SL. `/cancel` touches resting entries only.
-- **Early-exit suggestions** (objective triggers only; the bot alerts and never acts):
+- **Early exits on objective triggers only:**
   - BTC ≤ −4% for longs or ≥ +4% for shorts
   - a CPI, FOMC or NFP release inside the remaining hold
   - thesis-breaking news on the coin (Claude reads new headlines hourly)
+
+  With autopilot on, HEVI closes the position (`act_on_early_exits`), logs it as `early` and later compares it
+  with what the bracket would have made. With autopilot off, it only suggests.
 - **Discretionary exits** (`/close COIN [reason]`) are always allowed and logged as `discretion`. Once the time
   stop has passed, the bot records what the bracket would have made (`bracket_r`). After 10 discretionary exits,
   if discretion trails the bracket, `/close` requires a reason.
 
-## Module 10 — Execution checklist (after `y`)
+## Module 10 — Execution checklist (autopilot, or after `y`)
 
 1. Re-fetch everything and re-run every filter for this coin and side.
    - If price moved more than 0.3% since the card, or any number changed, the card is **re-issued** instead of
@@ -341,11 +370,11 @@ bypasses. The trade is logged with the reason, and overrides get their own line 
 | setup score / BTC band | `score`, `btc_band` |
 | entry / SL / TP / actual fill | `entry`, `sl`, `tp`, `fill_px` |
 | risk $ / % / mode | `risk_usd` (recomputed from the fill), `risk_pct`, `risk_mode` (normal/half/micro) |
-| exit price / exit type | `exit_px`, `exit_type` (tp, sl, time, discretion, friday, mismatch, liquidated) |
+| exit price / exit type | `exit_px`, `exit_type` (tp, sl, time, early, discretion, friday, mismatch, liquidated) |
 | result $ / R | `pnl` (after fees and funding), `result_r` |
 | MAE / MFE | `mae_r`, `mfe_r` (from 5m candles while open) |
 | fees / funding paid | `fees`, `funding` |
-| override / bracket comparison | `override` (reason), `bracket_r` (what the bracket would have made after a discretionary exit) |
+| override / bracket comparison | `override` (reason), `bracket_r` (what the bracket would have made after an early or discretionary exit) |
 | card + every input | `plan` (JSON), post-trade study in `study` (JSON) |
 
 **Skip log (`skips` table):** `ts`, `version`, `coin`, `side`, `rule` (the first rule that blocked it), `detail`,
@@ -361,7 +390,7 @@ never change mid-trade.
 - hit rate, average win and loss in R, expectancy in R
 - max drawdown in R and the longest losing streak
 - the exit-type split
-- discretionary exits vs the bracket, and override PnL
+- early and discretionary exits vs the bracket, and override PnL
 - average MAE, MFE on losers, and how many losers went green first
 - the skip outcomes
 - **recalibrated risk** = ½ × (p − (1 − p) ÷ b) over the last 30 trades, capped at 15%. Under 2% means no edge:
@@ -369,7 +398,28 @@ never change mid-trade.
 
 ## Module 12 — Autopilot and commands
 
-`start ($X)` runs, in order:
+**Autopilot (v3.1 default).** Every minute HEVI checks whether a scan is due. It scans when all of these hold:
+
+- it is not paused
+- it is inside the entry window
+- no position or entry is open
+- the 30-minute warm-up after a restart is over
+- 30 minutes have passed since the last scan
+
+A scan runs the full flow below. If a setup passes every rule, HEVI re-checks it, runs the Module 13 final check
+and places it. When reversal signals produce both a long and a short, it picks the higher score, then net R/R,
+then long.
+
+It also:
+
+- sends a message for every trade, and a daily report at 21:00 UTC (mode, equity, drawdown, trades, scans and why
+  the last scan placed nothing)
+- **MODE=prove** (default): runs on the paper trader until the record passes the go-live gate (20+ trades,
+  expectancy ≥ +0.10R per trade, profit factor ≥ 1.2), then switches to real money once flat. Without the
+  Hyperliquid keys it says the record is ready and keeps paper trading. `MODE=paper` never goes live;
+  `MODE=live` starts live.
+
+The flow (`start ($X)` runs the same, manually):
 
 1. pre-flight
 2. BTC gate and F&G
@@ -382,7 +432,8 @@ never change mid-trade.
 
 | Command | Action |
 |---|---|
-| `start ($X)` | Run the flow. `$X` is your equity; the API figure is checked against it |
+| `/pause` · `/resume` | Autopilot kill switch: no new trades; open positions stay protected and managed |
+| `start ($X)` | Run the flow manually. `$X` is your equity; the API figure is checked against it |
 | `y` / `y 1` / `y 2` | Execution checklist (1 = long, 2 = short when both are shown) |
 | `nah` / `skip` / `try another` | Re-sweep fresh candidates, max 2 per session (UTC day), then "No trade today" |
 | `n` | Discard the card |
@@ -407,20 +458,21 @@ These are checked by `rules/card.final_check` on the exact order right before it
 - no entries Friday–Sunday; flat by Friday 20:00 UTC
 - breakers trigger automatically
 - missing or stale data = fail; equity confirmed within the last 15 minutes
-- no order without your explicit `y`. The only exceptions are protocol cancels and closes: time stop, Friday
-  flatten, cancel triggers and mismatch handling.
+- **v3.1 (your decision):** an order needs authorization, which means autopilot on (the default) or your `y` in
+  manual mode. Authorization never bypasses anything above: the final check runs on every order, and autopilot
+  never uses overrides.
 
 ## Confirmation card
 
-A real card from the end-to-end test (`tests/test_pipeline.py`, paper mode, crafted market). The `!` lines are
-cautions; the indented lines are the data behind the card.
+A real card from the end-to-end test (`tests/test_pipeline.py`: autopilot, paper mode, crafted market). The
+indented lines are the data behind the card, and `!` lines are cautions. In manual mode the last line asks for `y`.
 
 ```
 Equity $100.00 (confirmed 12:00 UTC) | risk 10% | breakers: none active
 BTC gate: +1.01% from the UTC open -> NORMAL
 Fear & Greed: 62 (Greed)
 
-# Open Limit Order - Protocol v3.0 (Hyperliquid) - PAPER
+# HEVI - Open Limit Order - Protocol v3.1 (Hyperliquid) - PAPER
 --------------------------
 Symbol:      SOL-PERP (Hyperliquid)
 Direction:   Long
@@ -435,9 +487,9 @@ Liq:         ~$95.779 - 2.35% beyond SL OK
 --------------------------
 Equity:      $100.00 (confirmed 12:00 UTC)
 Risk @ SL:   ~$10.00 (10.0% of equity, costs incl.)
-Net @ TP:    ~$37.68 (+37.7% of equity)
-Net R/R:     1:3.77 OK
-Costs:       fees ~$0.39 (base tier (paper)) | funding ~$0.37 (48h)
+Net @ TP:    ~$37.35 (+37.3% of equity)
+Net R/R:     1:3.74 OK
+Costs:       fees ~$0.39 (base tier (paper)) | TP slippage ~$0.33 | funding ~$0.37 (48h)
 Time stop:   Thu 12 Nov 16:00 UTC latest (48h after fill / Fri 20:00 UTC)
 Risk mode:   Normal 10% | Breakers: none active
 Setup score: 1/6 (30d OI growth) | runner-up: none
@@ -448,8 +500,7 @@ Data as of:  12:00 UTC
   funding +0.0100%/8h | vol NORMAL (RV: 30-day realized-vol percentile) | news 2 bullish / 0 bearish of 3
   triggers: buy/sell > 3x, whale L/S > 1.5, funding 0.00-0.03%/8h, BTC normal band or better, F&G > 50
 --------------------------
-Type "y" to confirm.  (nah / skip / try another = re-sweep, n = discard)
-Card expires in 10 min.
+HEVI autopilot: every rule passed - placing it now.
 ```
 
 ---
@@ -485,24 +536,37 @@ Card expires in 10 min.
 
 ## Rules that can't be implemented on Hyperliquid as written
 
-None of the hard rules has been changed. Where data is missing, the protocol's own rule applies (missing data =
-FAIL), even where that blocks trading. Each item below needs your decision.
-
-| # | Rule | Problem | Current behaviour | Proposed substitute |
-|---|---|---|---|---|
-| 1 | Unlock auto-skip (M2) | no free unlock feed | **every coin fails** until `calendar.toml` [unlocks] covers the hold + 24h | maintain `calendar.toml` weekly, or wire a paid API (e.g. Tokenomist) — **Q1** |
-| 2 | TP/SL attached at entry (M6/M13, **hard**) | Hyperliquid activates `normalTpsl` only after a full fill | a partial fill can be unprotected for up to ~20s until position TP/SL is placed | subscribe to the user-fills websocket so protection lands within a second — **Q12** |
-| 3 | Whale L/S (M3/M5) | no native top-trader ratio | top-60 leaderboard accounts' positions, notional-weighted, N/A under 5 holders | keep, or mark N/A (= fail, so longs need the other 4 triggers) — **Q2** |
-| 4 | Crowd L/S (v2.1 chunk 9) | no all-accounts ratio | always N/A; whale data used instead | drop |
-| 5 | Buy/sell ratio | no ratio endpoint | taker flow from the trade stream; N/A for the first 30 min after a restart (v1's order-book fallback removed: it measured something else) | keep — **Q3** |
-| 6 | OI 24h delta / 30d growth | no OI history endpoint | own hourly snapshots: **OI 24h fails for the bot's first 24h** (hard filter); 30d growth N/A for 30 days (ranking only) | accept, or a paid history source — **Q14** |
-| 7 | News "2+ of 3" | free RSS covers majors well and many alts thinly | fewer than 2 rated articles fails the filter; none = N/A (hard) | add a news API (needs a key) — **Q13** |
-| 8 | Scheduled catalysts (listing/delisting, votes, upgrades) | no calendar feed | Claude flags them from headlines; delisted coins drop out of Hyperliquid's universe | accept |
-| 9 | Macro calendar (CPI/FOMC/NFP) | no free API | `calendar.toml`, prefilled to 31 Dec 2026 (the FOMC date needs checking); coverage gap = FAIL | maintain manually — **Q16** |
-| 10 | "Check Bybit's actual liq price" | — | Hyperliquid's `liquidationPx`; margin added automatically (mismatch handling) | done |
-| 11 | Manual entry fallback (M10) | — | the card already lists every field to enter in the app | done |
+| # | Rule | Problem | v3.1 resolution |
+|---|---|---|---|
+| 1 | Unlock auto-skip (M2) | no free unlock feed | **dropped** by your decision (`unlock_check = false`) |
+| 2 | TP/SL attached at entry (M6/M13) | Hyperliquid activates `normalTpsl` only after a full fill | fill-stream websocket → position TP/SL within about a second; 20s sync as backstop |
+| 3 | Whale L/S (M3/M5) | no native top-trader ratio | top-60 leaderboard positions, notional-weighted, N/A under 5 holders (kept) |
+| 4 | Crowd L/S (v2.1 chunk 9) | no all-accounts ratio | dropped; whale data used |
+| 5 | Buy/sell ratio | no ratio endpoint | taker flow from the trade stream; 30-min warm-up after restarts (autopilot waits for it) |
+| 6 | OI 24h delta / 30d growth | no OI history endpoint | own hourly snapshots, shared by paper and live (`market.db`); no trades in the first 24h after the first deploy |
+| 7 | News "2+ of 3" | thin free coverage for alts | 9 crypto RSS feeds + per-coin Google News search, no key needed |
+| 8 | Scheduled catalysts | no calendar feed | Claude flags them from headlines; delisted coins leave Hyperliquid's universe |
+| 9 | Macro calendar | no keyed API wanted | free ForexFactory weekly feed + `calendar.toml` fallback |
+| 10 | "Check Bybit's actual liq price" | — | Hyperliquid `liquidationPx`; margin added automatically |
+| 11 | Manual entry fallback (M10) | — | not needed with autopilot; the card lists every field |
 
 ## Changelog
+
+**v3.1 (HEVI) vs v3.0:**
+
+- **Autopilot** replaces the human-in-the-loop hard rule (your decision): scans, places, manages, exits and
+  reports with no input. `/pause` and `/resume` remain.
+- **MODE=prove** (default) paper-trades until the go-live gate passes, then goes live by itself. `paper` and
+  `live` modes are also available.
+- **Objective early exits** are executed by the autopilot and reviewed against the bracket.
+- **The 3-SL breaker review** is done by HEVI itself; the 50% drawdown stop still needs you.
+- **Token-unlock skip** off (your decision).
+- **Entry confluence** is 3 of 4 methods (4 of 4 still wins when available).
+- **Shorts** are possible: direction-aware filters, plus a sell-flow sweep.
+- **TP slippage** is counted in net R/R.
+- **Data:** a fill-stream websocket, Google News plus more RSS feeds, and the ForexFactory macro feed.
+- **Cost:** Claude only reads news for coins that pass every other rule.
+- **Telegram:** the bot is named HEVI and sets its own Telegram name, description and command menu.
 
 **v3.0 (Hyperliquid) vs v2.0 / v2.1:**
 
@@ -537,44 +601,30 @@ FAIL), even where that blocks trading. Each item below needs your decision.
 - custom margin
 - the order-book buy/sell fallback
 
-## Open questions
+## Decisions (v3.1)
 
-The first three block or shape live trading.
-
-1. **Q1 — Token unlocks (blocks all trades today).** With no unlock data every coin fails Module 2. Options:
-   - maintain `calendar.toml` yourself
-   - pay for an unlock API
-   - accept Claude's headline check as the unlock source (a weaker substitute that changes how "missing data" is
-     applied, so it needs your OK)
-2. **Q12 — Partial fills vs "TP/SL attached at entry" (hard rule).** Do you accept a gap of up to ~20s, or should
-   I add the fills websocket (recommended)?
-3. **Q14 / Q13 — Data that starts empty.** OI 24h fails for the first 24h after deploy. News is thin for many
-   alts. Accept, or add paid or keyed sources?
-4. **Q10 — Shorts.** As written, the whale auto-skip (< 1:1) plus the mirrored whale filter (≤ 0.67) make shorts
-   impossible, and neither sweep looks for sell-side candidates. Options:
-   - keep it long-only in practice
-   - make the whale skip and filters direction-aware
-   - add a sell-flow sweep
-5. **Q11 —** Long and trend-short both qualify: skip (current) or show both?
-6. **Q4 —** Entry confluence: all 4 methods (current, strict) or 3 of 4?
-7. **Q5 —** Structural 4H levels: swing points, volume profile, weekly Fibonacci (current). Add or remove any?
-8. **Q2 —** Does top-60 leaderboard positioning count as "true whale" data?
-9. **Q7 —** Undefined magnitudes. Defaults:
-   - OI flat ±1%, OI rising +2%
-   - stall < 0.5% (last 4H)
-   - long ratio climbing +10% vs 24h
-   - OI dropping sharply ≤ −5% on a ≥ +3% day
-   - strong pump ≥ +5%
-10. **Q6 —** Volatility bands LOW < 25 / HIGH ≥ 75 (only EXTREME ≥ 85 is in the protocol).
-11. **Q8 —** Keep the $50M / $100M volume screens on Hyperliquid, or rescale them?
-12. **Q9 —** Micro phase below $6, raising risk only as far as the $10 minimum needs. OK?
-13. **Q15 —** Challenge equity: main account or a dedicated sub-account (recommended)?
-14. **Q16 / Q17 —** Macro calendar maintained by hand. F&G (a daily index) judged stale by fetch time, not by its
-    once-a-day timestamp. OK?
-15. **Q18 / Q19 —**
-    - Half risk with a custom risk: min(5%, risk / 2). OK?
-    - Net reward excludes slippage at TP, as the formula is written; v2.0's own $7.66 example looks like it
-      subtracted slippage. Which one?
+| Q | Question | Decision |
+|---|---|---|
+| Q1 | Token unlock data | **Dropped** (your call) |
+| Q2 | Leaderboard positions as whale data | Kept |
+| Q3 | Buy/sell warm-up | 30 min of trades; autopilot waits it out after every restart |
+| Q4 | Entry confluence | **3 of 4** methods |
+| Q5 | Structural 4H levels | Swing points, volume profile, weekly Fibonacci (kept) |
+| Q6 | Volatility bands | LOW < 25, HIGH ≥ 75, EXTREME ≥ 85 (kept) |
+| Q7 | Undefined magnitudes | Defaults kept (OI flat ±1%, rising +2%, stall < 0.5%, ratio +10%, OI drop ≤ −5% on ≥ +3%, pump ≥ +5%) |
+| Q8 | Volume screens | $50M / $100M kept |
+| Q9 | Micro phase | Below $6, risk only as far as the $10 minimum needs (kept) |
+| Q10 | Shorts | **Direction-aware filters + sell-flow sweep** |
+| Q11 | Long and trend short both qualify | Skip (kept) |
+| Q12 | Partial-fill protection | **Fill-stream websocket** |
+| Q13 | News coverage | **Google News + more RSS feeds** (free) |
+| Q14 | OI history | Own snapshots; 24h warm-up after the first deploy |
+| Q15 | Equity account | Main account works; a dedicated sub-account is still recommended as a firewall |
+| Q16 | Macro calendar | **ForexFactory feed** + `calendar.toml` fallback |
+| Q17 | F&G staleness | By fetch time (kept) |
+| Q18 | Half risk with a custom risk | min(5%, risk / 2) (kept) |
+| Q19 | Slippage at TP | **Counted** |
+| — | Human confirmation | **Replaced by autopilot** (your call); prove-then-live by default |
 
 ---
 
@@ -610,6 +660,6 @@ Open from v2.0: v1 Module 1 referenced two TAO losses, but only one is logged.
 **Balance tracker:**
 
 - Bybit run: started at $3.20; peak $24.77 after Trade 13.
-- Hyperliquid run: starts from your first deposit.
+- HEVI run: starts from your first deposit.
 - Milestones: $6 (micro phase ends) → $10 → $50 → $100 → $250 → $500 → $1,000.
 - Optional vault rule: at $100, $250 and $500, move 20% of equity to a separate sub-account.

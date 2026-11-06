@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..protocol import Review, Risk
+from ..protocol import Autopilot, Review, Risk
 
 
 @dataclass(frozen=True)
@@ -46,12 +46,14 @@ def summarize(trades: list[LoggedTrade], rv: Review, rk: Risk) -> dict:
     for t in trades:
         by_exit.setdefault(t.exit_type, []).append(t.result_r)
 
-    disc = [t for t in trades if t.exit_type == "discretion"]
-    disc_vs = None
-    if disc:
-        known = [t for t in disc if t.bracket_r is not None]
-        disc_vs = {"n": len(disc), "actual_r": sum(t.result_r for t in known),
-                   "bracket_r": sum(t.bracket_r for t in known), "compared": len(known)}
+    def vs_bracket(kind: str) -> dict | None:
+        rows = [t for t in trades if t.exit_type == kind]
+        if not rows:
+            return None
+        known = [t for t in rows if t.bracket_r is not None]
+        return {"n": len(rows), "actual_r": sum(t.result_r for t in known),
+                "bracket_r": sum(t.bracket_r for t in known), "compared": len(known)}
+
     over = [t for t in trades if t.override]
 
     last = trades[-rv.recalibrate_lookback:]
@@ -67,7 +69,8 @@ def summarize(trades: list[LoggedTrade], rv: Review, rk: Risk) -> dict:
         "max_drawdown_r": dd,
         "longest_losing_streak": longest,
         "by_exit": {k: (len(v), sum(v)) for k, v in by_exit.items()},
-        "discretion": disc_vs,
+        "discretion": vs_bracket("discretion"),
+        "early": vs_bracket("early"),
         "overrides": (len(over), sum(t.result_r for t in over)) if over else None,
         "mae_avg_r": _avg([t.mae_r for t in trades]),
         "mfe_losers_avg_r": _avg([t.mfe_r for t in losses]),
@@ -112,10 +115,11 @@ def format_review(s: dict, label: str, rv: Review) -> str:
         f"Max drawdown {s['max_drawdown_r']:.2f}R | longest losing streak {s['longest_losing_streak']}",
         "Exits: " + ", ".join(f"{k} {n} ({r:+.1f}R)" for k, (n, r) in sorted(s["by_exit"].items())),
     ]
-    if s["discretion"]:
-        d = s["discretion"]
-        out.append(f"Discretionary exits {d['n']}: actual {d['actual_r']:+.2f}R vs bracket {d['bracket_r']:+.2f}R "
-                   f"({d['compared']} compared)")
+    for key, label in (("discretion", "Discretionary exits"), ("early", "Early exits (objective triggers)")):
+        d = s.get(key)
+        if d:
+            out.append(f"{label} {d['n']}: actual {d['actual_r']:+.2f}R vs bracket {d['bracket_r']:+.2f}R "
+                       f"({d['compared']} compared)")
     if s["overrides"]:
         out.append(f"Overrides: {s['overrides'][0]} trades, {s['overrides'][1]:+.2f}R")
     if s["mae_avg_r"] is not None:
@@ -132,3 +136,19 @@ def format_review(s: dict, label: str, rv: Review) -> str:
     if s["trades"] < rv.every_n_trades:
         out.append(f"Rule changes wait for the {rv.every_n_trades}-trade review ({s['trades']}/{rv.every_n_trades}).")
     return "\n".join(out)
+
+
+def go_live_ready(trades: list[LoggedTrade], a: Autopilot) -> tuple[bool, str]:
+    """Prove-then-live gate: enough paper trades, positive expectancy in R, and wins outweighing losses."""
+    n = len(trades)
+    if n < a.go_live_min_trades:
+        return False, f"{n}/{a.go_live_min_trades} paper trades so far"
+    exp = sum(t.result_r for t in trades) / n
+    wins = sum(t.result_r for t in trades if t.result_r > 0)
+    losses = -sum(t.result_r for t in trades if t.result_r <= 0)
+    pf = wins / losses if losses > 0 else float("inf")
+    if exp < a.go_live_min_expectancy_r:
+        return False, f"expectancy {exp:+.2f}R/trade over {n} trades (needs >= {a.go_live_min_expectancy_r:+.2f}R)"
+    if pf < a.go_live_min_profit_factor:
+        return False, f"profit factor {pf:.2f} over {n} trades (needs >= {a.go_live_min_profit_factor:g})"
+    return True, f"{n} paper trades, expectancy {exp:+.2f}R/trade, profit factor {pf:.2f}"

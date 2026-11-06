@@ -6,7 +6,7 @@
   leverage = floor(1 / (SL% + MMR + 2%)), capped at 25x and the coin's max for that size. No floor.
   margin   = notional / leverage                           (<= 80% of available)
   liq      = Hyperliquid isolated formula, must sit >= 1.5% beyond the SL
-  net R/R  = (TP move - entry fee - exit fee - funding over the hold) / (SL% + C), >= 1:3
+  net R/R  = (TP move - entry fee - exit fee - TP slippage - funding over the hold) / (SL% + C), >= 1:3
   loss at SL (costs incl.) must equal the planned R within 5%
 
 Micro phase (v2.1, rebuilt for Hyperliquid's $10 minimum): below `micro_equity_below_usd`, if the minimum order
@@ -102,6 +102,7 @@ class Fees:
     taker_pct: float
     slippage_pct: float
     source: str = "default"
+    slippage_on_tp: bool = True  # the TP is a market trigger, so its fill slips too
 
     @property
     def c_pct(self) -> float:
@@ -143,6 +144,7 @@ class Sizing:
     liq_buffer_pct: float = 0.0
     entry_fee: float = 0.0
     exit_fee_tp: float = 0.0
+    slippage_tp: float = 0.0
     funding_cost: float = 0.0
     loss_at_sl: float = 0.0
     net_reward: float = 0.0
@@ -213,10 +215,11 @@ def size(p: SizingInput, r: Risk, x: Exchange, f: Filters) -> Sizing:
 
     out.entry_fee = out.notional * p.fees.maker_pct / 100        # post-only entry pays maker
     out.exit_fee_tp = qty * p.tp * p.fees.taker_pct / 100          # TP trigger fills as a market order
+    out.slippage_tp = qty * p.tp * p.fees.slippage_pct / 100 if p.fees.slippage_on_tp else 0.0
     hourly = s * p.funding_8h_pct / 100 / 8                         # >0 = this side pays
     out.funding_cost = max(0.0, hourly * out.notional * r.funding_hold_h)
     out.loss_at_sl = out.notional * (out.sl_pct / 100 + c)
-    out.net_reward = qty * abs(p.tp - p.entry) - out.entry_fee - out.exit_fee_tp - out.funding_cost
+    out.net_reward = qty * abs(p.tp - p.entry) - out.entry_fee - out.exit_fee_tp - out.slippage_tp - out.funding_cost
     out.net_rr = out.net_reward / out.loss_at_sl if out.loss_at_sl > 0 else 0.0
     ck(Check("M7", "net R/R >= 1:3", out.net_rr + 1e-9 >= f.min_net_rr, f"net R/R 1:{out.net_rr:.2f}", hard=True))
 

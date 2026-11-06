@@ -11,7 +11,7 @@ from hlbot.protocol import PROTOCOL as P
 from hlbot.rules.sizing import (Fees, SizingInput, ceil_step, floor_step, leverage_for, liq_price, maintenance,
                                 round_price, size)
 
-HL = Fees(0.015, 0.045, 0.05, "test")
+HL = Fees(0.015, 0.045, 0.05, "test")  # v3.1: the TP's market-trigger fill pays slippage too (slippage_on_tp)
 
 
 def run(**kw):
@@ -34,10 +34,11 @@ def test_module7_worked_example_on_hyperliquid():
     # Hyperliquid isolated liq: 92.5 - (7.0216 - 1.5448) / 1.67 / 0.99 = 89.187 (Bybit example: ~89.22)
     assert z.liq == pytest.approx(89.1873, abs=1e-3)
     assert z.liq_buffer_pct == pytest.approx(2.081, abs=1e-3)  # vs SL 91.1125, >= 1.5% required
-    # net reward = 1.67 x 4.7175 - maker 0.0232 - taker exit 0.0731 - funding 0.01%/8h over 48h 0.0927 = $7.689
-    assert z.net_reward == pytest.approx(7.6893, abs=1e-3)
+    # net reward = 1.67 x 4.7175 - maker 0.0232 - taker exit 0.0731 - TP slippage 0.0812 - funding over 48h 0.0927
+    assert z.slippage_tp == pytest.approx(1.67 * 97.2175 * 0.0005)
+    assert z.net_reward == pytest.approx(7.6081, abs=1e-3)
     assert z.loss_at_sl == pytest.approx(2.48705, abs=1e-4)  # = notional x (SL% + C)
-    assert z.net_rr == pytest.approx(3.092, abs=1e-3)        # Bybit example: 1:3.07
+    assert z.net_rr == pytest.approx(3.059, abs=1e-3)        # Bybit example: 1:3.07
     assert z.ok, [c.line() for c in z.checks if not c.ok]
 
 
@@ -128,3 +129,8 @@ def test_margin_tiers_and_helpers():
     assert liq_price(100, 1, 10, 1, "short", 0.01) == pytest.approx(100 + 9 / 1.01)
     assert floor_step(1.6787, 2) == 1.67 and ceil_step(3.001, 1) == 3.1 and ceil_step(5.0, 1) == 5.0
     assert round_price(1.234567, 2) == 1.2346 and round_price(123456.7, 0) == 123460.0
+
+
+def test_tp_slippage_can_be_switched_off():
+    z = run(fees=Fees(0.015, 0.045, 0.05, "test", slippage_on_tp=False))
+    assert z.slippage_tp == 0 and z.net_rr == pytest.approx(3.092, abs=1e-3)  # the v3.0 number

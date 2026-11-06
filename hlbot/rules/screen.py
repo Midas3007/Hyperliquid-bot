@@ -19,8 +19,9 @@ class Row:
 
 def sweeps(rows: list[Row], s: Screener, skip: Callable[[str], str | None]) -> list[tuple[str, str]]:
     """Sweep 1: highest buy/sell ratio, volume > $50M. Sweep 2: strongest momentum (UTC-day change), volume > $100M.
-    `skip(coin)` returns a reason for coins that are auto-skipped; the sweep walks down the ranking past them.
-    Returns [(coin, tag)] without duplicates, sweep 1 first."""
+    Sweep 3 (v3.1, shorts mirror sweep 1): lowest buy/sell ratio (heaviest sell flow), volume > $50M.
+    `skip(coin)` returns a reason for coins that are auto-skipped; each sweep walks down its ranking past them.
+    Returns [(coin, tag)] without duplicates, in sweep order."""
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
 
@@ -35,12 +36,14 @@ def sweeps(rows: list[Row], s: Screener, skip: Callable[[str], str | None]) -> l
             out.append((r.coin, tag))
             taken += 1
 
-    s1 = sorted((r for r in rows if r.volume_usd > s.sweep1_min_volume_usd and r.buy_sell is not None),
-                key=lambda r: r.buy_sell, reverse=True)
+    flow = [r for r in rows if r.volume_usd > s.sweep1_min_volume_usd and r.buy_sell is not None]
+    s1 = sorted(flow, key=lambda r: r.buy_sell, reverse=True)
     s2 = sorted((r for r in rows if r.volume_usd > s.sweep2_min_volume_usd and r.day_change_pct is not None
                  and r.day_change_pct > 0), key=lambda r: r.day_change_pct, reverse=True)
+    s3 = sorted((r for r in flow if r.buy_sell < 1), key=lambda r: r.buy_sell)
     walk(s1, s.sweep1_top_n, "sweep 1: buy/sell")
     walk(s2, s.sweep2_top_n, "sweep 2: momentum")
+    walk(s3, s.sweep3_top_n, "sweep 3: sell flow")
     return out
 
 
@@ -66,31 +69,27 @@ def auto_skips(
     s: Screener,
     *,
     coin: str,
-    day_change_pct: float | None,
     unlock: tuple[bool, str] | None,
     vol_label: str | None,
-    whale_ls: float | None,
-    whale_is_true: bool,
     cooldown: tuple[float, str] | None,
 ) -> list[Check]:
-    """Failing auto-skip checks for one coin (empty list = passes to the deep dive).
-    unlock: (inside window?, detail) or None when no unlock data covers the window (missing = FAIL)."""
+    """Failing direction-agnostic auto-skips for one coin (empty list = on to the deep dive).
+
+    v3.1: the long-side skips (down > 8% on the day, whale L/S < 1:1) are applied per direction by the Module 3
+    hard filters, which mirror them for shorts, so a coin can still be shorted.
+    unlock: (inside window?, detail), or None when no unlock data covers the window. Only checked when
+    protocol.toml [screener].unlock_check is true (it is off in v3.1)."""
     out: list[Check] = []
     base = coin[1:].upper() if coin.startswith("k") and coin[1:].isupper() else coin.upper()  # kPEPE -> PEPE
     if base in s.stablecoins:
         out.append(Check("M2", "stablecoin", False, f"{coin} is a stablecoin"))
-    if day_change_pct is None:
-        out.append(na_check("M2", "daily change", "no UTC daily open"))
-    elif day_change_pct < -s.max_day_drop_pct:
-        out.append(Check("M2", "down > 8%", False, f"{day_change_pct:+.1f}% on the UTC day"))
-    if unlock is None:
-        out.append(na_check("M2", "token unlock", "no unlock data covers the hold window + 24h (calendar.toml)"))
-    elif unlock[0]:
-        out.append(Check("M2", "token unlock", False, unlock[1]))
+    if s.unlock_check:
+        if unlock is None:
+            out.append(na_check("M2", "token unlock", "no unlock data covers the hold window + 24h (calendar.toml)"))
+        elif unlock[0]:
+            out.append(Check("M2", "token unlock", False, unlock[1]))
     if vol_label == "EXTREME":
         out.append(Check("M2", "EXTREME volatility", False, "volatility >= 85th percentile", hard=True))
-    if whale_is_true and whale_ls is not None and whale_ls < s.whale_autoskip_below:
-        out.append(Check("M2", "whale L/S < 1:1", False, f"whale L/S {whale_ls:.2f}"))
     if cooldown:
         out.append(Check("M2", "cooldown", False, cooldown[1]))
     return out

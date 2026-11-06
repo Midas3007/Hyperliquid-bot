@@ -1,10 +1,10 @@
-# Futures Challenge Protocol v3.0 - Hyperliquid
+# HEVI - Futures Challenge Protocol v3.1 for Hyperliquid
 # Every threshold the rules engine uses lives in this file (see PROTOCOL.md for the reasoning).
 # Percent values are written as percents: 1.5 means 1.5%.
 # The loader rejects unknown or missing keys, so a typo fails loudly instead of silently using a default.
 # Values marked [OPEN Qn] are defaults waiting on an answer in PROTOCOL.md "Open questions".
 
-version = "3.0"
+version = "3.1"
 
 [data]                       # Conventions
 stale_after_min = 15         # older than this = FAIL for that check
@@ -15,6 +15,7 @@ funding_neutral_8h_pct = 0.01
 maker_pct = 0.015            # these are the fallbacks (Hyperliquid base tier).
 taker_pct = 0.045
 slippage_pct = 0.05          # C = maker + taker + slippage = 0.11% at base tier
+slippage_on_tp = true        # TP is a market trigger, so its exit pays slippage too (v3.1, Q19)
 
 [exchange]
 min_order_usd = 10.0         # Hyperliquid minimum order value
@@ -26,19 +27,21 @@ half_risk_at_or_below_pct = -2.0
 pump_at_or_above_pct = 3.0
 pump_flags_needed = 2
 pump_funding_8h_pct = 0.03            # "funding >= 0.03%/8h and rising"
-pump_oi_rising_pct = 2.0              # [OPEN Q7] OI 24h change that counts as "rising"
-pump_price_stall_pct = 0.5            # [OPEN Q7] |last completed 4H candle move| under this = "stalling"
-pump_long_ratio_rise_pct = 10.0       # [OPEN Q7] whale L/S up this much vs 24h ago = "long ratio climbing"
+pump_oi_rising_pct = 2.0              # Q7 (decided in v3.1) OI 24h change that counts as "rising"
+pump_price_stall_pct = 0.5            # Q7 (decided in v3.1) |last completed 4H candle move| under this = "stalling"
+pump_long_ratio_rise_pct = 10.0       # Q7 (decided in v3.1) whale L/S up this much vs 24h ago = "long ratio climbing"
 wick_min_share = 0.5                  # rejection wick: upper wick >= 50% of the candle's range
 wick_level_tol_pct = 0.2              # ... with the high within 0.2% of (or through) the level
 
 [screener]                   # Module 2
-sweep1_min_volume_usd = 50_000_000    # [OPEN Q8] Hyperliquid liquidity differs from Bybit/Bitget
+sweep1_min_volume_usd = 50_000_000    # Q8 (decided in v3.1) Hyperliquid liquidity differs from Bybit/Bitget
 sweep2_min_volume_usd = 100_000_000
 sweep1_top_n = 5                      # top buy/sell ratios
 sweep2_top_n = 3                      # top daily % change (momentum)
+sweep3_top_n = 3                      # lowest buy/sell ratio, volume > sweep 1 minimum (sell flow, for shorts - v3.1, Q10)
 max_day_drop_pct = 8.0                # down more than this on the UTC day = auto-skip
 stablecoins = ["USDC", "USDT", "USDE", "USD1", "RLUSD", "FDUSD", "DAI", "PYUSD", "USDS", "TUSD", "USDH", "USDT0"]
+unlock_check = false                  # v3.1: unlock skip dropped by decision (Q1). true = require calendar.toml data
 unlock_min_supply_pct = 1.0           # unlock >= 1% of circulating supply ...
 unlock_extra_h = 24                   # ... within the hold window + 24h = auto-skip
 whale_autoskip_below = 1.0            # true whale L/S below 1:1 = auto-skip
@@ -47,24 +50,24 @@ cooldown_repeat_window_d = 30
 cooldown_repeat_count = 2
 cooldown_repeat_h = 336               # 14 days
 flow_window_min = 60                  # buy/sell ratio window (taker trades from the websocket)
-flow_min_coverage_min = 30            # [OPEN Q3] less trade history than this = N/A
+flow_min_coverage_min = 30            # Q3 (decided in v3.1) less trade history than this = N/A
 
 [deep_dive]                  # Module 3
 adr_days = 14
 atr_period = 14
 news_articles = 3
 whale_accounts = 60                   # top leaderboard accounts by account value
-whale_min_holders = 5                 # [OPEN Q2] fewer whales holding the coin = N/A
+whale_min_holders = 5                 # Q2 (decided in v3.1) fewer whales holding the coin = N/A
 rv_window_h = 24                      # realized vol = stdev of hourly log returns over 24h ...
 rv_lookback_d = 30                    # ... ranked against the last 30 days
-vol_low_below_pct = 25                # [OPEN Q6] percentile bands; only EXTREME >= 85 comes from the protocol
+vol_low_below_pct = 25                # Q6 (decided in v3.1) percentile bands; only EXTREME >= 85 comes from the protocol
 vol_high_at_or_above_pct = 75
 vol_extreme_at_or_above_pct = 85
 
 [filters]                    # Module 3 hard filters
 whale_min_ratio = 1.5
 crowd_max_ratio = 2.5                 # only used if crowd data exists (Hyperliquid has none)
-oi_flat_tolerance_pct = 1.0           # [OPEN Q7] OI 24h change within +/- this = "flat"
+oi_flat_tolerance_pct = 1.0           # Q7 (decided in v3.1) OI 24h change within +/- this = "flat"
 news_min_bullish = 2
 min_net_rr = 3.0
 
@@ -77,7 +80,7 @@ tp_adr_mult = 1.0
 front_run_min_pct = 0.2
 front_run_atr_mult = 0.1
 max_adr_mult = 1.2
-structural_methods = ["SWING", "VP", "FIB"]   # [OPEN Q5] which 4H levels count as real structure
+structural_methods = ["SWING", "VP", "FIB"]   # Q5 (decided in v3.1) which 4H levels count as real structure
 level_merge_pct = 0.15                       # levels this close together are one level
 
 [direction]                  # Module 5. N/A counts as a fail everywhere.
@@ -94,14 +97,14 @@ short_funding_max_8h_pct = -0.03
 short_fng_max = 40
 reversal_needed = 2
 reversal_funding_8h_pct = 0.03
-reversal_oi_drop_pct = -5.0           # [OPEN Q7] "OI dropping sharply" ...
+reversal_oi_drop_pct = -5.0           # Q7 (decided in v3.1) "OI dropping sharply" ...
 reversal_spike_pct = 3.0              # ... on a daily move of at least this
-reversal_pump_pct = 5.0               # [OPEN Q7] "strong pump" for the whale-flip trigger
+reversal_pump_pct = 5.0               # Q7 (decided in v3.1) "strong pump" for the whale-flip trigger
 reversal_btc_fast_move_pct = 3.0
 
 [entry]                      # Module 6
 confluence_methods = ["BB", "VWAP", "FIB", "VP"]
-min_methods = 4                       # [OPEN Q4] all four must agree
+min_methods = 3                       # v3.1 (Q4): 3 of the 4 methods must agree
 confluence_tol_pct = 0.25
 max_distance_pct = 1.0
 cancel_after_h = 4
@@ -118,7 +121,7 @@ max_margin_of_available_pct = 80.0
 liq_beyond_sl_pct = 1.5
 loss_check_tolerance_pct = 5.0
 funding_hold_h = 48                   # funding cost projected over the 48h time stop (stricter than a shorter guess)
-micro_equity_below_usd = 6.0          # [OPEN Q9] micro phase: below this, risk may rise to the ceiling if the $10 minimum forces it
+micro_equity_below_usd = 6.0          # Q9 (decided in v3.1) micro phase: below this, risk may rise to the ceiling if the $10 minimum forces it
 
 [breakers]                   # Module 8
 half_risk_after_sl_streak = 2
@@ -154,3 +157,14 @@ discretion_compare_after = 10
 
 [commands]                   # Module 12
 max_resweeps = 2
+
+[autopilot]                  # v3.1: HEVI trades on its own (no 'y' needed). Every rule still applies.
+enabled = true
+scan_every_min = 30          # how often to look for a setup while flat, inside the entry window
+warmup_min = 30              # after a restart, wait for the trade stream to fill (buy/sell ratio)
+report_hour_utc = 21         # daily report
+act_on_early_exits = true    # close on the objective early-exit triggers (logged as "early", compared with the bracket)
+# Prove-then-live (MODE=prove, the default): HEVI paper-trades until its paper record shows an edge, then goes live.
+go_live_min_trades = 20
+go_live_min_expectancy_r = 0.10
+go_live_min_profit_factor = 1.2

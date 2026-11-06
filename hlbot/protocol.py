@@ -30,6 +30,7 @@ class Fees:
     maker_pct: float
     taker_pct: float
     slippage_pct: float
+    slippage_on_tp: bool
 
 
 @dataclass(frozen=True)
@@ -58,8 +59,10 @@ class Screener:
     sweep2_min_volume_usd: float
     sweep1_top_n: int
     sweep2_top_n: int
+    sweep3_top_n: int
     max_day_drop_pct: float
     stablecoins: tuple
+    unlock_check: bool
     unlock_min_supply_pct: float
     unlock_extra_h: float
     whale_autoskip_below: float
@@ -202,6 +205,18 @@ class Commands:
 
 
 @dataclass(frozen=True)
+class Autopilot:
+    enabled: bool
+    scan_every_min: float
+    warmup_min: float
+    report_hour_utc: int
+    act_on_early_exits: bool
+    go_live_min_trades: int
+    go_live_min_expectancy_r: float
+    go_live_min_profit_factor: float
+
+
+@dataclass(frozen=True)
 class Protocol:
     version: str
     data: Data
@@ -221,9 +236,12 @@ class Protocol:
     execution: Execution
     review: Review
     commands: Commands
+    autopilot: Autopilot
 
 
 def _coerce(name: str, typ: Any, v: Any) -> Any:
+    if typ is bool and isinstance(v, bool):
+        return v
     if typ is float and isinstance(v, (int, float)) and not isinstance(v, bool):
         return float(v)
     if typ is int and isinstance(v, int) and not isinstance(v, bool):

@@ -41,8 +41,13 @@ class Config:
     anthropic_model: str = field(default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5"))
     anthropic_effort: str = field(default_factory=lambda: os.getenv("ANTHROPIC_EFFORT", "high"))
 
-    # --- paper trading: live prices, simulated fills, no real orders --------
-    paper: bool = field(default_factory=lambda: _b("PAPER_TRADING", False))
+    # --- trading mode -------------------------------------------------------
+    # prove (default): paper-trade on live prices until the paper record passes the go-live gate in protocol.toml,
+    #                  then switch to real money automatically (needs the HL_* keys)
+    # paper:           simulated fills only, forever
+    # live:            real money from the first trade
+    mode: str = field(default_factory=lambda: "paper" if _b("PAPER_TRADING", False)
+                      else os.getenv("MODE", "prove").strip().lower())
     paper_balance: float = field(default_factory=lambda: _f("PAPER_BALANCE", 100.0))
 
     # --- runtime -------------------------------------------------------------
@@ -56,16 +61,19 @@ class Config:
         return self.network != "testnet"
 
     @property
-    def network_label(self) -> str:
-        net = "mainnet" if self.is_mainnet else "testnet"
-        if self.paper:
-            return f"PAPER (simulated fills on live {net} prices, no real money)"
-        return "MAINNET (real money)" if self.is_mainnet else "testnet"
+    def paper(self) -> bool:
+        return self.mode == "paper"
+
+    @property
+    def has_wallet(self) -> bool:
+        return bool(self.hl_account_address and self.hl_api_private_key)
 
     def missing(self) -> list[str]:
         out = []
+        if self.mode not in ("prove", "paper", "live"):
+            out.append(f"MODE (got {self.mode!r}; use prove, paper or live)")
         required = [("TELEGRAM_BOT_TOKEN", self.telegram_token)]
-        if not self.paper:  # paper trading needs no wallet
+        if self.mode == "live":  # prove can start without a wallet; paper never needs one
             required += [("HL_ACCOUNT_ADDRESS", self.hl_account_address),
                          ("HL_API_PRIVATE_KEY", self.hl_api_private_key)]
         for name, val in required:

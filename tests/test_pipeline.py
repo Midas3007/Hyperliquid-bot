@@ -1,9 +1,10 @@
-"""Offline end-to-end runs of the v3.0 engine on the paper trader with a crafted market.
+"""Offline end-to-end runs of HEVI's engine on the paper trader with a crafted market.
 
 SOL is built to pass every rule: 4-method 5m confluence 0.4% under price, 4H swing support under it, the next 4H
 level +6% above (clean air), ADR 6%, whale L/S 1.8, buy/sell 3.5, funding 0.01%/8h, F&G 62, 2/3 news bullish.
 """
 
+import dataclasses
 import time
 from datetime import datetime, timezone
 
@@ -56,6 +57,9 @@ class FakeMarket:
         self.flow = FakeFlow()
         self.mark = {c: 100.0 for c in COINS}
         self.news_items = {"SOL": 3}
+        self.fng = 62
+        self.macro: list = []
+        self.macro_cov = False
 
     def stamp(self, key):
         return time.time()
@@ -96,7 +100,10 @@ class FakeMarket:
                 for i in range(min(limit, self.news_items.get(coin, 3)))]
 
     def fear_greed(self):
-        return {"value": 62, "label": "Greed"}
+        return {"value": self.fng, "label": "Greed"}
+
+    def macro_calendar(self, names):
+        return self.macro, (time.time() + 7 * 86400 if self.macro_cov else None)
 
     def record_oi(self):
         pass
@@ -105,8 +112,10 @@ class FakeMarket:
 class FakeAnalyst:
     def __init__(self):
         self.bullish = {"SOL": 2}
+        self.news_calls = 0
 
     def rate_news(self, payload):
+        self.news_calls += 1
         out = []
         for c in payload["coins"]:
             n = self.bullish.get(c["coin"], 1)
@@ -135,21 +144,29 @@ def clock(monkeypatch):
 def eng(tmp_path, monkeypatch, clock):
     cal = tmp_path / "calendar.toml"
     cal.write_text(CALENDAR)
-    cfg = Config(data_dir=str(tmp_path), paper=True, paper_balance=100.0, calendar_path=str(cal))
+    cfg = Config(data_dir=str(tmp_path), mode="paper", paper_balance=100.0, calendar_path=str(cal))
     monkeypatch.setattr(engine_mod, "build_levels", levels)
     monkeypatch.setattr(engine_mod.mx, "rv_percentile", lambda *a: (60.0, 50.0))  # NORMAL volatility
     e = Engine.__new__(Engine)
     e.cfg, e.P = cfg, PROTOCOL
+    e.mkt = FakeMarket(Store(cfg.data_dir, "market.db"))
+    e.live = False
     e.store = Store(cfg.data_dir, "paper.db")
-    e.mkt = FakeMarket(e.store)
     e.trader = PaperTrader(cfg, e.mkt, e.store)
     e.analyst = FakeAnalyst()
     e._init_state()
-    # OI and whale history the bot would have recorded itself: OI +2% over 24h and 30d
-    with e.store._lock:
-        e.store._db.executemany("INSERT INTO oi(coin,ts,oi_usd,px) VALUES(?,?,?,?)",
-                                [(c, TUE - 86400, 49e6, 100) for c in COINS] + [(c, TUE - 30 * 86400, 40e6, 100) for c in COINS])
-        e.store._db.commit()
+    # OI history HEVI would have recorded itself: OI +2% over 24h and +25% over 30d
+    with e.mkt.store._lock:
+        e.mkt.store._db.executemany("INSERT INTO oi(coin,ts,oi_usd,px) VALUES(?,?,?,?)",
+                                    [(c, TUE - 86400, 49e6, 100) for c in COINS]
+                                    + [(c, TUE - 30 * 86400, 40e6, 100) for c in COINS])
+        e.mkt.store._db.commit()
+    return e
+
+
+def manual(e):
+    """Manual-mode tests: autopilot paused, the user types y."""
+    e.set_paused(True)
     return e
 
 
@@ -159,12 +176,13 @@ def sync(e):
 
 
 def test_full_flow_start_card_confirm_fill_tp(eng, clock):
+    manual(eng)
     res = eng.start(100.0)
     assert isinstance(res, Proposal), res
     p = res.plans[0]
     assert p.coin == "SOL" and p.side == "long"
     text = res.text
-    for s in ("Protocol v3.0", "PAPER", "post-only (ALO)", "5m confluence BB+FIB+VP+VWAP", "Isolated",
+    for s in ("HEVI", "Protocol v3.1", "PAPER", "post-only (ALO)", "5m confluence BB+FIB+VP+VWAP", "Isolated",
               "mark-price trigger", "Type \"y\" to confirm", "BTC gate: +1.01%"):
         assert s in text, s
     z = p.sizing
@@ -175,7 +193,7 @@ def test_full_flow_start_card_confirm_fill_tp(eng, clock):
     msg = eng.confirm(None)
     assert isinstance(msg, str) and msg.startswith("[PAPER] Placed #1"), msg
     t = eng.store.trades("pending")[0]
-    assert t["version"] == "3.0" and t["score"] == p.score and t["btc_band"] == "normal"
+    assert t["version"] == "3.1" and t["score"] == p.score and t["btc_band"] == "normal"
 
     # a second start while an entry rests: max 1 position
     assert "already open" in eng.start(100.0)
@@ -203,6 +221,7 @@ def test_full_flow_start_card_confirm_fill_tp(eng, clock):
 
 
 def test_reissue_when_price_moves(eng, clock):
+    manual(eng)
     res = eng.start(None)
     assert isinstance(res, Proposal)
     eng.mkt.mark["SOL"] = 100.4  # +0.4% > 0.3%: the card must be re-issued, not placed
@@ -212,6 +231,7 @@ def test_reissue_when_price_moves(eng, clock):
 
 
 def test_soft_block_then_override(eng):
+    manual(eng)
     eng.analyst.bullish["SOL"] = 1  # news 1/3 bullish fails the (soft) news filter
     res = eng.start(None)
     assert isinstance(res, str) and "No trade today" in res and "override: [your reason]" in res
@@ -235,11 +255,23 @@ def test_hard_rules_cannot_be_overridden(eng, clock):
     assert "BTC -4% or worse" in eng.start(None)
 
 
-def test_missing_unlock_data_fails_every_coin(eng, tmp_path):
+def test_unlock_check_is_off_unless_enabled(eng, tmp_path):
     cal = tmp_path / "calendar.toml"
     cal.write_text(CALENDAR.replace('[unlocks]\ncovered_until = "2027-12-31T00:00:00Z"', '[unlocks]\ncovered_until = ""'))
+    manual(eng)
+    assert isinstance(eng.start(None), Proposal)  # v3.1 default: no unlock data needed
+    eng.pending = None
+    eng.P = dataclasses.replace(PROTOCOL, screener=dataclasses.replace(PROTOCOL.screener, unlock_check=True))
+    eng._init_state()
     res = eng.start(None)
     assert "no coin passes" in res and "token unlock" in res
+
+
+def test_macro_feed_blocks_a_hold_over_cpi(eng):
+    manual(eng)
+    eng.mkt.macro, eng.mkt.macro_cov = [("CPI", TUE + 20 * 3600)], True
+    res = eng.start(None)
+    assert isinstance(res, str) and "M0 macro release" in res
 
 
 def test_breaker_after_sl_and_resweep_limit(eng, clock):
@@ -256,6 +288,7 @@ def test_breaker_after_sl_and_resweep_limit(eng, clock):
 
 
 def test_time_stop_and_friday_flatten(eng, clock):
+    manual(eng)
     res = eng.start(None)
     eng.confirm(None)
     clock[0] += 60
@@ -269,9 +302,106 @@ def test_time_stop_and_friday_flatten(eng, clock):
 
 
 def test_cancel_unfilled_entry_after_4h(eng, clock):
+    manual(eng)
     eng.start(None)
     eng.confirm(None)
     clock[0] += 4 * 3600 + 1
     msgs = sync(eng)
     assert any("entry cancelled" in m and "4h passed" in m for m in msgs), msgs
     assert eng.store.trades("cancelled")
+
+
+# ---------------------------------------------------------------- autopilot (v3.1)
+def test_autopilot_places_without_y_then_waits(eng, clock):
+    eng._started = TUE - 3600  # past the warm-up
+    msgs = eng.autopilot_tick()
+    assert len(msgs) == 1 and "HEVI autopilot: every rule passed" in msgs[0] and "Placed #1" in msgs[0], msgs
+    assert "Type \"y\"" not in msgs[0]
+    assert eng.pending is None and eng.store.trades("pending")
+    clock[0] += 3600
+    assert eng.autopilot_tick() == []  # an entry is resting: max 1, no new scan
+    assert len(eng.store.trades(limit=10)) == 1
+
+
+def test_autopilot_waits_for_warmup_interval_window_and_pause(eng, clock):
+    assert eng.autopilot_tick() == [] and eng._scans["n"] == 0  # warm-up after (re)start
+    eng._started = TUE - 3600
+    eng.analyst.bullish["SOL"] = 1  # nothing passes
+    assert eng.autopilot_tick() == [] and eng._scans["n"] == 1 and "No trade today" in eng._scans["last"]
+    clock[0] += 600
+    eng.autopilot_tick()
+    assert eng._scans["n"] == 1  # next scan only after 30 min
+    eng.set_paused(True)
+    clock[0] += 3600
+    eng.autopilot_tick()
+    assert eng._scans["n"] == 1
+    eng.set_paused(False)
+    clock[0] = datetime(2026, 11, 13, 10, tzinfo=timezone.utc).timestamp()  # Friday: no entries
+    eng.autopilot_tick()
+    assert eng._scans["n"] == 0 or eng._scans["n"] == 1  # new UTC day resets the counter; no scan either way
+    assert not eng.store.trades("pending")
+
+
+def test_autopilot_never_overrides(eng):
+    eng._started = TUE - 3600
+    eng.analyst.bullish["SOL"] = 1  # soft block only - a human could override, the autopilot doesn't
+    assert eng.autopilot_tick() == []
+    assert not eng.store.trades(limit=5)
+
+
+def test_claude_reads_news_only_when_it_matters(eng, clock):
+    eng._started = TUE - 3600
+    real = eng.mkt.whales
+    eng.mkt.whales = lambda: {c: {"ratio": 1.0, "holders": 12, "accounts_scanned": 60} for c in COINS}
+    eng.autopilot_tick()  # every coin now fails a rule other than news: Claude isn't called at all
+    assert eng.analyst.news_calls == 0 and eng._scans["n"] == 1 and not eng.store.trades(limit=5)
+    eng.mkt.whales = real
+    clock[0] += 31 * 60
+    msgs = eng.autopilot_tick()  # SOL passes everything else -> its headlines are rated, then it trades
+    assert eng.analyst.news_calls == 1 and any("Placed #1" in m for m in msgs)
+
+
+def test_autopilot_acts_on_objective_early_exit(eng, clock):
+    eng._started = TUE - 3600
+    eng.autopilot_tick()
+    clock[0] += 60
+    eng.mkt.mark["SOL"] = 99.61
+    sync(eng)
+    assert eng.store.trades("open")
+    eng.mkt.mark["BTC"] = 95.0  # BTC -4.04% from the UTC open: objective exit for longs
+    msgs = sync(eng)
+    assert any("HEVI closed #1 SOL early" in m for m in msgs), msgs
+    assert any("CLOSED (early)" in m for m in msgs), msgs
+    assert eng.store.closed()[0]["exit_type"] == "early"
+
+
+def test_daily_report_once_a_day(eng, clock):
+    clock[0] = datetime(2026, 11, 10, 21, 5, tzinfo=timezone.utc).timestamp()
+    eng._started = clock[0]  # in warm-up: only the report
+    msgs = eng.autopilot_tick()
+    assert len(msgs) == 1 and msgs[0].startswith("HEVI daily report") and "Mode: PAPER" in msgs[0]
+    assert eng.autopilot_tick() == []
+
+
+def test_prove_mode_goes_live_once_the_paper_record_earns_it(eng, clock, monkeypatch):
+    import hlbot.trader as trader_mod
+
+    class FakeLive:
+        is_paper = False
+
+        def __init__(self, cfg, mkt):
+            self.cfg = cfg
+
+    monkeypatch.setattr(trader_mod, "Trader", FakeLive)
+    eng.cfg = dataclasses.replace(eng.cfg, mode="prove")
+    eng._started = clock[0] = TUE + 3600
+    for i in range(20):
+        eng.store.add_trade(coin="ETH", side="long", status="closed", entry=100, sl=98, tp=106, qty=1, leverage=10,
+                            margin=10, created_at=TUE + i, closed_at=TUE + 60 + i, exit_type="tp" if i % 3 else "sl",
+                            pnl=6 if i % 3 else -2, result_r=3.0 if i % 3 else -1.0)
+    msgs = eng._maybe_graduate(clock[0])
+    assert "Add HL_ACCOUNT_ADDRESS" in msgs[0] and not eng.live  # passed, but no wallet configured
+    eng.cfg = dataclasses.replace(eng.cfg, hl_account_address="0xabc", hl_api_private_key="0x" + "1" * 64)
+    msgs = eng._maybe_graduate(clock[0])
+    assert eng.live and "going LIVE" in msgs[0] and eng.store.path.endswith("bot.db")
+    assert eng.mkt.store.get("graduated")["why"].startswith("20 paper trades")

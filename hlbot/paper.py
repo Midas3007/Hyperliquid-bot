@@ -232,7 +232,7 @@ class PaperTrader:
 
     def fees(self) -> Fees:
         f = PROTOCOL.fees
-        return Fees(f.maker_pct, f.taker_pct, f.slippage_pct, "base tier (paper)")
+        return Fees(f.maker_pct, f.taker_pct, f.slippage_pct, "base tier (paper)", f.slippage_on_tp)
 
     def cancel(self, coin: str, oid: int) -> None:
         with self._lock:
