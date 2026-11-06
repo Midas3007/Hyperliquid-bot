@@ -5,8 +5,9 @@
 <script src="teaser-assets/hands.js"></script>
 <script>
 // "Let There Be Liquidity": one engraved gold line (a banknote's guilloche) morphs through the whole film: a
-// rosette, the share-price chart (on-chain, 29 Oct - 5 Nov), two markets with a gap, the spark between the hands
-// of the Genesis pass, a gold coin (5 Nov: 260 trades, +$25.83 before gas, Telegram /today), and the guilloche
+// rosette, the share-price chart (on-chain, season 2: 29 Oct - 6 Nov), two markets with a gap, the spark between the hands
+// of the Genesis pass, a gold coin (season 2 since 29 Oct 11:31 UTC to 6 Nov 16:34 UTC: 1,830 trades, 77% profitable, +$153.78 before
+// gas, counted on-chain the way Telegram's /today does; share price $1.0000 -> $1.6677 from the vault), and the guilloche
 // border of a Genesis certificate. One camera, never cut. 48 s, timed to score-liquidity.py (70 BPM: a bar is 3.43 s).
 const P = new URLSearchParams(location.search)
 const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
@@ -43,10 +44,11 @@ function build() {
 
 // ---------- the line field: N engraved lines, each M points, morphing between shapes ----------
 const N = 46, M = 420
-const PRICE = [1.0020, 1.2120, 1.2460, 1.2996, 1.4235, 1.4606, 1.5072, 1.5642]
-const DAYS = ['29 Oct', '30 Oct', '31 Oct', '1 Nov', '2 Nov', '3 Nov', '4 Nov', '5 Nov']
+const PRICE = [1.0000, 1.2120, 1.2460, 1.2996, 1.4235, 1.4606, 1.5072, 1.5642, 1.6677]
+const DAYS = ['29 Oct', '30 Oct', '31 Oct', '1 Nov', '2 Nov', '3 Nov', '4 Nov', '5 Nov', 'today']
 const chartX = (u) => lerp(-900, 900, u)
-const chartY = (u) => { const f = u * 7, i = Math.min(6, Math.floor(f)), k = f - i, e = (1 - Math.cos(Math.PI * k)) / 2; return 260 - (lerp(PRICE[i], PRICE[i + 1], e) - 1) / .6 * 520 }
+const NS = PRICE.length - 1
+const chartY = (u) => { const f = u * NS, i = Math.min(NS - 1, Math.floor(f)), k = f - i, e = (1 - Math.cos(Math.PI * k)) / 2; return 260 - (lerp(PRICE[i], PRICE[i + 1], e) - 1) / .7 * 520 }
 const SHAPES = {
   rosette: (i, u, t, s = 1) => { const a = u * TAU, ph = i / N, r = (300 + 70 * Math.sin(12 * a + ph * 2.2 + t * .15) + 26 * Math.sin(5 * a - ph * 1.3)) * (.86 + .14 * ph) * s; return [Math.cos(a) * r, Math.sin(a) * r] },
   chart: (i, u, t) => [chartX(u), chartY(u) + (i - N / 2) * 2.6 + Math.sin(u * 60 + i * .7) * 1.6],
@@ -60,7 +62,7 @@ const SHAPES = {
   seal: (i, u, t) => SHAPES.rosette(i, u, t, .42),
 }
 // the sequence: [shape, time it is fully formed]
-const SEQ = [['rosette', 4.6], ['chart', B(2) + 1.4], ['waves', B(4) + 1.2], ['spark', B(6) + 1.6], ['coin', B(8) + 1.3], ['border', B(10) + 1.4], ['seal', B(12) + 1.4]]
+const SEQ = [['rosette', 4.6], ['chart', B(2) + 1.4], ['waves', B(4) + 2.0], ['spark', B(6) + 1.6], ['coin', B(8) + 1.3], ['border', B(10) + 1.4], ['seal', B(12) + 1.4]]
 const MORPH = 2.4 // seconds each morph takes
 function lineState(t) {
   let i = 0; while (i < SEQ.length - 1 && t >= SEQ[i + 1][1] - MORPH) i++
@@ -84,7 +86,7 @@ function drawLines(t, color, alpha, width = 1.15) {
   g.restore()
 }
 // ---------- camera: a spline through keyframes [t, x, y, zoom, rotation] (world = 1920 x 1080 around 0,0) ----------
-const KF = [[0, 0, 0, .78, -.06], [4.6, 0, 0, .9, -.02], [B(2) - .3, -60, 30, .95, 0], [B(2) + 1.6, -560, 90, 1.2, .015], [B(4) - .4, 560, -120, 1.2, .02],
+const KF = [[0, 0, 0, .78, -.06], [4.6, 0, 0, .9, -.02], [B(2) - .3, -60, 30, .95, 0], [B(2) + 1.6, -560, 90, 1.2, .015], [B(4) + .1, 720, -190, 1.2, .02],
   [B(4) + 1.2, 0, 0, .92, 0], [B(6) - .4, 0, 0, 1.0, -.01], [B(6) + 1.8, 0, 0, 1.55, 0], [B(8) - .2, 0, 0, 1.65, .01], [B(8) + 1.3, 160, 0, 1.2, 0],
   [B(10) - .3, 140, 0, 1.12, -.01], [B(10) + 1.6, 0, 0, .78, 0], [B(12) - .3, 0, 0, .8, .01], [B(12) + 1.4, 0, -40, 1.0, 0], [48, 0, -40, 1.06, 0]]
 function spline(t, j) {
@@ -109,12 +111,12 @@ function microRing(r, text, size, a, rot) { if (a <= 0) return; g.save(); g.glob
   const n = Math.floor(TAU * r / (size * .78)); for (let k = 0; k < n; k++) { g.save(); g.rotate(k / n * TAU); g.fillText(text[k % text.length], 0, -r); g.restore() } g.restore() }
 
 function chartLabels(t) {
-  const a = inout(t, B(2) + .6, B(4) - .8); if (a <= 0) return
-  DAYS.forEach((d, i) => { const u = i / 7, x = chartX(u), y = chartY(u), k = a * smooth((t - B(2) - .4 - i * .25) / .5)
-    dot(x, y, 22, 'rgba(243,215,122,.7)', k); txt(d, x, y + 74, 22, SOFT, k, { font: MONO }); txt(`$${PRICE[i].toFixed(2)}`, x, y - 50, 24, GOLD2, k * (i === 0 || i === 7 ? 1 : .7), { font: MONO, weight: 600 }) })
+  const a = inout(t, B(2) + .6, B(4) - .6); if (a <= 0) return
+  DAYS.forEach((d, i) => { const u = i / NS, x = chartX(u), y = chartY(u), k = a * smooth((t - B(2) - .4 - i * .25) / .5)
+    dot(x, y, 22, 'rgba(243,215,122,.7)', k); txt(d, x, y + 74, 22, SOFT, k, { font: MONO }); txt(`$${PRICE[i].toFixed(2)}`, x, y - 50, 24, GOLD2, k * (i === 0 || i === NS ? 1 : .7), { font: MONO, weight: 600 }) })
 }
 function waveLabels(t) {
-  const a = inout(t, B(4) + .8, B(6) - .7); if (a <= 0) return
+  const a = inout(t, B(4) + 1.4, B(6) - .7); if (a <= 0) return
   txt('UNISWAP', -800, -250, 24, SOFT, a, { font: MONO, spacing: 8, align: 'left' }); txt('TEXTILE', -800, 260, 24, SOFT, a, { font: MONO, spacing: 8, align: 'left' })
   const pulse = .6 + .4 * Math.sin(t * 2.4) ** 2; dot(0, 0, 160, 'rgba(243,215,122,.55)', a * pulse)
   txt('the gap', 0, 0, 28, GOLD2, a, { italic: true })
@@ -148,7 +150,7 @@ function coin(t) {
   g.globalCompositeOperation = 'source-atop'; g.fillStyle = lg; g.fillRect(-r, -r, 2 * r, 2 * r)
   g.restore()
   const k = smooth((t - B(8) - 1.2) / .8) * (1 - smooth((t - B(10) + .4) / .8))
-  txt('5 NOVEMBER', 260, -60, 22, SOFT, k, { font: MONO, spacing: 8, align: 'left' }); txt('260 trades', 260, -6, 52, WHITE, k, { weight: 700, align: 'left' }); txt('+$25.83 before gas', 260, 50, 30, GOLD2, k, { font: MONO, weight: 600, align: 'left' })
+  txt('SEASON 2 · SINCE 29 OCT', 260, -86, 22, SOFT, k, { font: MONO, spacing: 6, align: 'left' }); txt('1,830 trades', 260, -32, 52, WHITE, k, { weight: 700, align: 'left' }); txt('+$153.78 before gas', 260, 24, 30, GOLD2, k, { font: MONO, weight: 600, align: 'left' }); txt('77% profitable · share price +67%', 260, 70, 22, SOFT, k, { font: MONO, align: 'left' })
 }
 function certificate(t) {
   const a = inout(t, B(10) + .6, B(12) + .4, 1.2); if (a <= 0) return
@@ -164,7 +166,7 @@ function certificate(t) {
   const sk = k(.9); if (sk > 0) { g.save(); g.globalAlpha = sk; g.fillStyle = '#9c1e28'; g.beginPath(); g.arc(440, 200, 74, 0, TAU); g.fill(); g.restore(); fan(440, 210, 46, '#e8b8b0', sk * .85) }
 }
 function captions(t) {
-  const C = [[.9, 4.9, 'Fiat lux.'], [B(2) - .1, B(4) - 1.0, 'Let there be liquidity.'], [B(4) + .5, B(6) - .8, 'Two markets, never quite equal.'],
+  const C = [[.9, 4.9, 'Fiat lux.'], [B(2) - .1, B(4) - .2, 'Let there be liquidity.'], [B(4) + 1.2, B(6) - .8, 'Two markets, never quite equal.'],
     [B(6) + .4, B(8) - .5, 'Kiyoshi lives in the space between them.'], [B(8) + .5, B(10) - .6, 'One spark at a time.'], [B(10) + .8, B(12) - .4, 'Coming to the members of the fund.']]
   for (const [a, b, s] of C) txt(s, 960, 964, 50, WHITE, inout(t, a, b, .7), { italic: true, glow: 'rgba(0,0,0,.8)' })
 }
