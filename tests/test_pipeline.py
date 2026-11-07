@@ -405,3 +405,19 @@ def test_prove_mode_goes_live_once_the_paper_record_earns_it(eng, clock, monkeyp
     msgs = eng._maybe_graduate(clock[0])
     assert eng.live and "going LIVE" in msgs[0] and eng.store.path.endswith("bot.db")
     assert eng.mkt.store.get("graduated")["why"].startswith("20 paper trades")
+
+
+def test_status_says_when_the_next_scan_is(eng, clock):
+    eng._started = TUE - 3600
+    text = eng.status()
+    assert "Next scan: Tue 10 Nov 12:00 UTC (every 30 min)" in text and "Go-live gate" not in text
+    assert "Paper only" in text and "Market history" not in text  # fixture has 30 days of OI history
+    clock[0] = datetime(2026, 11, 7, 6, 4, tzinfo=timezone.utc).timestamp()  # a Saturday
+    eng._started = clock[0]
+    with eng.mkt.store._lock:
+        eng.mkt.store._db.execute("DELETE FROM oi")
+        eng.mkt.store._db.execute("INSERT INTO oi(coin,ts,oi_usd,px) VALUES('SOL',?,1,1)", (clock[0] - 6 * 3600,))
+        eng.mkt.store._db.commit()
+    text = eng.status()
+    assert "Next scan: Mon 09 Nov 00:00 UTC (entries are Mon-Thu UTC; none on Fri-Sun)" in text
+    assert "Market history: 6h of the 24h needed" in text and "Sun 00:04 UTC" in text

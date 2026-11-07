@@ -214,6 +214,11 @@ class Store:
             return rows[0]
         return None
 
+    def oi_history_hours(self) -> float:
+        """How many hours of OI snapshots exist (the OI 24h filter needs a full day)."""
+        rows = self._q("SELECT MIN(ts) a FROM oi")
+        return (time.time() - rows[0]["a"]) / 3600 if rows and rows[0]["a"] else 0.0
+
     def add_whales(self, rows: list[tuple[str, float]]) -> None:
         now = time.time()
         with self._lock:

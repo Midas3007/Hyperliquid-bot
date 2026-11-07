@@ -1331,7 +1331,35 @@ class Engine:
             out.append(f"#{t['id']} pending {t['coin']} {t['side']} limit {fmt(t['entry'])}")
         if len(out) == 3:
             out.append("No positions or pending entries.")
+        out += self._schedule_lines(time.time())
         return "\n".join(out)
+
+    def _schedule_lines(self, now: float) -> list[str]:
+        """When the next scan happens and what HEVI is still waiting for - so 'why no trades?' answers itself."""
+        P, A = self.P, self.P.autopilot
+        hist = self.mkt.store.oi_history_hours()
+        lines = [self.go_live_status().capitalize()]
+        if hist < 24:
+            ready = now + (24 - hist) * 3600
+            lines.append(f"Market history: {hist:.0f}h of the 24h needed - no coin can pass the OI filter before "
+                         f"{time.strftime('%a %H:%M', time.gmtime(ready))} UTC (needs the phone online)")
+        if not A.enabled:
+            return lines + ["Autopilot off - trade manually with start ($X)"]
+        if self.paused:
+            return lines + ["Autopilot paused - /resume to scan again"]
+        if self.store.trades("open") or self.store.trades("pending"):
+            return lines + ["Next scan: after the current trade closes (max 1 at a time)"]
+        warm = self._started + A.warmup_min * 60
+        if sch.entry_window_open(now, P.schedule) and not sch.must_be_flat(now, P.schedule):
+            nxt = max(now, warm, self._last_scan + A.scan_every_min * 60)
+            why = f"every {A.scan_every_min:g} min"
+        else:
+            d = time.gmtime(now)
+            days = (7 - d.tm_wday) % 7 or 7  # next Monday
+            nxt = max(brk.utc_day_start(now) + days * 86400, warm)
+            why = "entries are Mon-Thu UTC; none on Fri-Sun"
+        lines.append(f"Next scan: {time.strftime('%a %d %b %H:%M', time.gmtime(nxt))} UTC ({why})")
+        return lines
 
     def journal(self, n: int = 10) -> str:
         rows = [t for t in self.store.trades(limit=50) if t["status"] in ("closed", "open", "pending")][:n]
