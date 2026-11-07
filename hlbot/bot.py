@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import socket
 import time
 
 from telegram import BotCommand, Update
@@ -105,6 +106,7 @@ class Bot:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app: Application | None = None
         self._fills_on = False
+        self._offline_since: float | None = None
 
     # ------------------------------------------------------------ plumbing
     def _authorized(self, update: Update) -> bool:
@@ -333,7 +335,44 @@ class Bot:
                                   "count from here.")
 
     # ------------------------------------------------------------ jobs
+    # ------------------------------------------------------------ internet watchdog
+    @staticmethod
+    def _online(host: str = "api.hyperliquid.xyz") -> bool:
+        try:
+            socket.getaddrinfo(host, 443)
+            return True
+        except OSError:
+            return False
+
+    async def _net_check(self, app: Application) -> bool:
+        """Once a minute: is the phone online? While it isn't, HEVI skips its work instead of logging errors
+        every 20 seconds, and it tells you how long it was offline once the connection is back."""
+        try:
+            up = await asyncio.wait_for(asyncio.to_thread(self._online), timeout=15)
+        except asyncio.TimeoutError:
+            up = False
+        now = time.time()
+        if not up:
+            if self._offline_since is None:
+                self._offline_since = now
+                log.warning("Internet is down (can't reach Hyperliquid). HEVI pauses its work and keeps checking; "
+                            "TP/SL on the exchange still protect any open position.")
+            return False
+        if self._offline_since is not None:
+            gone = now - self._offline_since
+            self._offline_since = None
+            log.info("Internet is back after %.0f min", gone / 60)
+            if gone >= 300:
+                await self._push(app, (
+                    f"HEVI was offline for {gone / 60:.0f} min (from "
+                    f"{time.strftime('%H:%M', time.gmtime(now - gone))} UTC) - your phone lost its connection. "
+                    "Any open position stayed protected by the TP/SL on Hyperliquid. Tip: Android may be cutting "
+                    "Termux's network in the background; see the README's 'Keep it online' section."))
+        return True
+
     async def _job(self, ctx: ContextTypes.DEFAULT_TYPE, fns) -> None:
+        if self._offline_since is not None:
+            return  # no internet: nothing useful can run; the watchdog reports when it's back
         msgs: list[str] = []
         for fn in fns:
             try:
@@ -341,7 +380,12 @@ class Bot:
                 if isinstance(out, str):
                     out = [out]
                 msgs += out or []
+            except (OSError, ConnectionError) as e:  # network blips: one line, no traceback
+                log.warning("%s skipped - network problem: %s", getattr(fn, "__name__", fn), str(e)[:160])
             except Exception as e:  # noqa: BLE001
+                if "Max retries exceeded" in str(e) or "Failed to resolve" in str(e):
+                    log.warning("%s skipped - network problem", getattr(fn, "__name__", fn))
+                    continue
                 log.exception("%s failed", getattr(fn, "__name__", fn))
                 if int(time.time()) % 900 < 20:  # at most ~every 15 min
                     msgs.append(f"({getattr(fn, '__name__', 'job')} error: {e})")
@@ -360,6 +404,12 @@ class Bot:
         await self._job(ctx, [self.engine.hourly])
 
     async def job_autopilot(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._net_check(ctx.application):
+            return
+        try:
+            await asyncio.to_thread(self.engine.mkt.flow.heal)
+        except Exception as e:  # noqa: BLE001
+            log.warning("trade stream reconnect failed (will retry): %s", str(e)[:160])
         self._ensure_fill_stream()
         if self._busy.locked():
             return

@@ -71,14 +71,30 @@ stay on, charged and online for HEVI to work. For 24/7 reliability, use Railway 
    ```
    Message your bot in Telegram. It replies with your **chat id**. Put it in `.env` as `TELEGRAM_CHAT_ID`, then
    restart (Ctrl+C twice, then run the start command again). Only that chat can control HEVI.
-7. **Keep it alive:**
-   - Android Settings → Apps → Termux → Battery → **Unrestricted**.
-   - Leave the Termux notification on.
-   - `termux-run.sh` holds a wake lock and restarts HEVI if it crashes.
+7. **Keep it alive and online.** See [Keep it online](#keep-it-online-android) below; this matters most
+   overnight.
 8. **When HEVI may go live:** add `HL_ACCOUNT_ADDRESS` and `HL_API_PRIVATE_KEY` (see Hyperliquid setup below).
    - With `MODE=prove`, nothing changes until the paper record passes the gate; then HEVI switches by itself and
      tells you.
    - Without the keys, it keeps paper trading and tells you when the record is ready.
+
+### Keep it online (Android)
+Android cuts background apps off the internet to save battery, usually overnight with the screen off. In HEVI's
+log that looks like `Failed to resolve ...` or `Network is unreachable`. HEVI pauses while offline and messages
+you when it's back after more than 5 minutes. Positions stay protected by the TP/SL on Hyperliquid, but time
+stops, Friday closes and new trades wait until the phone is back online. To prevent it:
+
+- **Battery:** Settings → Apps → Termux → Battery → **Unrestricted**.
+  - Samsung: also Settings → Battery → Background usage limits → **Never sleeping apps** → add Termux.
+  - Xiaomi: also Autostart **on** and Battery saver **No restrictions**.
+- **Data:** Settings → Apps → Termux → Mobile data → allow **Background data** and **Unrestricted data**
+  (Data Saver).
+- **Wi-Fi:** if your phone has *Keep Wi-Fi on during sleep*, set it to **Always**. Turn off any "Wi-Fi power
+  saving".
+- **Wake lock:** keep the phone on its charger, and leave the Termux notification showing "wake lock held"
+  (`termux-run.sh` takes it). Don't swipe Termux away from recent apps.
+- **Last resort:** if it still drops out every night, the phone's maker is too aggressive for a 24/7 bot. Use
+  Railway below.
 
 ## Run it on Railway (24/7, about $5/month)
 1. Sign in to railway.app with GitHub → **New Project → Deploy from GitHub repo** → pick this repo.

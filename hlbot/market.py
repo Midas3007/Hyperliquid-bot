@@ -37,6 +37,25 @@ from .rules.sizing import Fees
 from .store import Store
 
 log = logging.getLogger(__name__)
+_last_said: dict[str, float] = {}
+
+
+def quiet(key: str, msg: str, *args, every_s: float = 1800, level: int = logging.WARNING) -> None:
+    """Log a recurring problem (a feed down, no internet) at most once per `every_s` instead of every fetch."""
+    now = time.time()
+    if now - _last_said.get(key, 0) >= every_s:
+        _last_said[key] = now
+        log.log(level, msg, *args)
+
+
+def short(e: Exception) -> str:
+    """'Failed to resolve host' instead of a 300-character urllib3 chain."""
+    text = str(e)
+    for marker in ("Failed to resolve", "Network is unreachable", "timed out", "Connection refused",
+                   "not well-formed", "Max retries exceeded"):
+        if marker in text:
+            return marker
+    return text[:120]
 
 INTERVAL_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 LEADERBOARD_URL = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
@@ -48,7 +67,6 @@ RSS_FEEDS = [
     "https://decrypt.co/feed",
     "https://bitcoinmagazine.com/.rss/full/",
     "https://www.theblock.co/rss.xml",
-    "https://cryptoslate.com/feed/",
     "https://bitcoinist.com/feed/",
     "https://www.newsbtc.com/feed/",
     "https://cryptopotato.com/feed/",
@@ -147,10 +165,17 @@ class FlowCollector:
                 notional = float(t["px"]) * float(t["sz"])
                 self._trades[coin].append((t["time"] / 1000, t["side"], notional))
 
-    def ensure(self, coins: list[str]) -> None:
-        stale = self._info is not None and self._subs and time.time() - self._last_msg > 300
+    def heal(self, silent_s: float = 120) -> None:
+        """Reconnect the trade stream if it has gone quiet (Hyperliquid expires sockets; phones drop networks).
+        Called every minute, so a dropped stream is back within ~2 minutes instead of at the next hourly job."""
+        if self._info is not None and self._subs and time.time() - self._last_msg > silent_s:
+            self.ensure(list(self._subs), silent_s=silent_s)
+
+    def ensure(self, coins: list[str], silent_s: float = 300) -> None:
+        stale = self._info is not None and self._subs and time.time() - self._last_msg > silent_s
         if stale:
-            log.warning("trade stream silent for 5 min - reconnecting")
+            log.warning("trade stream silent for %.0f min - reconnecting (buy/sell data restarts its 30-min window)",
+                        silent_s / 60)
             try:
                 self._info.disconnect_websocket()
             except Exception:  # noqa: BLE001
@@ -304,7 +329,7 @@ class Market:
                 return Fees(float(f["userAddRate"]) * 100, float(f["userCrossRate"]) * 100, P.fees.slippage_pct,
                             "your Hyperliquid fee tier", P.fees.slippage_on_tp)
             except Exception as e:  # noqa: BLE001
-                log.warning("userFees: %s", e)
+                quiet("fees", "userFees unavailable (%s) - using base-tier fees", short(e))
                 return None
 
         got = self._cached(f"fees:{address}", 600, load) if address else None
@@ -351,7 +376,7 @@ class Market:
                 d = self._http.get(FNG_URL, timeout=10).json()["data"][0]
                 return {"value": int(d["value"]), "label": d["value_classification"]}
             except Exception as e:  # noqa: BLE001
-                log.warning("fear&greed: %s", e)
+                quiet("fng", "Fear & Greed unavailable: %s", short(e))
                 return None
 
         return self._cached("fng", 600, load)
@@ -376,7 +401,7 @@ class Market:
                 return {"dvol": cur, "rank": rank, "rank_24h_ago": rank_ago, "change_24h": cur - day_ago,
                         "source": f"Deribit DVOL ({currency}) IV percentile"}
             except Exception as e:  # noqa: BLE001
-                log.warning("dvol %s: %s", currency, e)
+                quiet(f"dvol:{currency}", "Deribit DVOL %s unavailable: %s", currency, short(e))
                 return None
 
         return self._cached(f"dvol:{currency}", 600, load)
@@ -388,7 +413,7 @@ class Market:
             try:
                 rows = self._http.get(LEADERBOARD_URL, timeout=30).json()["leaderboardRows"]
             except Exception as e:  # noqa: BLE001
-                log.warning("leaderboard: %s", e)
+                quiet("leaderboard", "whale leaderboard unavailable: %s", short(e))
                 return {}
             rows = sorted(rows, key=lambda r: float(r.get("accountValue") or 0), reverse=True)
             addrs = [r["ethAddress"] for r in rows[: P.deep_dive.whale_accounts]]
@@ -424,12 +449,15 @@ class Market:
     def news(self, coin: str, limit: int = 5) -> list[dict]:
         """Latest headlines about `coin`, newest first: general crypto RSS feeds plus a Google News search."""
         def load_all():
-            items = []
+            items, down = [], []
             for url in RSS_FEEDS:
                 try:
                     items += parse_rss(self._http.get(url, timeout=10).content, url.split("/")[2])
                 except Exception as e:  # noqa: BLE001
-                    log.info("rss %s: %s", url, e)
+                    down.append(url.split("/")[2])
+                    quiet(f"rss:{url}", "news feed %s skipped: %s", url.split("/")[2], short(e), level=logging.INFO)
+            if len(down) == len(RSS_FEEDS):
+                quiet("rss:all", "all news feeds unreachable - is the phone online?")
             return items
 
         sym = base_symbol(coin)
@@ -442,7 +470,7 @@ class Market:
                                    timeout=10)
                 return parse_rss(r.content, "news.google.com")
             except Exception as e:  # noqa: BLE001
-                log.info("google news %s: %s", coin, e)
+                quiet("gnews", "Google News unavailable: %s", short(e), level=logging.INFO)
                 return []
 
         pat = re.compile(rf"\b{re.escape(sym)}\b" + (rf"|\b{re.escape(name)}\b" if name else ""), re.I if name else 0)
@@ -464,7 +492,7 @@ class Market:
             try:
                 rows = self._http.get(FF_CALENDAR_URL, timeout=15).json()
             except Exception as e:  # noqa: BLE001
-                log.warning("macro calendar feed: %s", e)
+                quiet("ffcal", "macro calendar feed unavailable (%s) - using calendar.toml", short(e))
                 return None
             if not isinstance(rows, list) or not rows:
                 return None
