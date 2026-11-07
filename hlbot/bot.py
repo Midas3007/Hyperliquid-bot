@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import socket
 import time
 
 from telegram import BotCommand, Update
-from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
+from telegram.error import BadRequest, Conflict, Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .config import CFG
@@ -73,6 +74,22 @@ RESWEEP = {"nah", "skip", "try another", "another"}
 HOW = re.compile(r"^\s*how('?s| is) it going\??\s*$", re.I)
 
 
+def railway_volume_warning(env: dict, data_dir: str) -> str | None:
+    """On Railway, HEVI's journal, paper record and market history only survive redeploys on a volume.
+    Railway sets RAILWAY_VOLUME_MOUNT_PATH for a service with a volume attached."""
+    if not (env.get("RAILWAY_PROJECT_ID") or env.get("RAILWAY_ENVIRONMENT_NAME")):
+        return None  # not on Railway
+    mount = env.get("RAILWAY_VOLUME_MOUNT_PATH")
+    data = os.path.abspath(data_dir)
+    if not mount:
+        return ("No Railway volume is attached, so HEVI's memory (paper record, market history, trade journal) "
+                "is wiped on every redeploy. Railway -> your service -> Volumes -> add one at /data.")
+    if not (data + "/").startswith(os.path.abspath(mount).rstrip("/") + "/"):
+        return (f"HEVI saves to {data}, which isn't on the volume mounted at {mount}. Set the volume's mount path "
+                "to /data (or remove the DATA_DIR variable).")
+    return None
+
+
 def parse(text: str) -> tuple[str, object]:
     """Text command -> (name, argument). Pure, so it is unit-tested."""
     t = (text or "").strip()
@@ -107,6 +124,10 @@ class Bot:
         self._app: Application | None = None
         self._fills_on = False
         self._offline_since: float | None = None
+        self._conflict_since: float | None = None   # another copy polling the same Telegram bot
+        self._conflict_last = 0.0
+        self._conflict_logged = 0.0
+        self._conflict_alerted = 0.0
 
     # ------------------------------------------------------------ plumbing
     def _authorized(self, update: Update) -> bool:
@@ -143,8 +164,29 @@ class Bot:
                     return False
         return True
 
+    def _note_conflict(self, now: float) -> bool:
+        """Track Telegram 'Conflict' errors. True when it's time to alert: they have kept coming for 2+ minutes
+        (a Railway redeploy overlap lasts seconds), at most once an hour."""
+        if self._conflict_since is None or now - self._conflict_last > 90:
+            self._conflict_since = now
+        self._conflict_last = now
+        return now - self._conflict_since >= 120 and now - self._conflict_alerted >= 3600
+
     async def on_error(self, update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """Network blips get one log line; anything else gets the full traceback."""
+        """Network blips and redeploy overlaps get one log line; anything else gets the full traceback."""
+        if isinstance(ctx.error, Conflict):
+            now = time.time()
+            if self._note_conflict(now):
+                self._conflict_alerted = now
+                await self._push(ctx.application, (
+                    "Warning: another copy of HEVI is connected to this Telegram bot - for 2+ minutes now, so it isn't "
+                    "a redeploy. Stop the other copy (Termux on your phone, or a second Railway service): two copies "
+                    "would both trade the same account."))
+            if now - self._conflict_logged >= 60:
+                self._conflict_logged = now
+                log.warning("Another copy of this bot is polling Telegram (normal for a few seconds while Railway "
+                            "swaps the old deployment for the new one).")
+            return
         if isinstance(ctx.error, NetworkError) and not isinstance(ctx.error, (BadRequest, Forbidden)):
             log.warning("Telegram network error (will retry automatically): %s", ctx.error)
         else:
@@ -459,6 +501,10 @@ class Bot:
                 if e.autopilot_on else "autopilot PAUSED" if e.paused else "autopilot off")
         await self._push(app, f"HEVI online - {e.label()}.\nProtocol v{e.P.version}, risk {e.user_risk_pct:g}% per "
                               f"trade, {auto}. First scan after a {e.P.autopilot.warmup_min:g}-min warm-up. /help")
+        warn = railway_volume_warning(dict(os.environ), CFG.data_dir)
+        if warn:
+            log.warning(warn)
+            await self._push(app, "Warning: " + warn)
 
     def run(self) -> None:
         app = (Application.builder().token(CFG.telegram_token).post_init(self.on_startup)

@@ -142,3 +142,41 @@ def test_trade_stream_heals_after_going_quiet(monkeypatch):
     fc._last_msg -= 200  # silent for > 2 min
     fc.heal()
     assert len(made) == 2 and set(fc._subs) == {"SOL", "ETH"}  # reconnected and resubscribed
+
+
+def test_redeploy_overlap_is_one_line_but_a_second_copy_alerts(monkeypatch, caplog):
+    from telegram.error import Conflict
+
+    b = make_bot()
+    b._conflict_since, b._conflict_last, b._conflict_logged, b._conflict_alerted = None, 0.0, 0.0, 0.0
+    tg = FakeTgBot(fail_times=0)
+
+    class Ctx:
+        application = FakeApp(tg)
+        error = Conflict("terminated by other getUpdates request")
+
+    clock = [10_000.0]
+    monkeypatch.setattr(bot_mod.time, "time", lambda: clock[0])
+    with caplog.at_level("WARNING"):
+        for _ in range(4):  # a redeploy overlap: a few conflicts within seconds
+            asyncio.run(b.on_error(None, Ctx()))
+            clock[0] += 4
+    assert tg.sent == [] and sum("Another copy" in r.message for r in caplog.records) == 1
+    assert not any(r.exc_info for r in caplog.records)  # no traceback
+
+    clock[0] += 300  # much later: a fresh episode that keeps going for 2+ minutes = a real second copy
+    for _ in range(14):
+        asyncio.run(b.on_error(None, Ctx()))
+        clock[0] += 10
+    assert len(tg.sent) == 1 and "another copy of HEVI" in tg.sent[0]
+
+
+def test_railway_volume_warning():
+    w = bot_mod.railway_volume_warning
+    assert w({}, "/data") is None  # not on Railway (e.g. Termux)
+    on = {"RAILWAY_PROJECT_ID": "p"}
+    assert "No Railway volume" in w(on, "/data")
+    assert w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data"}, "/data") is None
+    assert w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data/"}, "/data/sub") is None
+    assert "isn't on the volume" in w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data"}, "/app/data")
+    assert "isn't on the volume" in w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data"}, "/database")
