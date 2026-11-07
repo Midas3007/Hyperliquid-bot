@@ -393,8 +393,11 @@ def test_card_and_final_check():
 
 def test_go_live_gate():
     a = P.autopilot
+    assert a.go_live_min_trades == 10
     ok, why = review.go_live_ready([lt(3.0)] * 5, a)
-    assert not ok and "5/20" in why
+    assert not ok and "5/10" in why
+    assert not review.go_live_ready([lt(3.0)] * 3 + [lt(-1.0, "sl")] * 6, a)[0]  # 9 trades: one short
+    assert review.go_live_ready([lt(3.0)] * 4 + [lt(-1.0, "sl")] * 6, a)[0]  # 10 trades, +0.6R/trade, PF 2.0
     ok, _ = review.go_live_ready([lt(3.0)] * 6 + [lt(-1.0, "sl")] * 14, a)  # +0.2R/trade, PF 1.29
     assert ok
     ok, why = review.go_live_ready([lt(3.0)] * 5 + [lt(-1.0, "sl")] * 15, a)  # 0R/trade

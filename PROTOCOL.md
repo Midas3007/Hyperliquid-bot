@@ -414,7 +414,7 @@ It also:
 
 - sends a message for every trade, and a daily report at 21:00 UTC (mode, equity, drawdown, trades, scans and why
   the last scan placed nothing)
-- **MODE=prove** (default): runs on the paper trader until the record passes the go-live gate (20+ trades,
+- **MODE=prove** (default): runs on the paper trader until the record passes the go-live gate (10+ trades,
   expectancy ≥ +0.10R per trade, profit factor ≥ 1.2), then switches to real money once flat. Without the
   Hyperliquid keys it says the record is ready and keeps paper trading. `MODE=paper` never goes live;
   `MODE=live` starts live.
@@ -624,7 +624,7 @@ HEVI autopilot: every rule passed - placing it now.
 | Q17 | F&G staleness | By fetch time (kept) |
 | Q18 | Half risk with a custom risk | min(5%, risk / 2) (kept) |
 | Q19 | Slippage at TP | **Counted** |
-| — | Human confirmation | **Replaced by autopilot** (your call); prove-then-live by default |
+| — | Human confirmation | **Replaced by autopilot** (your call); prove-then-live by default, going live after **10** paper trades (your call, was 20) |
 
 ---
 

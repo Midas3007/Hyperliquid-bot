@@ -15,7 +15,7 @@ Challenge Protocol to the letter:
 - **Protected on the exchange.** Entries are post-only limits with the stop-loss and take-profit attached as
   mark-price triggers. If HEVI's process dies, your position stays protected.
 - **Prove, then live (default).** HEVI paper-trades on live prices until its paper record shows an edge: at
-  least 20 trades, +0.10R per trade and wins at least 1.2× losses. Then it switches to real money by itself.
+  least 10 trades, +0.10R per trade and wins at least 1.2× losses. Then it switches to real money by itself.
 - **Claude only reads text.** It rates news headlines, writes the post-trade study, and flags thesis-breaking
   news. It never picks or sizes trades.
 
@@ -27,7 +27,7 @@ HEVI:  # HEVI - Open Limit Order - Protocol v3.1 (Hyperliquid) ... SOL long, $99
        HEVI autopilot: every rule passed - placing it now.  Placed #1 ...
 HEVI:  #1 SOL entry filled at ~99.61.
 HEVI:  #1 SOL LONG CLOSED (tp) at 105.7271 -> $+37.71 = +3.77R + study
-HEVI:  HEVI daily report - Tue 10 Nov (UTC) | Mode: PROVING ... | go-live gate: 1/20 paper trades so far
+HEVI:  HEVI daily report - Tue 10 Nov (UTC) | Mode: PROVING ... | go-live gate: 1/10 paper trades so far
 ```
 
 ## What to expect, honestly
@@ -39,7 +39,7 @@ HEVI:  HEVI daily report - Tue 10 Nov (UTC) | Mode: PROVING ... | go-live gate: 
   - Hyperliquid has no open-interest history, so HEVI records its own. **No coin passes for the first 24 hours
     after the first deploy.**
   - After every restart, HEVI waits 30 minutes for trade-flow data.
-- **Proof takes time.** At a few trades a week, the 20-trade paper record takes weeks. `MODE=live` skips it, at
+- **Proof takes time.** At a few trades a week, the 10-trade paper record takes a few weeks. `MODE=live` skips it, at
   your own risk.
 
 ## Run it on your phone with Termux
