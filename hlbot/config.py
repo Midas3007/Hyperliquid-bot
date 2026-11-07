@@ -30,6 +30,20 @@ def _b(name: str, default: bool) -> bool:
     return v.strip().lower() in ("1", "true", "yes", "on")
 
 
+def resolve_data_dir(env: dict) -> str:
+    """Where HEVI keeps its journal, paper record and market history.
+
+    DATA_DIR if set, else ./data. On Railway with a volume attached, the volume wins whenever DATA_DIR points
+    somewhere else: anything outside the volume is wiped on every redeploy, which is never what you want."""
+    d = env.get("DATA_DIR") or "./data"
+    mount = env.get("RAILWAY_VOLUME_MOUNT_PATH")
+    if mount:
+        root = os.path.abspath(mount).rstrip("/") + "/"
+        if not (os.path.abspath(d).rstrip("/") + "/").startswith(root):
+            return mount
+    return d
+
+
 @dataclass(frozen=True)
 class Config:
     # --- credentials (never logged) ------------------------------------------
@@ -51,7 +65,7 @@ class Config:
     paper_balance: float = field(default_factory=lambda: _f("PAPER_BALANCE", 100.0))
 
     # --- runtime -------------------------------------------------------------
-    data_dir: str = field(default_factory=lambda: os.getenv("DATA_DIR", "./data"))
+    data_dir: str = field(default_factory=lambda: resolve_data_dir(dict(os.environ)))
     protocol_path: str = field(default_factory=lambda: os.getenv("PROTOCOL_FILE", ""))
     calendar_path: str = field(default_factory=lambda: os.getenv("CALENDAR_FILE", ""))
     whale_cache_min: int = field(default_factory=lambda: min(_i("WHALE_CACHE_MIN", 10), 14))  # < 15 min stale rule

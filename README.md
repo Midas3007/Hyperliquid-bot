@@ -98,7 +98,7 @@ stops, Friday closes and new trades wait until the phone is back online. To prev
 
 ## Run it on Railway (24/7, about $5/month)
 1. Sign in to railway.app with GitHub → **New Project → Deploy from GitHub repo** → pick this repo.
-2. **Variables:** add `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `MODE=prove`, `DATA_DIR=/data`, plus the two
+2. **Variables:** add `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`, `MODE=prove` (no `DATA_DIR` needed), plus the two
    `HL_*` keys if you want the automatic switch to live.
 3. **Settings → Volumes → Add volume**, mount path `/data`. This keeps the journal and market history across
    restarts.

@@ -180,3 +180,17 @@ def test_railway_volume_warning():
     assert w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data/"}, "/data/sub") is None
     assert "isn't on the volume" in w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data"}, "/app/data")
     assert "isn't on the volume" in w({**on, "RAILWAY_VOLUME_MOUNT_PATH": "/data"}, "/database")
+
+
+def test_data_dir_follows_the_railway_volume():
+    from hlbot.config import resolve_data_dir as r
+
+    assert r({}) == "./data"  # phone / local
+    assert r({"DATA_DIR": "/srv/hevi"}) == "/srv/hevi"
+    vol = {"RAILWAY_VOLUME_MOUNT_PATH": "/data"}
+    assert r(vol) == "/data"  # ./data would resolve to /app/data, off the volume
+    assert r({**vol, "DATA_DIR": "./data"}) == "/data"  # the copied-from-.env.example case
+    assert r({**vol, "DATA_DIR": "/data"}) == "/data"
+    assert r({**vol, "DATA_DIR": "/data/hevi"}) == "/data/hevi"  # a folder on the volume is respected
+    assert r({**vol, "DATA_DIR": "/database"}) == "/data"
+    assert bot_mod.railway_volume_warning({"RAILWAY_PROJECT_ID": "p", **vol}, r(vol)) is None
