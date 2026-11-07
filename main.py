@@ -7,7 +7,8 @@ from hlbot.config import CFG
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # stdout, not stderr: Railway paints everything on stderr red as if it were an error
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stdout)
     logging.getLogger("httpx").setLevel(logging.WARNING)  # its request lines would include the bot token
     logging.getLogger("apscheduler").setLevel(logging.WARNING)  # "job executed successfully" every 20s is just noise
     missing = CFG.missing()
