@@ -229,9 +229,12 @@ Deno.serve(async (req) => {
     const profit = t.reduce((a: number, x: any) => a + x.profit, 0)
     const vol = t.reduce((a: number, x: any) => a + x.size, 0)
     const wins = t.filter((x: any) => x.profit > 0).length
-    if (!t.length) return 'Today (Lagos time): no trades yet.'
+    // trade-stats serves the last good data (flagged `stale`) when the explorers are rate-limiting, so /today
+    // shows the most recent numbers instead of an error; say how old they are.
+    const stale = j.stale ? `\n(as of ${Math.max(1, Math.round((j.staleAgeMs ?? 0) / 60_000))} min ago; explorer busy)` : ''
+    if (!t.length) return `Today (Lagos time): no trades yet.${stale}`
     const lastT = new Date(t[t.length - 1].t + LAGOS_MS).toISOString().slice(11, 16)
-    return `Today (Lagos time): ${t.length} trade${t.length === 1 ? '' : 's'}, ${wins} profitable (${Math.round((wins / t.length) * 100)}%)\nProfit ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} before gas · traded $${vol.toFixed(2)}\nLast trade ${lastT}`
+    return `Today (Lagos time): ${t.length} trade${t.length === 1 ? '' : 's'}, ${wins} profitable (${Math.round((wins / t.length) * 100)}%)\nProfit ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} before gas · traded $${vol.toFixed(2)}\nLast trade ${lastT}${stale}`
   }
 
   async function queueText() {

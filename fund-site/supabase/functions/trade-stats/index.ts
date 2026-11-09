@@ -1,16 +1,25 @@
-// Trade history of the pool wallet, rebuilt from the chain (Celo Blockscout API), for the dashboard's
-// "Trading activity" section. Anyone can call it; it only reads public chain data.
+// Trade history of the pool wallet, rebuilt from the chain (Etherscan-style explorer API), for the dashboard's
+// "Trading activity" section and the Telegram /today report. Anyone can call it; it only reads public chain data.
 //
 // A trade is a buy leg (a tx the wallet sent that moved USDT out) followed by a sell leg (a tx the wallet
 // sent that brought USDT back). Profit = USDT back - USDT out. Direct USDT transfers (withdrawals) and
 // transfers the wallet did not send (deposits) are ignored.
+//
+// The explorers rate-limit (HTTP 429). To stay reliable we (1) retry a 429/5xx after a growing wait, honouring
+// any Retry-After header; (2) fetch the two queries one after another, not in parallel, to halve the request
+// rate; (3) fall back to a second explorer if the first keeps failing; (4) cache the last good result and, if a
+// refresh fails, serve that (flagged `stale`) instead of an error, so the report always shows something.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 
-const EXPLORER = 'https://celo.blockscout.com/api'
+// Etherscan-compatible explorers for Celo, tried in order (both keyless: Blockscout, then Routescan).
+const EXPLORERS = [
+  'https://celo.blockscout.com/api',
+  'https://api.routescan.io/v2/network/mainnet/evm/42220/etherscan/api',
+]
 const USDT = '0x48065fbbe25f71c9282ddf5e1cd6d6a887483d5e'
-const CACHE_MS = 5 * 60_000 // the explorer rate-limits (429)
+const FRESH_MS = 10 * 60_000 // serve the cache without refetching within this window
 const MAX_DAYS = 90 // enough for the dashboard's weekly view
-let cache: { key: string; at: number; body: unknown } | null = null
+let cache: { key: string; at: number; body: any } | null = null
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -19,20 +28,56 @@ const cors = {
 }
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// One explorer page, with backoff on 429 / 5xx (1s, 2s, 4s, 8s; or Retry-After, capped).
+async function fetchPage(base: string, q: URLSearchParams) {
+  let wait = 1000
+  for (let attempt = 0; ; attempt++) {
+    let r: Response
+    try {
+      r = await fetch(`${base}?${q}`)
+    } catch (e) {
+      if (attempt >= 4) throw e
+      await sleep(wait); wait = Math.min(wait * 2, 8000); continue
+    }
+    if (r.ok) return await r.json()
+    if ((r.status === 429 || r.status >= 500) && attempt < 4) {
+      const ra = Number(r.headers.get('retry-after'))
+      await sleep(Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 15000) : wait)
+      wait = Math.min(wait * 2, 8000)
+      continue
+    }
+    throw new Error(`Explorer returned ${r.status}`)
+  }
+}
 
 // Newest first, until rows are older than stopBefore (ms).
-async function explorer(params: Record<string, string>, stopBefore: number) {
+async function explorer(base: string, params: Record<string, string>, stopBefore: number) {
   const out: any[] = []
   for (let page = 1; page <= 20; page++) {
     const q = new URLSearchParams({ module: 'account', ...params, page: String(page), offset: '1000', sort: 'desc' })
-    const r = await fetch(`${EXPLORER}?${q}`)
-    if (!r.ok) throw new Error(`Explorer returned ${r.status}`)
-    const j = await r.json()
+    const j = await fetchPage(base, q)
     const rows = Array.isArray(j.result) ? j.result : []
     out.push(...rows)
     if (rows.length < 1000 || Number(rows[rows.length - 1].timeStamp) * 1000 < stopBefore) break
   }
   return out
+}
+
+// Try each explorer in turn; fetch the two queries sequentially to be gentle on the rate limit.
+async function loadAll(wallet: string, since: number) {
+  let lastErr: unknown
+  for (const base of EXPLORERS) {
+    try {
+      const txs = await explorer(base, { action: 'txlist', address: wallet }, since)
+      const transfers = await explorer(base, { action: 'tokentx', address: wallet, contractaddress: USDT }, since)
+      return { transfers, txs }
+    } catch (e) {
+      lastErr = e // this explorer failed after its retries; try the next one
+    }
+  }
+  throw lastErr ?? new Error('all explorers failed')
 }
 
 Deno.serve(async (req) => {
@@ -50,13 +95,10 @@ Deno.serve(async (req) => {
   const start = s?.season_started_at ? Date.parse(s.season_started_at) : s?.started_at ? Date.parse(`${s.started_at}T00:00:00Z`) : now - 7 * 86_400_000
   const since = Math.max(start, now - MAX_DAYS * 86_400_000)
   const key = `${wallet}:${since}`
-  if (cache && cache.key === key && now - cache.at < CACHE_MS) return reply(200, cache.body)
+  if (cache && cache.key === key && now - cache.at < FRESH_MS) return reply(200, cache.body)
 
   try {
-    const [transfers, txs] = await Promise.all([
-      explorer({ action: 'tokentx', address: wallet, contractaddress: USDT }, since),
-      explorer({ action: 'txlist', address: wallet }, since),
-    ])
+    const { transfers, txs } = await loadAll(wallet, since)
 
     // Transactions the wallet itself sent, oldest first.
     const sent = txs
@@ -89,6 +131,8 @@ Deno.serve(async (req) => {
     cache = { key, at: now, body }
     return reply(200, body)
   } catch (e) {
+    // Explorers are down or still rate-limiting: serve the last good result rather than a hard error.
+    if (cache && cache.key === key) return reply(200, { ...cache.body, stale: true, staleAgeMs: now - cache.at })
     return reply(200, { error: `Could not read trade history: ${(e as Error).message}` })
   }
 })
