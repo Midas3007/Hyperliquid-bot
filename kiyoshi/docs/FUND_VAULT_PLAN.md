@@ -229,6 +229,44 @@ These are now part of the plan, not options. They override the Pass notes furthe
   money, profit from the manager's work), and NFTs sold with an expectation of profit have been treated as
   securities. It helps by keeping membership invite-based and separate from the investment, but get advice.
 
+## Fund treasury: gas + render (Midas's idea, 9 Nov) 🟡 next week
+
+A named treasury line, separate from the pool's trading value, that holds a carve-out for running costs. Gas
+top-ups draw it down (the treasury balance ticks down, not every shareholder's value silently as today); at
+month-end Midas withdraws from it to pay render; a slice of manager fees also flows in. Replaces the old
+"10% of fees → gas reserve" line, which never worked: fees only arrive on withdrawals, so early on the reserve
+would be near-empty while gas runs every hour. Carving continuously from pool profit tracks the real cost.
+
+**Measured (season 2, on-chain, 29 Oct → 9 Nov, read-only):**
+- 4,366 transactions in 10.68 days = **409/day**; ~166k gas each, **~$0.0024/tx** at CELO $0.07.
+- **Gas ≈ $0.96/day · ~$29/month.** Render **$8/month = $0.27/day.** Gross pool profit ≈ **$18.75/day** (season avg).
+- So gas ≈ **5%** of gross profit today; render ≈ **1.5%**.
+
+**Decision (percentages to implement):**
+- **Gas: carve 8% of the pool's gross trading profit** into the treasury. Covers today's ~5% with headroom for
+  the main risk — the CELO price (gas is paid in CELO, profit in USDT; CELO ~$0.07 is near historic lows, so an
+  8% reserve still covers gas if CELO roughly doubles) and for thin days. If the treasury ever exceeds ~60 days of
+  gas runway, sweep the excess back to the pool so members are not over-charged.
+- **Render: funded from Midas's fee slice, NOT the pool.** Render is the manager's hosting choice, not a trading
+  cost the shareholders incur; pool-funding it would charge members for the server (a fee in disguise, and a
+  fairness/legal flag). The fee slice into the treasury covers render + buffer. (If Midas prefers the pool to
+  cover render too, make the carve-out 10% and label the line "infrastructure" openly to members.)
+- **Transparency:** show the treasury balance, the gas drawn this month, and any render withdrawal on the
+  dashboard, so the pool's value and the running-cost reserve are never conflated.
+
+## Pre-launch work (next week, after the Nov 12 analysis and tweaks) 🟡
+
+**Read-side resilience — the `/today` "Explorer returned 429" error.** The Telegram report and the site read the
+pool wallet's history from a block explorer that rate-limits (429). This is the reporting path only; it does not
+touch trading, so it can be fixed without affecting the analysis. Fixes (Midas's list): (1) retry failed explorer
+calls after a wait, not immediately; (2) exponential backoff 1s/2s/4s/8s; (3) don't re-fetch history that hasn't
+changed; (4) cache the last good result and reuse it; (5) fall back to a second explorer/RPC if the first fails.
+
+**Pre-launch security review — the 6-phase pass (before opening the fund):** (1) map the codebase; (2) hunt for
+vulnerabilities; (3) challenge each candidate; (4) record the findings; (5) verify the findings; (6) report
+what's confirmed, rejected, or still needs validation. Run this on the vault contract, the keeper, and the site's
+money paths before any real deposit beyond Midas's own.
+
 ## Things easy to miss
 
 **Contract and security**
