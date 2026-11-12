@@ -107,9 +107,17 @@ Deno.serve(async (req) => {
   // ---------- Telegram ----------
   const token = Deno.env.get('TELEGRAM_BOT_TOKEN')
   if (!token) return reply({ skipped: 'TELEGRAM_BOT_TOKEN is not set' })
+  // A network error from fetch carries the request URL in its text, and that URL contains the bot token. An
+  // uncaught error is written to the function log, so the token ended up there (seen 9 Nov). Fail with a message
+  // that has the token removed: the run still stops and is retried, but nothing secret is logged.
   const tg = async (method: string, params: Record<string, unknown>) => {
-    const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) })
-    return r.json()
+    try {
+      const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(params) })
+      return await r.json()
+    } catch (e) {
+      const why = String((e as Error)?.message ?? e).split(token).join('<token>').replace(/bot\d+:[\w-]+/g, 'bot<token>').split('\n')[0].slice(0, 160)
+      throw new Error(`Telegram did not answer (${method}): ${why}`)
+    }
   }
   const secret = await secretFor(token)
   const { data: ac } = await db.from('alert_config').select('*').eq('id', 1).single()
@@ -229,9 +237,9 @@ Deno.serve(async (req) => {
     const profit = t.reduce((a: number, x: any) => a + x.profit, 0)
     const vol = t.reduce((a: number, x: any) => a + x.size, 0)
     const wins = t.filter((x: any) => x.profit > 0).length
-    // trade-stats serves the last good data (flagged `stale`) when the explorers are rate-limiting, so /today
-    // shows the most recent numbers instead of an error; say how old they are.
-    const stale = j.stale ? `\n(as of ${Math.max(1, Math.round((j.staleAgeMs ?? 0) / 60_000))} min ago; explorer busy)` : ''
+    // trade-stats answers from the stored history (flagged `stale`) when the chain node cannot be reached, so
+    // /today shows the most recent numbers instead of an error; say how old they are.
+    const stale = j.stale ? `\n(as of ${Math.max(1, Math.round((j.staleAgeMs ?? 0) / 60_000))} min ago; the chain node is busy)` : ''
     if (!t.length) return `Today (Lagos time): no trades yet.${stale}`
     const lastT = new Date(t[t.length - 1].t + LAGOS_MS).toISOString().slice(11, 16)
     return `Today (Lagos time): ${t.length} trade${t.length === 1 ? '' : 's'}, ${wins} profitable (${Math.round((wins / t.length) * 100)}%)\nProfit ${profit >= 0 ? '+' : ''}$${profit.toFixed(2)} before gas · traded $${vol.toFixed(2)}\nLast trade ${lastT}${stale}`
