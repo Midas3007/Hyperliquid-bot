@@ -18,7 +18,9 @@ const TX_BATCH = 40 // transactions looked up per request
 
 export type Call = { method: string; params: unknown[] }
 export type Rpc = (calls: Call[]) => Promise<any[]>
-export type Row = { hash: string; block: number; tx_index: number; t: number; sent: boolean; to: string; usdt: string }
+// peer: for a direct USDT transfer the wallet sent (it called the USDT contract itself), the address it went to, from the
+// Transfer log; otherwise null. Added for the treasury (014_treasury.sql); it takes no part in the trade counting.
+export type Row = { hash: string; block: number; tx_index: number; t: number; sent: boolean; to: string; usdt: string; peer?: string | null }
 export type Known = Map<string, { sent: boolean; to: string }>
 export type State = { from_block: number; block: number; since_ms: number; synced_at: string | null; audited_at: string | null }
 export type Store = {
@@ -117,7 +119,7 @@ export async function readWindow(rpc: Rpc, wallet: string, lo: number, hi: numbe
     if (!isHash(l?.transactionHash) || !Array.isArray(l?.topics) || l.topics.length !== 3 || String(l.address).toLowerCase() !== USDT) throw new Error('node sent a malformed transfer')
     logs.set(`${l.transactionHash.toLowerCase()}:${num(l.logIndex, 'log index')}`, l)
   }
-  type Acc = { block: number; tx_index: number; ts: number | null; micro: bigint }
+  type Acc = { block: number; tx_index: number; ts: number | null; micro: bigint; outTo: string[] }
   const perTx = new Map<string, Acc>()
   for (const l of logs.values()) {
     const hash = l.transactionHash.toLowerCase()
@@ -128,9 +130,10 @@ export async function readWindow(rpc: Rpc, wallet: string, lo: number, hi: numbe
     if (typeof l.data !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(l.data)) throw new Error('node sent a malformed transfer amount')
     const sign = to === w ? 1n : from === w ? -1n : 0n
     if (sign === 0n) throw new Error('node sent a transfer that is not the wallet\'s')
-    const e = perTx.get(hash) ?? { block, tx_index: num(l.transactionIndex, 'transaction index'), ts: l.blockTimestamp == null ? null : num(l.blockTimestamp, 'block time'), micro: 0n }
+    const e = perTx.get(hash) ?? { block, tx_index: num(l.transactionIndex, 'transaction index'), ts: l.blockTimestamp == null ? null : num(l.blockTimestamp, 'block time'), micro: 0n, outTo: [] }
     if (e.block !== block) throw new Error('node sent one transaction in two blocks')
     e.micro += sign * BigInt(l.data)
+    if (from === w && to !== w) e.outTo.push(to) // where the wallet's USDT went (used for direct transfers)
     perTx.set(hash, e)
   }
 
@@ -165,7 +168,9 @@ export async function readWindow(rpc: Rpc, wallet: string, lo: number, hi: numbe
   for (const [hash, e] of perTx) {
     const k = known.get(hash) ?? who.get(hash)!
     const ts = e.ts ?? timeOf.get(e.block)!
-    rows.push({ hash, block: e.block, tx_index: e.tx_index, t: ts * 1000, sent: k.sent, to: k.to, usdt: microToDecimal(e.micro) })
+    // the recipient only when there is no doubt: the wallet called the USDT contract itself and sent to exactly one address
+    const peer = k.sent && k.to === USDT && e.outTo.length === 1 ? e.outTo[0] : null
+    rows.push({ hash, block: e.block, tx_index: e.tx_index, t: ts * 1000, sent: k.sent, to: k.to, usdt: microToDecimal(e.micro), peer })
   }
   rows.sort((x, y) => x.block - y.block || x.tx_index - y.tx_index)
   return { rows, hiTimeMs }

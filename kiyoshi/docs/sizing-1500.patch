@@ -1,0 +1,51 @@
+diff -ru a/kiyoshi/HOSTING.md b/kiyoshi/HOSTING.md
+--- a/kiyoshi/HOSTING.md
++++ b/kiyoshi/HOSTING.md
+@@ -75,7 +75,7 @@
+ 
+ | Window | Hours (Lagos) | Max trade | Minimum edge |
+ |---|---|---|---|
+-| Peak | 13:00–14:59, every day | MAX_TRADE_USD × 2 on Mon/Fri, × 1.5 Tue–Thu, × 1.25 Sat/Sun, never above `SMART_PEAK_MAX_USD` (default $800) | 0.3 bps, at least $0.01 |
++| Peak | 13:00–14:59, every day | MAX_TRADE_USD × 2 on Mon/Fri, × 1.5 Tue–Thu, × 1.25 Sat/Sun, never above `SMART_PEAK_MAX_USD` (default $800; $1,000 for a $1,500 wallet) | 1 bp, at least $0.02 |
+ | Busy | 00, 01, 09, 11, 12, 20, 21 on weekdays | MAX_TRADE_USD | 1 bp, at least $0.02 |
+ | Quiet | every other hour, and weekends outside the peak | MAX_TRADE_USD | 1.5 bps, at least $0.03 |
+ 
+diff -ru a/kiyoshi/src/schedule.ts b/kiyoshi/src/schedule.ts
+--- a/kiyoshi/src/schedule.ts
++++ b/kiyoshi/src/schedule.ts
+@@ -21,7 +21,9 @@
+ // Peak size as a multiple of MAX_TRADE_USD, by Lagos weekday (Sun = 0)
+ export const PEAK_MULTIPLIER = [1.25, 2, 1.5, 1.5, 1.5, 2, 1.25]
+ export const RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number }> = {
+-  peak: { minEdgeBps: 0.3, minEdgeFloorUsd: 0.01 }, // take nearly everything: gaps are wide
++  // Nov 12 review (docs/nov12-review.md): a failed Uniswap-first trade costs about 3.8 bps and happens in 15-20% of them,
++  // so an edge under about 1 bp loses money on average. Peak now asks for the same 1 bp as busy hours.
++  peak: { minEdgeBps: 1, minEdgeFloorUsd: 0.02 },
+   busy: { minEdgeBps: 1, minEdgeFloorUsd: 0.02 },
+   quiet: { minEdgeBps: 1.5, minEdgeFloorUsd: 0.03 },
+ }
+diff -ru a/kiyoshi/test/schedule.test.ts b/kiyoshi/test/schedule.test.ts
+--- a/kiyoshi/test/schedule.test.ts
++++ b/kiyoshi/test/schedule.test.ts
+@@ -33,7 +33,8 @@
+   assert.ok(Math.abs(minEdgeFor(330, quiet) - 0.0495) < 1e-9) // 1.5 bps of $330
+   assert.equal(minEdgeFor(82.5, quiet), 0.03) // the floor for small trades
+   const peak = smartProfile(at('2026-11-02T12:30:00Z'), 330, 800)
+-  assert.ok(Math.abs(minEdgeFor(660, peak) - 0.0198) < 1e-9)
++  assert.ok(Math.abs(minEdgeFor(660, peak) - 0.066) < 1e-9) // 1 bp of $660
++  assert.equal(minEdgeFor(100, peak), 0.02) // the floor for small trades
+ })
+ 
+ test('the table names every window', () => {
+diff -ru a/render.yaml b/render.yaml
+--- a/render.yaml
++++ b/render.yaml
+@@ -29,7 +29,7 @@
+       - key: MIN_EDGE_USD
+         value: "0.01"
+       - key: SMART_PEAK_MAX_USD # smart sizing (Telegram /smart_on): the largest peak-hour trade
+-        value: "800"
++        value: "1000"
+       - key: INTERVAL_SEC # seconds between full scans (60 before Nov 5); 30 for the trial week, set by Midas
+         value: "30"
+       - key: FIRST_TRADE_SHARE # share of the wallet's USDT a trade may use (0.9 before Nov 5); 0.8 for the trial week, set by Midas
