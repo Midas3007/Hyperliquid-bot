@@ -128,10 +128,10 @@ let minPot = Infinity, maxCarve = 0
 for (const d of days) {
   await setSync(BOT, Math.min(d, CURSOR), SINCE)
   const r = await sync(d) // the run at 20:07 on that day
-  maxCarve = Math.max(maxCarve, Number(r.carved ?? 0))
   minPot = Math.min(minPot, await pool())
 }
 await setSync(BOT, CURSOR, SINCE); await sync(CURSOR + 60_000)
+maxCarve = Number((await one(`select max(amount) m from public.treasury_entries where kind = 'carve'`)).m)
 const live = await snapshot()
 const potLive = await pool()
 const cu = await carve(Date.now()) // no new day: the next one ends at 20:00 UTC today and the history stops at 11:09
@@ -210,12 +210,13 @@ const feed = async (w, upto) => { // data for 12-16 Nov; one trade a day, create
 }
 await reset(W3, { start: S }); await feed(W3, 5)
 for (let k = 0; k < 5; k++) { const run = Date.parse('2026-11-12T20:07:00Z') + k * DAY; await setSync(W3, run); await sync(run) }
+const noTx = (x) => JSON.stringify({ ...x, entries: x.entries.map(({ tx: _, ...e }) => e) }) // the two feeds make different made-up hashes
 const liveH = await snapshot()
 await reset(W3, { start: S }); await feed(W3, 5)
 const late = Date.parse('2026-11-17T09:00:00Z'); await setSync(W3, late)
 const cH = await sync(late)
 const catchH = await snapshot()
-ok(JSON.stringify(liveH) === JSON.stringify(catchH) && cH.days_carved === 5, 'five days late: one run produces exactly the entries a daily run would have (carves, losses carried, gas in time order)', JSON.stringify({ live: liveH, catch: catchH, c: cH }))
+ok(noTx(liveH) === noTx(catchH) && cH.days_carved === 5, 'five days late: one run produces exactly the entries a daily run would have (carves, losses carried, gas in time order)')
 const dh = catchH.days.map((x) => `${x.day.slice(8)}:${Number(x.carve).toFixed(2)}`).join(' ')
 ok(dh === '12:1.00 13:0.00 14:0.00 15:0.40 16:2.00', 'carves: +$10 -> $1.00; -$6 and a quiet day -> 0; +$10 wins back the $6, 10% of $4 -> $0.40; +$20 -> $2.00', dh)
 ok(catchH.entries.filter((e) => e.kind === 'gas').length === 6 && catchH.entries.find((e) => e.kind === 'gas').uncovered === '0.500000', 'six top-ups booked in time order; the first one (pot still empty at that moment) fell on members')
