@@ -233,7 +233,7 @@ These are now part of the plan, not options. They override the Pass notes furthe
 
 A named treasury line, separate from the pool's trading value, that holds a carve-out for running costs. Gas
 top-ups draw it down (the treasury balance ticks down, not every shareholder's value silently as today); at
-month-end Midas withdraws from it to pay render; a slice of manager fees also flows in. Replaces the old
+month-end Midas withdraws from it to pay render. Replaces the old
 "10% of fees → gas reserve" line, which never worked: fees only arrive on withdrawals, so early on the reserve
 would be near-empty while gas runs every hour. Carving continuously from pool profit tracks the real cost.
 
@@ -242,30 +242,61 @@ would be near-empty while gas runs every hour. Carving continuously from pool pr
 - **Gas ≈ $0.96/day · ~$29/month.** Render **$8/month = $0.27/day.** Gross pool profit ≈ **$18.75/day** (season avg).
 - So gas ≈ **5%** of gross profit today; render ≈ **1.5%**.
 
-**Decision (percentages to implement):**
-- **Gas: carve 8% of the pool's gross trading profit** into the treasury. Covers today's ~5% with headroom for
-  the main risk — the CELO price (gas is paid in CELO, profit in USDT; CELO ~$0.07 is near historic lows, so an
-  8% reserve still covers gas if CELO roughly doubles) and for thin days. If the treasury ever exceeds ~60 days of
-  gas runway, sweep the excess back to the pool so members are not over-charged.
-- **Render: funded from Midas's fee slice, NOT the pool.** Render is the manager's hosting choice, not a trading
-  cost the shareholders incur; pool-funding it would charge members for the server (a fee in disguise, and a
-  fairness/legal flag). The fee slice into the treasury covers render + buffer. (If Midas prefers the pool to
-  cover render too, make the carve-out 10% and label the line "infrastructure" openly to members.)
-- **Transparency:** show the treasury balance, the gas drawn this month, and any render withdrawal on the
-  dashboard, so the pool's value and the running-cost reserve are never conflated.
+**Decision (Midas, 12 Nov — replaces the 8% / render-from-fees proposal above it in history):**
+- **10% of the pool's trading profit goes into the treasury, and it pays for both gas and render.** It is shown
+  to members openly as the fund's running costs (gas + hosting), not hidden inside the share price.
+- **Midas keeps 100% of his fees.** No slice of fees flows into the treasury.
+- **A pot on the dashboard:** it fills as profit is carved in, drops a little each time gas is bought
+  automatically (the bot's USDT → CELO top-ups), and drops when Midas withdraws for render.
+- **A log of every treasury movement:** each carve-in, each gas purchase (with its transaction link), each
+  render withdrawal (amount, date, note).
+- **A render withdrawal only shows on the treasury**, never as a dip in members' share value: the carve-out has
+  already left the pool's value by the time it is withdrawn.
+
+**Cover at today's numbers (season 2 to 12 Nov, from the chain):** trading profit about $334.70 in 14 days =
+**~$23.90/day**, so 10% ≈ **$2.39/day** into the pot. Costs: gas ≈ $0.96/day + render $0.27/day =
+**$1.23/day**. The pot covers costs about twice over, which leaves room for a CELO price rise (gas is paid in
+CELO) and thin days. If the pot ever holds more than ~60 days of costs, sweep the excess back to the pool so
+members are not over-charged.
+
+**To settle while building (not decided yet):**
+- Where the pot physically sits. Simplest: it is an accounting line over USDT that stays in the bot wallet
+  (the vault's NAV subtracts it), so no extra transfers or gas. Alternative: a separate treasury address.
+- The trade counter already treats a gas top-up as money out of the next trade, so "profit before gas" may
+  already be net of top-ups. Check this before carving, or gas would be charged twice.
+- Carve on realised profit per settlement day (not per trade), and never on a losing day.
 
 ## Pre-launch work (next week, after the Nov 12 analysis and tweaks) 🟡
 
-**Read-side resilience — the `/today` "Explorer returned 429" error.** The Telegram report and the site read the
-pool wallet's history from a block explorer that rate-limits (429). This is the reporting path only; it does not
-touch trading, so it can be fixed without affecting the analysis. Fixes (Midas's list): (1) retry failed explorer
-calls after a wait, not immediately; (2) exponential backoff 1s/2s/4s/8s; (3) don't re-fetch history that hasn't
-changed; (4) cache the last good result and reuse it; (5) fall back to a second explorer/RPC if the first fails.
+**Read-side resilience — the `/today` "Explorer returned 429" error. ✅ Done 12 Nov.** What it really was:
+the block explorer now allows **10 requests an hour** without a paid key, so downloading the whole season on
+every refresh could never work again (retries and backoff do not help against an hourly quota). A first fix on
+9 Nov added a second explorer as a fallback without testing it against the real service; it does not support
+Celo, answered "chain not supported", and that was shown as an empty season on the dashboard and in /today.
+The durable fix: the pool wallet's USDT movements are read from Celo's own node (the one the keeper uses), a few
+minutes of blocks at a time, and stored in the database once (`pool_tx`, migration 013). The dashboard and
+/today are answered from the database; a schedule tops it up every 2 minutes; if the node is unreachable the
+numbers are served with their age, never as "no trades". Checked against the chain: every one of the season's
+trades identical to the original counting, and the stored rows byte-identical to an independent read.
+Rule kept from this: **no fallback or data source goes live until it has been run against the real service.**
 
 **Pre-launch security review — the 6-phase pass (before opening the fund):** (1) map the codebase; (2) hunt for
 vulnerabilities; (3) challenge each candidate; (4) record the findings; (5) verify the findings; (6) report
 what's confirmed, rejected, or still needs validation. Run this on the vault contract, the keeper, and the site's
 money paths before any real deposit beyond Midas's own.
+
+## Fund-opening film (Midas's brief, 12 Nov) ⚪ after the work above
+
+One film for the day the fund opens, made from "Let There Be Liquidity" and "The Movement", each design morphing
+into the next with no cuts, using the stats current on the day:
+1. The squiggly flower from the opening unravels and becomes the corridor.
+2. The corridor separates, and each side morphs into one of the two hands.
+3. The circle between the two fingers grows and flips, and becomes a watch face.
+4. The movement (the seven steps), then the numbers.
+5. **It must end with the closing transition of the "how the fund works" film:** the fan closes midway, blades
+   fly off to the M, and the rest of the fan completes itself to form 爪idas × Kiy🪭shi.
+Music: one score with the best of both (the felt piano and strings of Liquidity, the harp and cello of The
+Movement). Midas left room to improve the visuals, pacing and script.
 
 ## Things easy to miss
 
