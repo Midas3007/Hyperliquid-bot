@@ -1,0 +1,466 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#080706}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script src="teaser-assets/hands.js"></script>
+<script>
+// "The Fund Is Open": the film for the day the fund opens. "Let There Be Liquidity" and "The Movement" as one
+// piece, one camera, never cut; every design becomes the next one:
+//   the engraved rosette unravels into the corridor (two markets and the gap between them); the corridor parts
+//   in the middle and each side becomes one of the two hands; the spark between the fingers grows into a gold coin, which
+//   flips and is a watch face; the face lifts off the movement and the camera visits the seven steps; the fan at
+//   the hub of the movement closes midway, its blades fly off to the 爪, and the rest completes the mark
+//   (the closing transition of "How the fund works").
+// Part one runs at 70 BPM (a bar is 3.43 s, 8 bars); from TB the watch ticks at 60 BPM (a bar is 4 s).
+// Timed to score-opening.py. Stats are the season's, read from the chain; override them in the URL
+// (?trades=3,144&profit=%2B$334.70&win=77%25&price=$2.40&since=29 OCT) to re-render on the day.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const BA = 4 * 60 / 70, A = (n) => n * BA
+const TB = A(8)          // 27.43 s: the coin has flipped; the watch starts to tick
+const TC = TB + 40       // 67.43 s: the camera goes to the fan at the hub
+const TL = TC + 1.5      // the fan fills the frame; the mark begins
+const DUR = 80
+const STAT = { trades: P.get('trades') || '3,144', profit: P.get('profit') || '+$334.70', win: P.get('win') || '77%', price: P.get('price') || '$2.40', since: P.get('since') || '29 OCT' }
+const BG = '#080706', GOLD = '#D4AF37', GOLD2 = '#F3D77A', DEEP = '#8a6a1c', WHITE = '#F4F1EA', SOFT = '#d9d0bd', GREY = '#8C8C88', INK = '#2a2218'
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace', SANS = 'Inter, sans-serif'
+const TAU = Math.PI * 2
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x))
+const lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const ease = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2 }
+const inout = (t, a, b, f = .9) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+const mix = (c1, c2, k) => { const a = parseInt(c1.slice(1), 16), b = parseInt(c2.slice(1), 16), ch = (s) => Math.round(lerp((a >> s) & 255, (b >> s) & 255, clamp(k))); return `rgb(${ch(16)},${ch(8)},${ch(0)})` }
+const RND = (s) => () => { s |= 0; s = (s + 0x6d2b79f5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+
+// ---------- pre-rendered: marble, film grain, the engraved hands and their outline ----------
+let MARBLE = null, GRAIN = [], HANDS = null, ENG = null, TMPL = null, TMPR = null
+const HW = 2000, HH = 506, GX = 1005, GY = 252, SC = 1.05 // the hands image; (GX, GY) is the gap between the fingers
+const TOPY = new Float32Array(HW), BOTY = new Float32Array(HW)
+let XL0 = 0, XL1 = 1000, XR0 = 1010, XR1 = HW - 1
+function build() {
+  const m = document.createElement('canvas'); m.width = 1300; m.height = 760; const x = m.getContext('2d'), id = x.createImageData(1300, 760), d = id.data
+  const turb = (X, Y) => Math.sin(X * .011 + Math.sin(Y * .017) * 2.2) * .5 + Math.sin(X * .023 - Y * .019 + Math.sin(X * .007) * 3) * .3 + Math.sin((X + Y) * .041) * .2
+  for (let Y = 0; Y < 760; Y++) for (let X = 0; X < 1300; X++) {
+    const w = turb(X * .35, Y * .35) * .9 + turb(Y * .2, X * .2) * .4
+    const v = Math.abs(Math.sin((X * .55 + Y) * .0032 + w * 1.4)), vein = Math.pow(1 - v, 34), fine = Math.pow(1 - Math.abs(Math.sin((X - Y * .4) * .0061 + w * 2.0)), 70)
+    const base = 13 + 5 * turb(X * .15, Y * .15), lum = base + vein * 38 + fine * 12, i = (Y * 1300 + X) * 4
+    d[i] = lum * 1.0 + vein * 12; d[i + 1] = lum * .93 + vein * 6; d[i + 2] = lum * .82; d[i + 3] = 255 }
+  x.putImageData(id, 0, 0)
+  const mb = document.createElement('canvas'); mb.width = 2600; mb.height = 1520; const y = mb.getContext('2d'); y.filter = 'blur(5px)'; y.drawImage(m, 0, 0, 2600, 1520); MARBLE = mb
+  const r = RND(7)
+  for (let k = 0; k < 4; k++) { const n = document.createElement('canvas'); n.width = 480; n.height = 270; const z = n.getContext('2d'), gd = z.createImageData(480, 270)
+    for (let i = 0; i < gd.data.length; i += 4) { const v = 128 + (r() - .5) * 90; gd.data[i] = gd.data[i + 1] = gd.data[i + 2] = v; gd.data[i + 3] = 255 } z.putImageData(gd, 0, 0); GRAIN.push(n) }
+  return new Promise((res) => { const im = new Image(); im.onload = () => { HANDS = im; engrave(); res() }; im.src = IMG.hands })
+}
+// The outline of each arm, column by column, so the corridor's lines can settle exactly into its shape.
+function outline(d) {
+  const top = new Float32Array(HW).fill(NaN), bot = new Float32Array(HW).fill(NaN)
+  for (let X = 0; X < HW; X++) { let a = -1, b = -1; for (let Y = 0; Y < HH; Y++) if (d[(Y * HW + X) * 4 + 3] > 70) { if (a < 0) a = Y; b = Y } if (a >= 0) { top[X] = a; bot[X] = b } }
+  XL1 = GX - 1; while (XL1 > 0 && isNaN(top[XL1])) XL1--
+  XL0 = 0; while (XL0 < XL1 && isNaN(top[XL0])) XL0++
+  XR0 = GX; while (XR0 < HW - 1 && isNaN(top[XR0])) XR0++
+  XR1 = HW - 1; while (XR1 > XR0 && isNaN(top[XR1])) XR1--
+  for (const [a, b] of [[XL0, XL1], [XR0, XR1]]) {
+    for (let X = a + 1; X <= b; X++) if (isNaN(top[X])) { top[X] = top[X - 1]; bot[X] = bot[X - 1] } // a gap between fingers
+    for (let X = a; X <= b; X++) { let s1 = 0, s2 = 0, n = 0; for (let k = Math.max(a, X - 12); k <= Math.min(b, X + 12); k++) { s1 += top[k]; s2 += bot[k]; n++ } TOPY[X] = s1 / n; BOTY[X] = s2 / n }
+  }
+}
+function engrave() {
+  const w = HW, h = HH, cv = document.createElement('canvas'); cv.width = w; cv.height = h
+  const x = cv.getContext('2d', { willReadFrequently: true }); x.drawImage(HANDS, 0, 0)
+  const d = x.getImageData(0, 0, w, h).data, out = x.createImageData(w, h), o = out.data
+  outline(d)
+  for (let X = 0; X < w; X++) {
+    const lSleeve = X < 418, lCuff = X >= 418 && X < 462, rSleeve = X > 1684, rCuff = X > 1646 && X <= 1684, strap = X > 1586 && X < 1616
+    for (let Y = 0; Y < h; Y++) {
+      const i = (Y * w + X) * 4, al = d[i + 3] / 255; if (al < .05) continue
+      let lum = clamp(((d[i] * .3 + d[i + 1] * .59 + d[i + 2] * .11) / 255 - .12) / .62)
+      if (lSleeve || rSleeve) { const cc = lSleeve ? Y + .32 * X : Y + .02 * X, mm = ((cc % 21) + 21) % 21; lum = Math.abs(mm - 10.5) < 1.1 ? .9 : lum * .3 + .04 } // dark wool, pinstripes
+      else if (lCuff || rCuff) lum = .72 + lum * .28 // white shirt cuff
+      else if (strap) lum = .06 // the watch strap
+      const v = Y + 4 * Math.sin(X * .013) + 2 * Math.sin(X * .037 + Y * .01), per = 5.2, f = ((v % per) + per) % per
+      const cov = clamp((Math.pow(1 - lum, .9) * 2.4 + .25) / 2 - Math.abs(f - per / 2) + .5)
+      if (cov > 0) { o[i] = 243; o[i + 1] = 215; o[i + 2] = 122; o[i + 3] = Math.round(255 * cov * al) }
+    }
+  }
+  x.putImageData(out, 0, 0)
+  const gold = (cx, cy, r) => { const gr = x.createRadialGradient(cx - r * .35, cy - r * .4, r * .1, cx, cy, r); gr.addColorStop(0, '#fff3c4'); gr.addColorStop(.5, '#e7c25a'); gr.addColorStop(1, '#8a6a1c'); x.fillStyle = gr; x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.fill() }
+  gold(440, 118, 15); x.fillStyle = 'rgba(60,40,10,.6)'; x.beginPath(); x.arc(440, 118, 6, 0, TAU); x.fill() // the cufflink
+  gold(1601, 168, 30); x.fillStyle = '#14100a'; x.beginPath(); x.arc(1601, 168, 22, 0, TAU); x.fill() // the watch: case and dial
+  x.strokeStyle = '#e7c25a'; x.lineWidth = 2.4; x.beginPath(); x.moveTo(1601, 168); x.lineTo(1601, 152); x.moveTo(1601, 168); x.lineTo(1613, 172); x.stroke()
+  for (let k = 0; k < 12; k++) { const a = k / 12 * TAU; x.fillStyle = '#e7c25a'; x.fillRect(1601 + Math.cos(a) * 18 - 1, 168 + Math.sin(a) * 18 - 1, 2, 2) }
+  ENG = cv
+  TMPL = document.createElement('canvas'); TMPL.width = GX; TMPL.height = h
+  TMPR = document.createElement('canvas'); TMPR.width = w - GX; TMPR.height = h
+}
+
+// ---------- the coin that becomes the watch ----------
+function disc(t) {
+  const grow = smooth((t - A(6) + .9) / 2.0)
+  const rock = .5 * Math.sin((t - A(6)) * 1.1) * (1 - smooth((t - (TB - 2.4)) / .7)) // it turns a little in the light
+  const th = rock + Math.PI * smooth((t - (TB - 1.6)) / 1.5)                           // then flips: half a turn
+  const R = lerp(140 * lerp(.15, 1, grow), 551, smooth((t - (TB - 1.6)) / 2.3))        // and grows into the dial
+  return { grow, R, sx: Math.max(.03, Math.abs(Math.cos(th))), back: Math.cos(th) < 0 }
+}
+const closeAt = (t) => (1 - smooth((t - (A(4) - 1.2)) / 6)) * 90 // the hands drift toward each other
+
+// ---------- the line field: N engraved lines of M points, morphing from shape to shape ----------
+const N = 46, M = 420
+const isS = (i) => i % 4 === 2 // every fourth line goes to the spark, and later rings the coin, the watch and the plate
+const SI = [], RANK = []; let nS = 0, nHL = 0, nHR = 0
+for (let i = 0; i < N; i++) { if (isS(i)) { SI[i] = nS++; RANK[i] = -1 } else { SI[i] = -1; RANK[i] = i < N / 2 ? nHL++ : nHR++ } }
+const bandX = (u) => lerp(-900, 900, u)
+const SHAPES = {
+  rosette: (i, u, t) => { const a = u * TAU, ph = i / N, r = (300 + 70 * Math.sin(12 * a + ph * 2.2 + t * .15) + 26 * Math.sin(5 * a - ph * 1.3)) * (.86 + .14 * ph); return [Math.cos(a) * r, Math.sin(a) * r] },
+  corridor: (i, u, t) => { const top = i < N / 2, j = top ? i : i - N / 2, x = bandX(u), ph = u * 6.5 - t * .9
+    return [x, top ? -170 + 55 * Math.sin(ph) + 18 * Math.sin(ph * 2.3 + 1) + j * 2.4 : 170 + 55 * Math.sin(ph + .5) + 18 * Math.sin(ph * 2.1) - j * 2.4] },
+  spark: (i, u, t) => { const j = SI[i], a = u * TAU, r = 7 + j * 2.1 + 3 * Math.sin(a * 9 + t * 3 + j); return [Math.cos(a) * r, Math.sin(a) * r] },
+  hand: (i, u, t) => {
+    if (isS(i)) return SHAPES.spark(i, u, t)
+    const top = i < N / 2, f = top ? (RANK[i] + .5) / nHL * .5 : 1 - (RANK[i] + .5) / nHR * .5 // top wall: upper half of the arms
+    const left = u < .5, X = left ? lerp(XL0, XL1, u * 2) : lerp(XR0, XR1, u * 2 - 1), xi = Math.round(X)
+    const Y = lerp(TOPY[xi], BOTY[xi], f) + 1.1 * Math.sin(u * 92 + i)
+    return [(X - GX) * SC + (left ? -1 : 1) * closeAt(t), (Y - GY) * SC]
+  },
+  ring: (i, u, t) => { // rings around the coin; they follow it through the flip and frame the dial
+    if (!isS(i)) return SHAPES.hand(i, u, t)
+    const d = disc(t), a = u * TAU, r = d.R + 10 + SI[i] * (8 + .004 * d.R) + 1.5 * Math.sin(a * 24 + SI[i])
+    return [Math.cos(a) * r * d.sx, Math.sin(a) * r] },
+  plate: (i, u, t) => { // the same rings, now the circular graining of the movement's plate
+    if (!isS(i)) return SHAPES.hand(i, u, t)
+    const a = u * TAU + (t - TB) * .02 * (SI[i] % 2 ? 1 : -1), r = 66 + SI[i] * 45.5; return [Math.cos(a) * r, Math.sin(a) * r] },
+}
+// the sequence: [shape, time it is fully formed]
+const SEQ = [['rosette', 4.6], ['corridor', A(2) + 1.4], ['hand', A(4) + 1.6], ['ring', A(6) + 1.3], ['plate', TB + 6.4]]
+const MORPH = 3.2
+function lineState(t) {
+  // SEQ[i] is the shape on screen until the morph into SEQ[i + 1] starts, MORPH seconds before that one is formed.
+  // (Advance only once the next shape IS formed. Advancing when its morph began made every shape jump into
+  // place: p never left 0. That was the cut-not-morph in "Let There Be Liquidity".)
+  let i = 0; while (i < SEQ.length - 1 && t >= SEQ[i + 1][1]) i++
+  if (i === SEQ.length - 1) return { a: SEQ[i][0], b: SEQ[i][0], p: 0 }
+  return { a: SEQ[i][0], b: SEQ[i + 1][0], p: clamp((t - (SEQ[i + 1][1] - MORPH)) / MORPH) }
+}
+function drawLines(t) {
+  const { a, b, p } = lineState(t), draw = smooth(t / 4.2) // the first rosette draws itself in
+  const aH = 1 - smooth((t - (A(4) + .1)) / 1.7)            // the hands' lines dissolve into the engraving
+  const aS = lerp(1, .55, smooth((t - TB + .4) / 1.4)) * lerp(1, .55, smooth((t - TB - 4) / 2.2)) * (1 - smooth((t - TC + .3) / 1.0))
+  g.save(); g.strokeStyle = GOLD2; g.lineWidth = 1.15; g.lineJoin = 'round'
+  for (let i = 0; i < N; i++) {
+    const s = isS(i), al = s ? aS : aH; if (al <= .003) continue
+    const n = Math.max(2, Math.floor(M * (t < 4.2 ? clamp(draw * 1.25 - i / N * .25) : 1))); if (n < 3) continue
+    const pinch = !s && b === 'hand' // both arms settle from the sleeve to the fingertip, meeting at the spark
+    g.globalAlpha = al * (.42 + .4 * Math.sin(i * .37 + t * .4) ** 2)
+    g.beginPath()
+    for (let j = 0; j < n; j++) { const u = j / (M - 1), [x0, y0] = SHAPES[a](i, u, t), [x1, y1] = SHAPES[b](i, u, t)
+      // a wave of change rolls along each strand, strands a beat apart; a soft lift while in flight
+      const k = smooth(clamp((p - .26 * (i / N) - .3 * (pinch ? 1 - Math.abs(2 * u - 1) : u)) / .44)), lift = Math.sin(Math.PI * k) * 14
+      const x = lerp(x0, x1, k) + lift * Math.sin(u * 5 + i * .15 + t * .6), y = lerp(y0, y1, k) + lift * Math.cos(u * 4 - i * .1 + t * .5)
+      j ? g.lineTo(x, y) : g.moveTo(x, y) }
+    g.stroke()
+  }
+  g.restore()
+}
+
+// ---------- the camera ----------
+// part one: a spline through keyframes [t, x, y, zoom, rotation] (the world is 1920 x 1080 around 0,0)
+const KF = [[0, 0, 0, .78, -.06], [4.6, 0, 0, .9, -.02], [A(2) + 1.4, 0, 0, .92, 0], [A(4) - 1.8, 36, 0, .99, .012], [A(4) + 1.6, 0, 0, 1.0, -.01],
+  [A(6) - 1.2, 0, 0, 1.45, 0], [A(6) + 1.5, 236, 14, 1.2, .01], [TB - 2.3, 242, 14, 1.18, 0], [TB + .7, 0, 20, .72, 0], [TB + 2.6, 0, 20, .72, 0]]
+function spline(t, j) {
+  let i = 0; while (i < KF.length - 2 && t > KF[i + 1][0]) i++
+  const p0 = KF[Math.max(0, i - 1)], p1 = KF[i], p2 = KF[i + 1], p3 = KF[Math.min(KF.length - 1, i + 2)]
+  const v = (p) => (j === 3 ? Math.log(p[3]) : p[j]), u = clamp((t - p1[0]) / (p2[0] - p1[0])), dt = p2[0] - p1[0]
+  const m1 = (v(p2) - v(p0)) / Math.max(.001, p2[0] - p0[0]) * dt, m2 = (v(p3) - v(p1)) / Math.max(.001, p3[0] - p1[0]) * dt
+  const r = (2 * u ** 3 - 3 * u ** 2 + 1) * v(p1) + (u ** 3 - 2 * u ** 2 + u) * m1 + (-2 * u ** 3 + 3 * u ** 2) * v(p2) + (u ** 3 - u ** 2) * m2
+  return j === 3 ? Math.exp(r) : r
+}
+const STEPS = [
+  ['Safety first', 'Leftovers from an unfinished trade are sold first,', 'never at more than a 0.5% loss.'],
+  ['Size', 'Up to 80% of the cash on the first trade,', 'bigger at the peak hours.'],
+  ['Scan', 'Every pair, both ways round,', 'at a few different sizes.'],
+  ['Pick', 'Only the best gap that beats', 'the minimum edge. Otherwise, wait.'],
+  ['Trade', 'Two swaps, Uniswap and Textile.', 'The firm quote is checked first.'],
+  ['Chase', 'A winning gap is checked again', 'every five seconds until it closes.'],
+  ['Report', 'Gas, equity, the dashboard and Telegram.', 'Then it begins again.'],
+]
+const GEARS = STEPS.map((_, i) => { const a = -Math.PI / 2 + i / 7 * TAU; return { x: Math.cos(a) * 360, y: Math.sin(a) * 360, r: 92 + (i % 2) * 14, teeth: 18 + (i % 3) * 2 } })
+const stepAt = (lt) => Math.floor((lt - 8) / 4)
+const WIDE = { x: 0, y: 20, z: .72 }
+const HUB = { x: 0, y: 8, r: 46 }                      // the fan at the hub of the movement
+const FR = 260, LCY = 1080 * .42, FCX = 960, FCY = LCY + FR * .5 // where that fan sits when the mark begins
+function movementCam(lt) {
+  if (lt < 7.2) return WIDE
+  const target = (i) => ({ x: GEARS[i].x + 260, y: GEARS[i].y, z: 1.7 }) // gear on the left of frame, words on the right
+  const m = (a, b, k) => ({ x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), z: lerp(a.z, b.z, k) })
+  if (lt >= 36) return m(target(6), WIDE, smooth((lt - 36) / 1.6))
+  if (lt < 8) return m(WIDE, target(0), smooth((lt - 7.2) / .8))
+  const i = clamp(stepAt(lt), 0, 6), k = smooth(((lt - 8) - i * 4) / .9), from = i === 0 ? target(0) : target(i - 1), r = m(from, target(i), k)
+  r.z *= 1 - .06 * Math.sin(Math.PI * k); return r
+}
+function camera(t) {
+  if (t < TB + 2.6) return { x: spline(t, 1), y: spline(t, 2), z: spline(t, 3), r: spline(t, 4) }
+  if (t < TC - .2) return { ...movementCam(t - TB), r: 0 }
+  // into the fan at the hub: it must land exactly where the mark's fan begins (FCX, FCY, radius FR)
+  const k = smooth((t - (TC - .2)) / 1.7), z = Math.exp(lerp(Math.log(WIDE.z), Math.log(FR / HUB.r), k))
+  const sy = lerp(540 + (HUB.y - WIDE.y) * WIDE.z, FCY, k)
+  return { x: 0, y: HUB.y - (sy - 540) / z, z, r: 0 }
+}
+let CAM = { x: 0, y: 0, z: 1, r: 0 }
+const toScreen = () => { g.translate(960, 540); g.rotate(CAM.r); g.scale(CAM.z, CAM.z); g.translate(-CAM.x, -CAM.y) }
+
+// ---------- small pieces ----------
+function txt(s, x, y, size, color, alpha = 1, o = {}) { if (alpha <= .003) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; if (o.glow) { g.shadowColor = o.glow; g.shadowBlur = 24 } g.fillText(s, x, y); g.restore() }
+function dot(x, y, r, color, a = 1) { if (a <= 0) return; const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, color); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.save(); g.globalAlpha *= a; g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, TAU); g.fill(); g.restore() }
+function microRing(r, text, size, a, rot) { if (a <= 0) return; g.save(); g.globalAlpha = a; g.rotate(rot); g.font = `600 ${size}px ${MONO}`; g.fillStyle = GOLD; g.textAlign = 'center'; g.textBaseline = 'middle'
+  const n = Math.floor(TAU * r / (size * .78)); for (let k = 0; k < n; k++) { g.save(); g.rotate(k / n * TAU); g.fillText(text[k % text.length], 0, -r); g.restore() } g.restore() }
+// Kiyoshi's fan, exactly as in "How the fund works": 13 wedge blades from a pivot, a dark hole near the top right,
+// and a small fan below the pivot. p = how far it is unfolded.
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function fanBlades(cx, cy, r, p) {
+  const w = (A1 - A0) / NB, gap = .011, q = []
+  for (let i = 0; i < NB; i++) {
+    const gp = gap * Math.min(1, p * 2.2), s = A0 + i * w * p + gp, e = A0 + (i + 1) * w * p - gp + (1 - p) * .03, ri = r * .06
+    q.push([[cx + Math.cos(s) * ri, cy + Math.sin(s) * ri], [cx + Math.cos(s) * r, cy + Math.sin(s) * r], [cx + Math.cos(e) * r, cy + Math.sin(e) * r], [cx + Math.cos(e) * ri, cy + Math.sin(e) * ri]])
+  }
+  return q
+}
+function quad(pts, color, alpha) { if (alpha <= 0) return; g.save(); g.globalAlpha *= alpha; g.fillStyle = color; g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y))); g.closePath(); g.fill(); g.restore() }
+function lowerFan(cx, cy, r, color, alpha, hole = BG) {
+  if (alpha <= 0) return
+  g.save(); g.globalAlpha *= alpha; g.translate(cx, cy); g.fillStyle = color
+  for (let i = 0; i < 6; i++) { const s = Math.PI * (.12 + .76 * i / 6) + .04, e = Math.PI * (.12 + .76 * (i + 1) / 6) - .04
+    g.beginPath(); g.moveTo(Math.cos(s) * r * .35, Math.sin(s) * r * .35); g.arc(0, 0, r, s, e); g.arc(0, 0, r * .35, e, s, true); g.closePath(); g.fill() }
+  g.strokeStyle = color; g.lineWidth = r * .14; g.beginPath(); g.arc(0, 0, r * .3, 0, TAU); g.stroke()
+  g.fillStyle = hole; g.beginPath(); g.arc(0, 0, r * .16, 0, TAU); g.fill()
+  g.restore()
+}
+function fanHole(cx, cy, r, p, alpha, hole = BG) {
+  if (p <= .75) return
+  const ha = A0 + (A1 - A0) * .82 * p
+  g.save(); g.globalAlpha *= alpha * clamp((p - .75) * 6); g.fillStyle = hole; g.beginPath(); g.arc(cx + Math.cos(ha) * r * .76, cy + Math.sin(ha) * r * .76, r * .075, 0, TAU); g.fill(); g.restore()
+}
+function drawFan(cx, cy, r, p, color, alpha, hole = BG) {
+  for (const qd of fanBlades(cx, cy, r, p)) quad(qd, color, alpha)
+  fanHole(cx, cy, r, p, alpha, hole)
+  lowerFan(cx, cy + r * .03, r * .13, color, alpha, hole)
+}
+
+// ---------- part one ----------
+function corridorLabels(t) {
+  const a = inout(t, A(2) + 1.0, A(4) - 1.9, 1.2); if (a <= 0) return
+  txt('UNISWAP', -800, -262, 24, SOFT, a, { font: MONO, spacing: 8, align: 'left' }); txt('TEXTILE', -800, 268, 24, SOFT, a, { font: MONO, spacing: 8, align: 'left' })
+  txt('the gap', 0, 0, 28, GOLD2, a, { italic: true })
+}
+function gapGlow(t) { // the glow in the gap becomes the spark between the fingers
+  const a = smooth((t - A(2) - .8) / 1.4) * (1 - smooth((t - A(4) + .6) / 1.6)); if (a <= 0) return
+  const size = lerp(160, 70, smooth((t - A(4) + 1.9) / 1.6))
+  dot(0, 0, size, 'rgba(243,215,122,.55)', a * (.6 + .4 * Math.sin(t * 2.4) ** 2))
+}
+function hands(t) {
+  if (!ENG) return
+  // each arm sets from the sleeve to the fingertip, just behind the lines that become it; later both draw back
+  // into the coin as it turns into the watch
+  const rin = clamp((t - (A(4) - .7)) / 2.7), out = smooth((t - (TB - 2.6)) / 1.7), al = (1 - out) * lerp(1, .14, smooth((t - (A(6) + .5)) / 1.4))
+  if (rin <= 0 || al <= .003) return
+  const close = closeAt(t) + out * 60, soft = 300
+  dot(0, 0, 900, 'rgba(255,214,140,.07)', rin * al)
+  const L = TMPL.getContext('2d'); L.globalCompositeOperation = 'source-over'; L.clearRect(0, 0, GX, HH); L.drawImage(ENG, 0, 0)
+  let e = lerp(-soft, GX + soft, rin), gr = L.createLinearGradient(e - soft, 0, e, 0); gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)')
+  L.globalCompositeOperation = 'destination-in'; L.fillStyle = gr; L.fillRect(0, 0, GX, HH)
+  const Rr = TMPR.getContext('2d'), rw = HW - GX; Rr.globalCompositeOperation = 'source-over'; Rr.clearRect(0, 0, rw, HH); Rr.drawImage(ENG, -GX, 0)
+  e = lerp(rw + soft, -soft, rin); gr = Rr.createLinearGradient(e, 0, e + soft, 0); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, 'rgba(0,0,0,1)')
+  Rr.globalCompositeOperation = 'destination-in'; Rr.fillStyle = gr; Rr.fillRect(0, 0, rw, HH)
+  g.save(); g.globalAlpha = al
+  g.drawImage(TMPL, -GX * SC - close, -GY * SC, GX * SC, HH * SC)
+  g.drawImage(TMPR, close, -GY * SC, rw * SC, HH * SC)
+  g.restore()
+}
+function sparkGlow(t) {
+  const a = smooth((t - A(4) + 1.0) / 1.6) * (1 - smooth((t - A(6) + .6) / 1.6)); if (a <= 0) return
+  const fl = .75 + .25 * Math.sin(t * 7) * Math.sin(t * 3.1)
+  dot(0, 0, 180, 'rgba(255,214,120,.35)', a * fl); dot(0, 0, 60, 'rgba(255,246,220,.95)', a * fl)
+  for (let k = 0; k < 12; k++) { const an = k / 12 * TAU + t * .3, len = 40 + 30 * Math.sin(t * 4 + k); g.save(); g.globalAlpha = a * .5; g.strokeStyle = GOLD2; g.lineWidth = 1.5; g.beginPath(); g.moveTo(Math.cos(an) * 18, Math.sin(an) * 18); g.lineTo(Math.cos(an) * len, Math.sin(an) * len); g.stroke(); g.restore() }
+}
+const tick = (lt) => (lt <= 0 ? 0 : Math.floor(lt) + smooth(clamp((lt % 1) / .12))) // a second hand that ticks, with a soft landing
+function dialFace() { // drawn around 0,0 at its full size (bezel radius 551)
+  const gr = g.createRadialGradient(-120, -160, 40, 0, 0, 560); gr.addColorStop(0, '#f6eedb'); gr.addColorStop(1, '#d9ccad'); g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 540, 0, TAU); g.fill()
+  g.strokeStyle = GOLD; g.lineWidth = 22; g.beginPath(); g.arc(0, 0, 551, 0, TAU); g.stroke()
+  for (let i = 0; i < 60; i++) { const an = i / 60 * TAU, big = i % 5 === 0; g.strokeStyle = INK; g.lineWidth = big ? 6 : 2; g.beginPath(); g.moveTo(Math.cos(an) * (big ? 470 : 492), Math.sin(an) * (big ? 470 : 492)); g.lineTo(Math.cos(an) * 510, Math.sin(an) * 510); g.stroke() }
+  const RN = ['XII', 'I', 'II', 'III', 'IIII', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI']
+  RN.forEach((n, i) => { const an = i / 12 * TAU - Math.PI / 2; txt(n, Math.cos(an) * 410, Math.sin(an) * 410, 56, INK, 1) })
+  drawFan(0, -150, 70, 1, GOLD, 1, '#eadfc4'); txt('KIYOSHI', 0, 160, 34, INK, 1, { spacing: 12 }); txt('MIDAS EDITION', 0, 200, 18, '#6a5d48', 1, { font: SANS, spacing: 6 })
+}
+function coinAndDial(t) {
+  const d = disc(t); if (d.grow <= 0) return
+  const lt = t - TB, lift = smooth((lt - 4) / 2.4); if (lift >= 1) return
+  g.save(); g.globalAlpha = (1 - lift) * clamp(d.grow * 1.5); g.scale(d.sx * (1 + lift * .5), 1 + lift * .5)
+  if (!d.back) { // the gold coin
+    const r = 140, s = d.R / r; g.scale(s, s)
+    const gr = g.createRadialGradient(-r * .35, -r * .4, r * .1, 0, 0, r * 1.05); gr.addColorStop(0, '#fff1bf'); gr.addColorStop(.35, GOLD2); gr.addColorStop(.75, GOLD); gr.addColorStop(1, DEEP)
+    g.fillStyle = gr; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill()
+    g.strokeStyle = 'rgba(90,64,16,.6)'; g.lineWidth = 3; g.beginPath(); g.arc(0, 0, r * .86, 0, TAU); g.stroke()
+    drawFan(2, r * .3 + 2, r * .52, 1, 'rgba(90,64,16,.55)', 1, 'rgba(0,0,0,0)'); drawFan(-1.5, r * .3 - 1.5, r * .52, 1, 'rgba(255,248,220,.6)', 1, 'rgba(0,0,0,0)'); drawFan(0, r * .3, r * .52, 1, '#c79b2c', 1, '#e7c868')
+    const sw = ((t * .35) % 1.6) - .3, lg = g.createLinearGradient(-r + sw * 2 * r, -r, -r + sw * 2 * r + 80, r); lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(.5, 'rgba(255,255,255,.35)'); lg.addColorStop(1, 'rgba(255,255,255,0)')
+    g.beginPath(); g.arc(0, 0, r, 0, TAU); g.clip(); g.fillStyle = lg; g.fillRect(-r, -r, 2 * r, 2 * r)
+  } else { // its other side: the watch
+    const s = d.R / 551; g.scale(s, s); dialFace()
+    const hand = (an, len, w, col) => { g.save(); g.rotate(an); g.fillStyle = col; g.beginPath(); g.moveTo(-w / 2, 40); g.lineTo(w / 2, 40); g.lineTo(w * .2, -len); g.lineTo(-w * .2, -len); g.fill(); g.restore() }
+    hand(TAU * (10.1 / 12), 260, 18, INK); hand(TAU * (8.6 / 60), 380, 12, INK); hand(TAU * (tick(lt) + 23) / 60, 450, 4, '#a3283a')
+    g.fillStyle = INK; g.beginPath(); g.arc(0, 0, 16, 0, TAU); g.fill()
+  }
+  g.restore()
+}
+function stats(t) {
+  const k = smooth((t - A(6) - 1.2) / 1.1) * (1 - smooth((t - (TB - 2.5)) / 1.0)); if (k <= 0) return
+  const dy = (1 - smooth((t - A(6) - 1.2) / 1.1)) * 14 - smooth((t - (TB - 2.5)) / 1.0) * 14
+  txt(`SEASON 2 · SINCE ${STAT.since}`, 262, -92 + dy, 23, SOFT, k, { font: MONO, spacing: 6, align: 'left' })
+  txt(`${STAT.trades} trades`, 262, -34 + dy, 62, WHITE, k, { weight: 700, align: 'left' })
+  txt(`${STAT.profit} before gas`, 262, 30 + dy, 34, GOLD2, k, { font: MONO, weight: 600, align: 'left' })
+  txt(`${STAT.win} profitable · share price ${STAT.price}`, 262, 82 + dy, 24, SOFT, k, { font: MONO, align: 'left' })
+}
+
+// ---------- part two: the movement ----------
+function gear(x, y, r, teeth, rot, glow = 0, a = 1) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha *= a; g.translate(x, y); g.rotate(rot)
+  const gr = g.createRadialGradient(-r * .3, -r * .3, r * .1, 0, 0, r * 1.1); gr.addColorStop(0, glow > 0 ? GOLD2 : '#c9a33c'); gr.addColorStop(.7, GOLD); gr.addColorStop(1, '#7a5c18')
+  g.fillStyle = gr; g.beginPath()
+  const d = r * .09
+  for (let i = 0; i < teeth; i++) { const a0 = i / teeth * TAU, w = TAU / teeth
+    g.lineTo(Math.cos(a0) * r, Math.sin(a0) * r); g.lineTo(Math.cos(a0 + w * .12) * (r + d), Math.sin(a0 + w * .12) * (r + d))
+    g.lineTo(Math.cos(a0 + w * .45) * (r + d), Math.sin(a0 + w * .45) * (r + d)); g.lineTo(Math.cos(a0 + w * .57) * r, Math.sin(a0 + w * .57) * r) }
+  g.closePath()
+  g.moveTo(r * .72, 0); g.arc(0, 0, r * .72, 0, TAU, true) // spokes: cut the gear into a rim and a hub
+  g.fill('evenodd')
+  g.beginPath(); g.arc(0, 0, r * .26, 0, TAU); g.fill()
+  for (let k = 0; k < 5; k++) { g.save(); g.rotate(k / 5 * TAU); g.fillRect(r * .2, -r * .06, r * .56, r * .12); g.restore() }
+  g.fillStyle = '#2a1f0a'; g.beginPath(); g.arc(0, 0, r * .08, 0, TAU); g.fill()
+  g.fillStyle = '#b03040'; g.beginPath(); g.arc(0, 0, r * .045, 0, TAU); g.fill() // the jewel bearing
+  g.restore()
+  if (glow > 0) dot(x, y, r * 1.6, 'rgba(243,215,122,.35)', glow * a)
+}
+function plate(lt, a) {
+  if (a <= 0) return
+  g.save(); g.globalAlpha = a
+  g.fillStyle = '#14100a'; g.beginPath(); g.arc(0, 0, 560, 0, TAU); g.fill()
+  g.strokeStyle = 'rgba(212,175,55,.07)'; g.lineWidth = 2; for (let r = 40; r < 560; r += 14) { g.beginPath(); g.arc(0, 0, r, 0, TAU); g.stroke() }
+  g.strokeStyle = 'rgba(212,175,55,.5)'; g.lineWidth = 4; g.beginPath(); g.arc(0, 0, 560, 0, TAU); g.stroke()
+  g.restore()
+}
+function gears(lt, a) {
+  if (a <= 0) return
+  const cur = stepAt(lt), fin = clamp((lt - 36) / 1.2), spin = lt * .35
+  gear(0, 0, 220, 48, spin, 0, a)
+  GEARS.forEach((gr, i) => {
+    const on = i === cur ? inout(lt, 8 + i * 4, 8 + (i + 1) * 4 - .05, .4) : 0
+    const dir = i % 2 ? 1 : -1, ratio = 220 / gr.r
+    gear(gr.x, gr.y, gr.r, gr.teeth, -dir * spin * ratio * .5 + i, Math.max(on, fin * .6), a)
+    txt(String(i + 1), gr.x, gr.y, 34, '#2a1f0a', a * (.4 + .6 * Math.max(on, fin)), { font: MONO, weight: 700 })
+  })
+  // the balance wheel at the centre, swinging with the tick
+  g.save(); g.globalAlpha = a; g.rotate(Math.sin(lt * Math.PI) * .9); g.strokeStyle = GOLD2; g.lineWidth = 6; g.beginPath(); g.arc(0, 0, 70, 0, TAU); g.stroke()
+  g.lineWidth = 4; for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(k / 3 * TAU) * 70, Math.sin(k / 3 * TAU) * 70); g.stroke() } g.restore()
+}
+function stepWords(lt) {
+  const pa = inout(lt, 8.2, 36, .6)
+  if (pa > 0) { const gr = g.createLinearGradient(1150, 0, 1920, 0); gr.addColorStop(0, 'rgba(8,7,6,0)'); gr.addColorStop(.25, `rgba(8,7,6,${.82 * pa})`); gr.addColorStop(1, `rgba(8,7,6,${.9 * pa})`); g.fillStyle = gr; g.fillRect(1150, 0, 770, 1080) }
+  STEPS.forEach(([h, l1, l2], i) => { const a = inout(lt, 8 + i * 4 + .6, 8 + (i + 1) * 4 - .25, .45)
+    txt(`STEP ${i + 1} OF 7`, 1220, 430, 26, GOLD, a, { font: MONO, weight: 600, spacing: 10, align: 'left' })
+    txt(h, 1220, 510, 84, WHITE, a, { weight: 700, align: 'left' })
+    txt(l1, 1220, 600, 31, SOFT, a, { italic: true, align: 'left' }); txt(l2, 1220, 646, 31, SOFT, a, { italic: true, align: 'left' }) })
+}
+
+// ---------- part three: the mark, as "How the fund works" ends ----------
+const CHARS = ['M', 'I', 'D', 'A', 'S', ' ', '×', ' ', 'K', 'I', 'Y', 'O', 'S', 'H', 'I']
+const WFONT = (size, weight = 400) => `${weight} ${size}px "DejaVu Sans Mono", monospace`
+function wordmarkLayout(cy) {
+  const UNITS = CHARS.map((ch, i) => (i === 0 ? 1.15 : i === 11 ? 1.9 : ch === ' ' ? .55 : 1)) // the 巾-style M a little wider, the fan O much wider
+  const layout = (F) => { g.font = WFONT(F); const cw = g.measureText('M').width, sp = cw * .2; return { cw, sp, total: UNITS.reduce((a, u) => a + u * cw, 0) + (CHARS.length - 1) * sp } }
+  let F = 108, m = layout(F)
+  if (m.total > 1920 * .9) { F *= (1920 * .9) / m.total; m = layout(F) }
+  let x = 960 - m.total / 2; const xs = [], ws = []
+  UNITS.forEach((u) => { xs.push(x); ws.push(u * m.cw); x += u * m.cw + m.sp })
+  return { F, cw: m.cw, sp: m.sp, xs, ws, base: cy + F * .36, top: cy - F * .37 }
+}
+function taper([ax, ay], [bx, by], wa, wb) { // a blade: narrow end at a, wide end at b
+  const len = Math.hypot(bx - ax, by - ay) || 1, ux = (bx - ax) / len, uy = (by - ay) / len, nx = -uy, ny = ux
+  return [[ax + nx * wa / 2, ay + ny * wa / 2], [bx + nx * wb / 2, by + ny * wb / 2], [bx - nx * wb / 2, by - ny * wb / 2], [ax - nx * wa / 2, ay - ny * wa / 2]]
+}
+function mPieces(L) { // the 巾-style M built from the fan's 13 blades
+  const x = L.xs[0], w = L.ws[0], top = L.top, h = L.base - top, P2 = (u, v) => [x + w * u, top + h * v], bold = L.F * .17, tip = L.F * .05
+  const strokes = [[P2(.20, .24), P2(.05, 1.02)], [P2(.86, .24), P2(.14, .24)], [P2(.50, 1.06), P2(.50, -.08)], [P2(.86, 1.0), P2(.86, .20)]]
+  const out = []; strokes.forEach(([a, b], si) => { for (let k = 0; k < [3, 3, 4, 3][si]; k++) out.push(taper(a, b, tip, bold)) })
+  return out
+}
+function mark(t) {
+  const lt = t - TL; if (lt < 0) return
+  const L = wordmarkLayout(LCY)
+  const p = lerp(1, .42, ease(lt / .9)) // the open fan closes midway
+  const from = fanBlades(FCX, FCY, FR, p), to = mPieces(L)
+  from.forEach((qd, i) => { // then its blades fly off and build the M
+    const k = ease((lt - .9 - i * .045) / 1.2)
+    quad(qd.map(([x, y], j) => [lerp(x, to[i][j][0], k), lerp(y, to[i][j][1], k)]), mix(WHITE, GOLD, k), 1)
+  })
+  if (lt < .95) fanHole(FCX, FCY, FR, p, 1)
+  // the pivot, with its small fan, travels into KIYOSHI and opens there as the O
+  const kf = ease((lt - 1.1) / 1.3), po = ease((lt - 2.0) / .9)
+  const ox = L.xs[11] + L.ws[11] / 2, oy = L.base - L.F * .04, or = lerp(FR, L.ws[11] * .52, kf)
+  const cx = lerp(FCX, ox, kf), cy = lerp(FCY, oy, kf), col = mix(WHITE, GOLD, kf)
+  if (po > 0) drawFan(cx, cy, or, po, col, 1); else lowerFan(cx, cy + or * .03, or * .13, col, 1)
+  const la = clamp((lt - 2.3) / .8)
+  if (la > 0) {
+    g.save(); g.textBaseline = 'alphabetic'; g.textAlign = 'center'; g.filter = `blur(${((1 - la) * 10).toFixed(1)}px)`; g.globalAlpha = la
+    CHARS.forEach((ch, i) => {
+      if (i === 0 || i === 11 || ch === ' ') return
+      g.fillStyle = i < 5 ? GOLD : i === 6 ? GREY : WHITE
+      g.font = i === 6 ? WFONT(L.F * .8, 300) : WFONT(L.F)
+      g.fillText(ch, L.xs[i] + L.ws[i] / 2 + (1 - la) * (i < 8 ? -40 : 40), L.base)
+    })
+    g.restore()
+  }
+  txt('The fund is open.', 960, L.base + 118, 58, WHITE, smooth((lt - 3.5) / 1.0), { italic: true })
+  txt('midas-kiyoshi-fund.vercel.app', 960, L.base + 200, 26, GOLD2, smooth((lt - 4.6) / .8), { font: MONO })
+  txt('By invitation · not financial advice · you can lose money', 960, 1004, 19, GREY, smooth((lt - 5.2) / .8) * .85, { font: SANS, spacing: 1 })
+}
+
+function captions(t) {
+  const C = [[.9, 4.1, 'Fiat lux.'], [4.5, A(2) + 1.0, 'Let there be liquidity.'], [A(2) + 1.7, A(4) - 1.7, 'Two markets, never quite equal.'],
+    [A(4) + .5, A(6) - .9, 'Kiyoshi lives in the space between them.'], [A(6) + .1, TB - 2.3, 'One spark at a time.'],
+    [TB + .9, TB + 4.1, 'Every thirty seconds,'], [TB + 4.5, TB + 7.3, 'Kiyoshi runs the same seven steps.'], [TB + 37, TB + 39.5, 'Two markets. One gap. Around the clock.']]
+  for (const [a, b, s] of C) txt(s, 960, 984, 50, WHITE, inout(t, a, b, .7), { italic: true, glow: 'rgba(0,0,0,.85)' })
+}
+
+function draw(t) {
+  CAM = camera(t)
+  const sc = W / 1920, lt = t - TB
+  g.setTransform(sc, 0, 0, sc, 0, 0); g.fillStyle = BG; g.fillRect(0, 0, 1920, 1080)
+  // marble, far away: moves at half the camera's speed; it gives way to the dark of the movement
+  const ma = 1 - smooth((lt - 2.6) / 3.2)
+  if (ma > 0) { g.save(); g.translate(960, 540); g.rotate(CAM.r * .5); g.scale(.55 + CAM.z * .35, .55 + CAM.z * .35); g.translate(-CAM.x * .5, -CAM.y * .5); g.globalAlpha = .75 * ma; g.drawImage(MARBLE, -1300, -760); g.restore() }
+  dot(960, 520, 900, 'rgba(255,214,140,.10)')
+  if (t < TL) {
+    g.save(); toScreen()
+    const mv = smooth((lt - 3.6) / 2) * (1 - smooth((t - (TC - .1)) / 1.2)) // the movement, until the camera dives into its hub
+    plate(lt, mv)
+    gapGlow(t); hands(t); drawLines(t)
+    if (t < 6.6) microRing(388, 'FIAT LUX · ', 13, inout(t, 1.6, 5.6, 1.0), t * .05)
+    corridorLabels(t); sparkGlow(t)
+    gears(lt, mv)
+    if (lt > 3.4) drawFan(HUB.x, HUB.y, HUB.r, 1, mix('#2a1f0a', '#F4F1EA', smooth((t - TC) / 1.2)), smooth((lt - 3.6) / 2) * lerp(.9, 1, smooth((t - TC) / 1.2)), mix('#D4AF37', '#080706', smooth((t - TC + .2) / 1.2)))
+    coinAndDial(t); stats(t)
+    g.restore()
+    stepWords(lt)
+  } else mark(t)
+  captions(t)
+  // film: grain, vignette, fades
+  g.save(); g.globalCompositeOperation = 'overlay'; g.globalAlpha = .08; g.drawImage(GRAIN[Math.floor(t * 24) % 4], 0, 0, 1920, 1080); g.restore()
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .38, W / 2, H / 2, Math.max(W, H) * .72); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.62)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .9) + clamp((t - (DUR - 1.3)) / 1.3); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready.then(() => build()).then(() => { window.DBG = { XL0, XL1, XR0, XR1 } })
+</script>
+</body></html>
