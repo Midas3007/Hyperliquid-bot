@@ -3,12 +3,17 @@
 //   1. Off-chain season: records the pool wallet's value (what sync-value does when someone opens the site).
 //   2. On-chain fund (FundVault): posts the treasury's value; once a day after 20:00 UTC it settles the queued
 //      deposits and redemptions, when the bot wallet holds enough USDT to pay the redemptions.
+// Running-costs pot (014_treasury.sql, see kiyoshi/docs/treasury-design.md): when the pot is switched on, the value posted
+// is the wallet's value MINUS the pot, the daily carve (10% of the day's profit) runs just before the settlement, and
+// if the pot cannot be read or does not match the wallet, NOTHING is posted this run (the next run, an hour later, tries
+// again). With the pot off, or before 014 is run, this file behaves exactly as it did.
 // It signs with its own keeper wallet (the vault's operator), which holds no money. The key is created here on the
 // first run and kept encrypted in Supabase Vault; nobody needs to see it. Fund the keeper address with a little CELO.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 import { createPublicClient, createWalletClient, defineChain, encodePacked, erc20Abi, formatUnits, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
 import { generatePrivateKey, privateKeyToAccount } from 'npm:viem@2.21.0/accounts'
 import { celo } from 'npm:viem@2.21.0/chains'
+import { treasuryValue } from '../_shared/treasury.ts'
 
 const MIN_GAP_MS = 20 * 60_000
 const SETTLE_HOUR_UTC = 20
@@ -117,15 +122,27 @@ Deno.serve(async (req) => {
   if (!force && !cfg.settle_now && cfg.last_run_at && Date.now() - Date.parse(cfg.last_run_at) < MIN_GAP_MS) return reply({ skipped: 'ran recently' })
   await db.from('vault_config').update({ last_run_at: new Date().toISOString() }).eq('id', 1)
   const notes: string[] = []
+  const nowD = new Date(), todayD = nowD.toISOString().slice(0, 10)
+  const dueEarly = (nowD.getUTCHours() >= SETTLE_HOUR_UTC && cfg.last_settle_day !== todayD) || cfg.settle_now === true
+  // The pot's numbers come from the pool wallet's stored transactions: bring them up to the head of the chain first
+  // (once per run; trade-stats ignores calls that come too close together).
+  let refreshed: Promise<unknown> | null = null
+  const refreshHistory = () => (refreshed ??= fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/trade-stats`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+    body: '{"cron":true}', signal: AbortSignal.timeout(50_000),
+  }).then((r) => r.body?.cancel()).catch(() => {}))
 
   // 1. Off-chain season value (the members' ledger in Supabase)
   try {
     const { data: s } = await db.from('settings').select('bot_wallet').eq('id', 1).single()
     const { data: lastEntry } = await db.from('ledger').select('created_at').order('seq', { ascending: false }).limit(1).maybeSingle()
     if (s?.bot_wallet && isAddress(s.bot_wallet) && !(lastEntry && Date.now() - Date.parse(lastEntry.created_at) < LEDGER_QUIET_MS)) {
-      const v = Math.round(Number(formatUnits(await walletValue(s.bot_wallet as `0x${string}`), 6)) * 100) / 100
+      // the pot (if on) is taken out of the wallet's value; if it cannot be, nothing is recorded this run
+      const tv = await treasuryValue(db, { due: dueEarly, forWallet: s.bot_wallet, head: () => mainnet.getBlockNumber(), wallet: () => walletValue(s.bot_wallet as `0x${string}`), refresh: refreshHistory })
+      if (tv.kind === 'skip') notes.push(`season value not recorded (${tv.why})`)
+      const v = tv.kind === 'skip' ? 0 : Math.round(Number(formatUnits(tv.micro, 6)) * 100) / 100
       const { data: last } = await db.from('nav_snapshots').select('value').order('recorded_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
-      if (!last || Math.abs(Number(last.value) - v) >= 0.005) {
+      if (tv.kind !== 'skip' && (!last || Math.abs(Number(last.value) - v) >= 0.005)) {
         const { data: units } = await db.from('ledger').select('units')
         const total = (units ?? []).reduce((a: number, r: any) => a + Number(r.units), 0)
         await db.from('nav_snapshots').insert({ value: v, total_units: total, note: 'Synced from pool wallet (keeper)' })
@@ -185,14 +202,27 @@ Deno.serve(async (req) => {
     if ((await pub.getBalance({ address: account.address })) === 0n) throw new Error(`the keeper wallet ${account.address} needs a little CELO for gas`)
     const treasury = await read('treasury')
     const usdt = cfg.usdt_address as `0x${string}`
-    const value: bigint = cfg.network === 'mainnet'
-      ? await walletValue(treasury)
-      : await pub.readContract({ address: usdt, abi: erc20Abi, functionName: 'balanceOf', args: [treasury] })
-    const [nav, q, supply] = await Promise.all([read('nav'), read('queueLengths'), read('totalSupply')])
-    const now = new Date(), today = now.toISOString().slice(0, 10)
+    const today = todayD
     // settle_now: a one-time early settlement the admin asks for (e.g. to test); cleared once used
-    const due = (now.getUTCHours() >= SETTLE_HOUR_UTC && cfg.last_settle_day !== today) || cfg.settle_now === true
-    if (due && (q[0] > 0n || q[1] > 0n)) {
+    const due = dueEarly
+    // The value of the fund. With the running-costs pot on (mainnet, the pot's own wallet) it is the wallet's value minus
+    // the pot, after the day's carve; if that cannot be worked out safely the run ends here and posts nothing.
+    let value: bigint, carvePending = false
+    if (cfg.network === 'mainnet') {
+      const tv = await treasuryValue(db, { due, forWallet: treasury, head: () => mainnet.getBlockNumber(), wallet: () => walletValue(treasury), refresh: refreshHistory })
+      if (tv.kind === 'skip') {
+        notes.push(`value not posted (${tv.why})`)
+        await db.from('vault_config').update({ last_result: notes.join(' · ') }).eq('id', 1)
+        return reply({ notes })
+      }
+      value = tv.micro
+      if (tv.kind === 'value') { carvePending = !!tv.carvePending; notes.push(`running-costs pot ${fmt(tv.pot)} held back`) }
+    } else value = await pub.readContract({ address: usdt, abi: erc20Abi, functionName: 'balanceOf', args: [treasury] })
+    const [nav, q, supply] = await Promise.all([read('nav'), read('queueLengths'), read('totalSupply')])
+    // the day's carve could not run (the stored trade history is not up to date): report the value, settle at the next run
+    const settleDue = due && !carvePending
+    if (due && carvePending) notes.push('settlement waiting: the running-costs carve has not run yet')
+    if (settleDue && (q[0] > 0n || q[1] > 0n)) {
       const [pendingDeposits, escrow] = await Promise.all([read('totalPendingDeposits'), read('balanceOf', [vault])])
       const payouts = supply > 0n ? escrow * value / supply : 0n
       const need = payouts > pendingDeposits ? payouts - pendingDeposits : 0n
@@ -204,7 +234,7 @@ Deno.serve(async (req) => {
         notes.push(`settled ${q[0]} deposit(s), ${q[1]} redemption(s) at ${fmt(value)}`)
       }
     } else {
-      if (due) await db.from('vault_config').update(cfg.settle_now ? { settle_now: false } : { last_settle_day: today }).eq('id', 1)
+      if (settleDue) await db.from('vault_config').update(cfg.settle_now ? { settle_now: false } : { last_settle_day: today }).eq('id', 1)
       const diff = value > nav ? value - nav : nav - value
       if (supply > 0n && diff >= 10_000n) { // at least one cent
         await write('reportValue', value)

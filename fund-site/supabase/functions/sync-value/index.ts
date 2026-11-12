@@ -3,9 +3,12 @@
 // POST { peek: true } only reads the live value (for the admin deposit and withdrawal forms) and saves nothing.
 // Counts USDT + USDC at $1, and every other token the bot can hold (wBRL, wARS, cNGN and the Mento stablecoins)
 // at its live Uniswap v3 price in USDT, directly or through USDm/USDC. CELO (gas) is ignored.
+// When the running-costs pot is switched on (014_treasury.sql) the value is the wallet's value MINUS the pot, like the
+// keeper's; if the pot cannot be worked out safely nothing is saved (and a peek says to try again in a few minutes).
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 import { createPublicClient, encodePacked, erc20Abi, formatUnits, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
 import { celo } from 'npm:viem@2.21.0/chains'
+import { treasuryValue } from '../_shared/treasury.ts'
 
 const MIN_GAP_MS = 2 * 60_000          // at most one sync every 2 minutes
 const LEDGER_QUIET_MS = 5 * 60_000     // pause after a deposit/withdrawal so the money can land or leave
@@ -98,18 +101,25 @@ Deno.serve(async (req) => {
     if (last && now - Date.parse(last.recorded_at) < MIN_GAP_MS) return reply(200, { skipped: 'synced recently' })
   }
 
-  const holdings = []
-  let value = 0
-  for (const t of TOKENS) {
-    const raw = await chain.readContract({ address: t.address, abi: erc20Abi, functionName: 'balanceOf', args: [wallet] })
-    if (raw === 0n) continue
-    const amount = Number(formatUnits(raw, t.decimals))
-    const usd = t.stable ? amount : await toUsdt(t.address, raw)
-    holdings.push({ symbol: t.symbol, amount, usd })
-    value += usd
+  const holdings: { symbol: string; amount: number; usd: number }[] = []
+  const readWallet = async () => { // the wallet's value in USDT micro-units, as counted above
+    holdings.length = 0
+    let sum = 0
+    for (const t of TOKENS) {
+      const raw = await chain.readContract({ address: t.address, abi: erc20Abi, functionName: 'balanceOf', args: [wallet] })
+      if (raw === 0n) continue
+      const amount = Number(formatUnits(raw, t.decimals))
+      const usd = t.stable ? amount : await toUsdt(t.address, raw)
+      holdings.push({ symbol: t.symbol, amount, usd })
+      sum += usd
+    }
+    return BigInt(Math.round(Math.round(sum * 100) / 100 * 1e6))
   }
-  value = Math.round(value * 100) / 100
-  if (peek) return reply(200, { value, holdings })
+  const tv = await treasuryValue(db, { due: false, forWallet: wallet, head: () => chain.getBlockNumber(), wallet: readWallet, refresh: async () => {} })
+  if (tv.kind === 'skip') return reply(200, { skipped: `the running-costs pot is catching up (${tv.why}); try again in a few minutes` })
+  const value = Math.round(Number(formatUnits(tv.micro, 6)) * 100) / 100
+  const pot = tv.kind === 'value' ? Number(formatUnits(tv.pot, 6)) : 0
+  if (peek) return reply(200, { value, holdings, ...(pot ? { pot } : {}) })
 
   if (last && Math.abs(Number(last.value) - value) < 0.005) return reply(200, { unchanged: true, value, holdings })
 
