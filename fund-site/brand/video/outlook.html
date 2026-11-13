@@ -1,0 +1,182 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#060a14}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Shareholder Outlook": a trading-floor film for the fund's members. One gold line runs through the whole piece and
+// becomes each chart in turn: the daily share price, weekly profit bars, a four-week projection cone, and finally the
+// arc of Kiyoshi's fan. One camera, never cut. 52 s, timed to score-outlook.py (bossa nova, 128 BPM).
+// Numbers are the season's, read from the chain on 13 Nov 2026. The projection is an illustration at the season's
+// pace (after the 10% running-costs carve, before the performance fee), and the film says so on screen.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 52, TAU = Math.PI * 2
+const NAVY = '#060a14', GOLD = '#D4AF37', GOLD2 = '#F3D77A', GREEN = '#5fd39a', WHITE = '#F2F0EA', SOFT = '#aeb6c8', DIM = '#5d6780'
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x)), lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const inout = (t, a, b, f = .7) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+
+// ---------- the data (13 Nov 2026) ----------
+const CLOSES = [1.002, 1.212, 1.246, 1.2996, 1.4235, 1.4606, 1.5072, 1.5962, 1.7117, 1.7468, 1.7561, 1.8187, 2.158, 2.383, 2.4289, 2.4461]
+const DAYP = [6.69, 39.58, 7.19, 11.92, 28.85, 10.1, 10.22, 25.83, 26.09, 6.83, 2.04, 17.51, 83.88, 54.07, 11.9, 7.98]
+const WEEKS = [114.55, 216.25, 19.88] // 29 Oct-4 Nov, 5-11 Nov, 12-13 Nov so far
+const PRICE = 2.4461, PER_DAY = 0.0583 // share price gained per day at the season's pace, after the 10% carve
+const BASE4 = PRICE + PER_DAY * 28, CONS4 = PRICE + PER_DAY * 14 // four weeks out: season pace / half pace
+const CARD = { wB: 16.7, mB: 71, wC: 8.3, mC: 36 } // per $100 held, a week / a month (30 days)
+
+// ---------- one line of N points, morphing from shape to shape ----------
+const N = 180
+function resample(pts) { // even spacing along a polyline
+  const L = [0]; for (let i = 1; i < pts.length; i++) L.push(L[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+  const out = [], tot = L[L.length - 1]; let j = 0
+  for (let i = 0; i < N; i++) { const d = tot * i / (N - 1); while (j < L.length - 2 && L[j + 1] < d) j++; const k = (d - L[j]) / Math.max(1e-6, L[j + 1] - L[j]); out.push([lerp(pts[j][0], pts[j + 1][0], k), lerp(pts[j][1], pts[j + 1][1], k)]) }
+  return out
+}
+const PX = (i, n, x0, x1) => lerp(x0, x1, i / (n - 1))
+const priceY = (p) => 300 - (p - 1) / 1.6 * 560
+const SH = {}
+SH.tape = resample([[-860, 170], [860, 170]])
+SH.price = resample(CLOSES.map((p, i) => [PX(i, CLOSES.length, -760, 320), priceY(p)]))
+const BAR = { x0: -560, w: 300, gap: 90, base: 300, k: 2.6 }
+SH.bars = resample((() => { const p = [[BAR.x0 - 60, BAR.base]]; WEEKS.forEach((v, i) => { const x = BAR.x0 + i * (BAR.w + BAR.gap), y = BAR.base - v * BAR.k; p.push([x, BAR.base], [x, y], [x + BAR.w, y], [x + BAR.w, BAR.base]) }); p.push([BAR.x0 + 3 * (BAR.w + BAR.gap), BAR.base]); return p })())
+const CX = (d) => lerp(-820, 760, (d + 15) / 43) // cone chart: day -15 (29 Oct) .. day +28 (four weeks out)
+const coneY = (p) => 330 - (p - 1) / 3.4 * 640
+SH.cone = resample([...CLOSES.map((p, i) => [CX(i - 15), coneY(p)]), ...[7, 14, 21, 28].map((d) => [CX(d), coneY(PRICE + PER_DAY * d * .75)])])
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93, FAN = { x: 0, y: 160, r: 330 }
+SH.arc = resample(Array.from({ length: 60 }, (_, i) => { const a = lerp(A0, A1, i / 59); return [FAN.x + Math.cos(a) * FAN.r, FAN.y + Math.sin(a) * FAN.r] }))
+const SEQ = [['tape', 2.5], ['price', 8.6], ['bars', 17.2], ['cone', 25.4], ['arc', 44.2]], MORPH = 3.0
+function lineAt(t) {
+  let i = 0; while (i < SEQ.length - 1 && t >= SEQ[i + 1][1]) i++
+  const a = SH[SEQ[i][0]], b = i < SEQ.length - 1 ? SH[SEQ[i + 1][0]] : a, p = i < SEQ.length - 1 ? clamp((t - (SEQ[i + 1][1] - MORPH)) / MORPH) : 0
+  return a.map(([x0, y0], j) => { const k = smooth(clamp((p - .35 * (j / N)) / .65)), lift = Math.sin(Math.PI * k) * 40; return [lerp(x0, b[j][0], k), lerp(y0, b[j][1], k) - lift] })
+}
+function drawLine(t, pts, alpha) {
+  const draw = smooth((t - .6) / 2.2), n = Math.max(2, Math.floor(N * draw))
+  g.save(); g.lineJoin = g.lineCap = 'round'
+  for (const [w, a, col] of [[16, .08, GOLD], [6, .2, GOLD], [2.6, 1, GOLD2]]) {
+    g.globalAlpha = a * alpha; g.strokeStyle = col; g.lineWidth = w; g.beginPath()
+    for (let j = 0; j < n; j++) j ? g.lineTo(pts[j][0], pts[j][1]) : g.moveTo(pts[j][0], pts[j][1]); g.stroke()
+  }
+  g.restore()
+  return pts[n - 1]
+}
+
+// ---------- camera: a spline through [t, x, y, zoom, rotation] ----------
+const KF = [[0, 0, -40, 1.25, -.03], [3, 0, 0, 1.0, -.01], [8.6, -80, 0, .98, 0], [13, 120, -60, 1.04, .01], [17.2, 0, 40, .98, 0], [21.6, 30, 0, 1.02, -.008],
+  [25.4, 0, 0, .96, 0], [31, 180, -60, 1.04, .006], [34, 120, -40, 1.0, 0], [40.5, 40, 0, .96, 0], [44.2, 0, 60, 1.0, 0], [52, 0, 40, 1.07, 0]]
+function spline(t, j) {
+  let i = 0; while (i < KF.length - 2 && t > KF[i + 1][0]) i++
+  const p0 = KF[Math.max(0, i - 1)], p1 = KF[i], p2 = KF[i + 1], p3 = KF[Math.min(KF.length - 1, i + 2)]
+  const v = (p) => (j === 3 ? Math.log(p[3]) : p[j]), u = clamp((t - p1[0]) / (p2[0] - p1[0])), dt = p2[0] - p1[0]
+  const m1 = (v(p2) - v(p0)) / Math.max(.001, p2[0] - p0[0]) * dt, m2 = (v(p3) - v(p1)) / Math.max(.001, p3[0] - p1[0]) * dt
+  const r = (2 * u ** 3 - 3 * u ** 2 + 1) * v(p1) + (u ** 3 - 2 * u ** 2 + u) * m1 + (-2 * u ** 3 + 3 * u ** 2) * v(p2) + (u ** 3 - u ** 2) * m2
+  return j === 3 ? Math.exp(r) : r
+}
+
+// ---------- pieces ----------
+function txt(s, x, y, size, color, a = 1, o = {}) { if (a <= .003) return; g.save(); g.globalAlpha *= a; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; if (o.glow) { g.shadowColor = 'rgba(0,0,0,.85)'; g.shadowBlur = 20 } g.fillText(s, x, y); g.restore() }
+function grid(a) { if (a <= 0) return; g.save(); g.globalAlpha = a * .5; g.strokeStyle = '#18213a'; g.lineWidth = 1
+  for (let x = -900; x <= 900; x += 90) { g.beginPath(); g.moveTo(x, -460); g.lineTo(x, 460); g.stroke() } for (let y = -450; y <= 450; y += 90) { g.beginPath(); g.moveTo(-960, y); g.lineTo(960, y); g.stroke() } g.restore() }
+function candles(t) { // daily candles under the price line: open = yesterday's close
+  const a = inout(t, 7.4, 14.6, 1.0); if (a <= 0) return
+  CLOSES.forEach((p, i) => { if (!i) return; const o = CLOSES[i - 1], x = PX(i, CLOSES.length, -760, 320), up = p >= o, k = a * smooth((t - 7.4 - i * .08) / .6)
+    const prof = DAYP[i] / 90, hi = Math.max(o, p) + prof * .05, lo = Math.min(o, p) - .01
+    g.save(); g.globalAlpha = k * .9; g.strokeStyle = up ? GREEN : '#e07a7a'; g.lineWidth = 2; g.beginPath(); g.moveTo(x, priceY(hi)); g.lineTo(x, priceY(lo)); g.stroke()
+    g.fillStyle = up ? 'rgba(95,211,154,.75)' : 'rgba(224,122,122,.75)'; g.fillRect(x - 13, priceY(Math.max(o, p)), 26, Math.max(2, priceY(Math.min(o, p)) - priceY(Math.max(o, p)))); g.restore() })
+  txt('29 OCT', -760, 360, 20, DIM, a, { font: MONO, spacing: 4 }); txt('TODAY', 320, 360, 20, DIM, a, { font: MONO, spacing: 4 })
+  txt('$1.00', -760, priceY(1.002) + 46, 26, SOFT, a, { font: MONO }); txt(`$${PRICE.toFixed(2)}`, 320, priceY(PRICE) - 46, 34, GOLD2, a, { font: MONO, weight: 600 })
+  txt('SHARE PRICE · DAILY', -760, -330, 22, SOFT, a, { font: MONO, spacing: 6, align: 'left' })
+  txt(`+${Math.round((PRICE / 1.002 - 1) * 100)}%`, 560, -120, 120, GREEN, a * smooth((t - 9.4) / .9), { weight: 700 })
+  txt('in fifteen days', 560, -30, 30, SOFT, a * smooth((t - 9.8) / .9), { italic: true })
+}
+function barLabels(t) {
+  const a = inout(t, 16.6, 23.2, .9); if (a <= 0) return
+  const names = ['WEEK 1', 'WEEK 2', 'WEEK 3 · SO FAR']
+  WEEKS.forEach((v, i) => { const x = BAR.x0 + i * (BAR.w + BAR.gap) + BAR.w / 2, y = BAR.base - v * BAR.k, k = a * smooth((t - 16.8 - i * .35) / .6)
+    g.save(); g.globalAlpha = k * .22; const gr = g.createLinearGradient(0, y, 0, BAR.base); gr.addColorStop(0, GOLD2); gr.addColorStop(1, 'rgba(212,175,55,0)'); g.fillStyle = gr; g.fillRect(x - BAR.w / 2, y, BAR.w, BAR.base - y); g.restore()
+    txt(`+$${v.toFixed(2)}`, x, y - 44, 40, i === 1 ? GREEN : WHITE, k, { font: MONO, weight: 600 }); txt(names[i], x, BAR.base + 40, 20, DIM, k, { font: MONO, spacing: 4 }) })
+  txt('TRADING PROFIT · WEEKLY', -620, -330, 22, SOFT, a, { font: MONO, spacing: 6, align: 'left' })
+}
+function cone(t) {
+  const a = inout(t, 24.6, 41.8, 1.0) * (1 - .8 * smooth((t - 33.2) / 1.0)); if (a <= 0) return
+  const grow = smooth((t - 25.2) / 3.2), x0 = CX(0), y0 = coneY(PRICE)
+  const end = (p) => [lerp(x0, CX(28), grow), lerp(y0, coneY(p), grow)]
+  const [bx, by] = end(BASE4), [cx, cy] = end(CONS4)
+  g.save(); g.globalAlpha = a * .28; const gr = g.createLinearGradient(x0, 0, CX(28), 0); gr.addColorStop(0, 'rgba(95,211,154,.1)'); gr.addColorStop(1, 'rgba(95,211,154,.9)')
+  g.fillStyle = gr; g.beginPath(); g.moveTo(x0, y0); g.lineTo(bx, by); g.lineTo(cx, cy); g.closePath(); g.fill(); g.restore()
+  g.save(); g.globalAlpha = a; g.setLineDash([10, 10]); g.lineWidth = 2.5; g.strokeStyle = GREEN; g.beginPath(); g.moveTo(x0, y0); g.lineTo(bx, by); g.stroke()
+  g.strokeStyle = SOFT; g.beginPath(); g.moveTo(x0, y0); g.lineTo(cx, cy); g.stroke(); g.restore()
+  ;[7, 14, 21, 28].forEach((d, i) => { const k = a * smooth((t - 26 - i * .4) / .6), x = CX(d)
+    g.save(); g.globalAlpha = k * .5; g.strokeStyle = '#2a3657'; g.beginPath(); g.moveTo(x, -380); g.lineTo(x, 380); g.stroke(); g.restore()
+    txt(`+${d / 7} WK`, x, 400, 20, DIM, k, { font: MONO, spacing: 3 }) })
+  txt('TODAY', x0, 400, 20, GOLD2, a, { font: MONO, spacing: 3 })
+  const k = a * smooth((t - 28.6) / .8)
+  txt(`$${BASE4.toFixed(2)}`, bx + 20, by - 30, 40, GREEN, k, { font: MONO, weight: 600, align: 'right' }); txt('at the season\'s pace', bx + 20, by + 12, 22, SOFT, k, { italic: true, align: 'right' })
+  txt(`$${CONS4.toFixed(2)}`, cx + 20, cy + 40, 34, WHITE, k, { font: MONO, weight: 600, align: 'right' }); txt('at half the pace', cx + 20, cy + 78, 22, SOFT, k, { italic: true, align: 'right' })
+  txt('SHARE PRICE · FOUR-WEEK ILLUSTRATION', -820, -380, 22, SOFT, a, { font: MONO, spacing: 6, align: 'left' })
+}
+function cards(t) {
+  const a = inout(t, 33.4, 42.4, 1.0); if (a <= 0) return
+  const box = (x, y, title, w1, m1, col, d) => { const k = a * smooth((t - 33.6 - d) / .9), lift = (1 - k) * 30
+    g.save(); g.globalAlpha = k; g.fillStyle = 'rgba(12,18,34,.92)'; g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.roundRect(x - 330, y - 150 + lift, 660, 300, 18); g.fill(); g.stroke(); g.restore()
+    txt(title, x, y - 100 + lift, 22, SOFT, k, { font: MONO, spacing: 6 })
+    txt(`+$${w1.toFixed(2)}`, x - 150, y - 10 + lift, 62, col, k, { font: MONO, weight: 700 }); txt('a week', x - 150, y + 52 + lift, 24, SOFT, k, { italic: true })
+    txt(`+$${m1}`, x + 160, y - 10 + lift, 62, col, k, { font: MONO, weight: 700 }); txt('a month', x + 160, y + 52 + lift, 24, SOFT, k, { italic: true }) }
+  txt('ON EVERY $100 HELD', 0, -300, 30, GOLD2, a * smooth((t - 33.4) / .8), { font: MONO, spacing: 10, weight: 600 })
+  box(-370, 0, 'SEASON PACE', CARD.wB, CARD.mB, GREEN, .1); box(370, 0, 'HALF THE PACE', CARD.wC, CARD.mC, WHITE, .45)
+}
+function fan(t) {
+  const a = smooth((t - 43.4) / 1.6); if (a <= 0) return
+  const w = (A1 - A0) / NB
+  for (let i = 0; i < NB; i++) { const k = smooth((t - 43.4 - i * .07) / .9), s = A0 + i * w + .012, e = A0 + (i + 1) * w - .012, ri = FAN.r * .07
+    g.save(); g.globalAlpha = k; const gr = g.createLinearGradient(0, FAN.y - FAN.r, 0, FAN.y); gr.addColorStop(0, GOLD2); gr.addColorStop(1, GOLD); g.fillStyle = gr
+    g.beginPath(); g.moveTo(FAN.x + Math.cos(s) * ri, FAN.y + Math.sin(s) * ri); g.lineTo(FAN.x + Math.cos(s) * FAN.r * k, FAN.y + Math.sin(s) * FAN.r * k); g.lineTo(FAN.x + Math.cos(e) * FAN.r * k, FAN.y + Math.sin(e) * FAN.r * k); g.lineTo(FAN.x + Math.cos(e) * ri, FAN.y + Math.sin(e) * ri); g.fill(); g.restore() }
+  const ha = A0 + (A1 - A0) * .82; g.save(); g.globalAlpha = smooth((t - 44.6) / .6); g.fillStyle = NAVY; g.beginPath(); g.arc(FAN.x + Math.cos(ha) * FAN.r * .76, FAN.y + Math.sin(ha) * FAN.r * .76, FAN.r * .075, 0, TAU); g.fill(); g.restore()
+}
+function tape(t) { // the ticker tape across the top
+  const a = 1 - smooth((t - 44) / 1.2); if (a <= 0) return
+  const items = [`MKF  $${PRICE.toFixed(4)}  ▲ ${Math.round((PRICE / 1.002 - 1) * 100)}%`, 'TRADES  3,397', 'WIN RATE  76.5%', 'SEASON PROFIT  +$350.68', 'FUND  $883.59', 'CELO  ·  UNISWAP  ·  TEXTILE', 'SETTLES DAILY  20:07 UTC']
+  const s = items.join('     ◆     ') + '     ◆     ', off = (t * 120) % 2600
+  g.save(); g.globalAlpha = a * smooth(t / 1.2); g.fillStyle = 'rgba(10,15,30,.9)'; g.fillRect(0, 0, 1920, 52); g.fillStyle = GOLD; g.fillRect(0, 51, 1920, 1)
+  g.font = `600 20px ${MONO}`; g.textBaseline = 'middle'; g.fillStyle = GOLD2; g.fillText(s + s, -off, 27); g.restore()
+}
+function captions(t) {
+  const C = [[1.2, 5.6, 'The shareholder outlook.'], [9.2, 15.4, 'Fifteen days on the chain: every trade, every share price.'], [17.6, 23.6, 'Week two nearly doubled week one.'],
+    [26.4, 32.4, 'If the next four weeks keep the season\'s pace…'], [36.8, 42, '…this is what each $100 would earn.'], [45.6, 50.6, '']]
+  for (const [a, b, s] of C) if (s) txt(s, 960, 990, 44, WHITE, inout(t, a, b, .6), { italic: true, glow: 1 })
+}
+function fine(t) {
+  const a = smooth((t - 25) / 1) * (1 - smooth((t - 50.4) / 1)); if (a <= 0) return
+  txt('Illustration at the season\'s pace, after the 10% running-costs carve and before the performance fee.', 960, 1026, 18, SOFT, a * .8, { font: MONO })
+  txt('Not a forecast or a promise: returns per dollar fall as the fund grows, and you can lose money.', 960, 1054, 18, SOFT, a * .8, { font: MONO })
+}
+function endCard(t) {
+  const k = smooth((t - 45.2) / 1.1); if (k <= 0) return
+  txt('MIDAS × KIYOSHI', 960, 780, 74, WHITE, k, { weight: 700, spacing: 16 })
+  txt('your money, working around the clock', 960, 852, 34, GOLD2, smooth((t - 45.9) / 1.1), { italic: true })
+}
+
+function draw(t) {
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  const bg = g.createRadialGradient(960, 480, 60, 960, 540, 1200); bg.addColorStop(0, '#101a33'); bg.addColorStop(1, NAVY); g.fillStyle = bg; g.fillRect(0, 0, 1920, 1080)
+  const cam = { x: spline(t, 1), y: spline(t, 2), z: spline(t, 3), r: spline(t, 4) }
+  g.save(); g.translate(960, 540); g.rotate(cam.r); g.scale(cam.z, cam.z); g.translate(-cam.x, -cam.y)
+  grid(smooth(t / 2) * (1 - smooth((t - 43) / 2)))
+  candles(t); barLabels(t); cone(t)
+  const pts = lineAt(t), tip = drawLine(t, pts, (1 - smooth((t - 46.5) / 1.2) * .7) * (1 - .75 * inout(t, 33.2, 41.6, 1.0)))
+  if (t < 43) { g.save(); g.shadowColor = GOLD2; g.shadowBlur = 30; g.fillStyle = '#fff6d8'; g.beginPath(); g.arc(tip[0], tip[1], 7, 0, TAU); g.fill(); g.restore() }
+  cards(t); fan(t)
+  g.restore()
+  tape(t)
+  txt('SHAREHOLDER OUTLOOK', 960, 470, 82, WHITE, inout(t, .8, 4.4, .9), { weight: 700, spacing: 14 })
+  txt('Midas × Kiyoshi Fund · 13 November 2026', 960, 548, 30, GOLD2, inout(t, 1.2, 4.4, .9), { italic: true })
+  captions(t); fine(t); endCard(t)
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .38, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.55)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .8) + clamp((t - (DUR - 1.3)) / 1.3); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready
+</script></body></html>
