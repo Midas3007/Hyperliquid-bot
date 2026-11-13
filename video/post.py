@@ -22,7 +22,7 @@ def _blur5(a: np.ndarray, passes: int = 1) -> np.ndarray:
 def _resize(a: np.ndarray, w: int, h: int, method) -> np.ndarray:
     out = np.empty((h, w, 3), np.float32)
     for c in range(3):
-        out[..., c] = np.asarray(Image.fromarray(np.ascontiguousarray(a[..., c]), "F").resize((w, h), method))
+        out[..., c] = np.asarray(Image.fromarray(np.ascontiguousarray(a[..., c], dtype=np.float32), "F").resize((w, h), method))
     return out
 
 
@@ -64,7 +64,7 @@ class Finisher:
         ny = (yy - H / 2) / (H / 2)
         r2 = (nx * nx * 0.85 + ny * ny * 1.0)
         self.vignette = (1.0 - 0.30 * np.clip(r2, 0, 2) ** 1.25)[..., None].astype(np.float32)
-        scan = 1.0 - 0.055 * (0.5 + 0.5 * np.cos(2 * np.pi * yy[:, :1] / 3.0))
+        scan = 1.0 - 0.04 * (0.5 + 0.5 * np.cos(2 * np.pi * yy[:, :1] / 3.0))
         self.scan = scan[..., None].astype(np.float32)        # (H,1,1)
         # background: near-black with the faintest teal lift in the middle (never pure black)
         lift = np.exp(-(nx * nx * 0.6 + ny * ny * 1.1) * 1.4)[..., None]
@@ -73,14 +73,15 @@ class Finisher:
     def finish(self, content: np.ndarray, frame: int, bloom_gain: float = 1.0, flash: float = 0.0,
                ca: float = 0.0, exposure: float = 1.0, grain_amt: float = 0.016) -> np.ndarray:
         """content: emitted light on black (H,W,3) float.  Returns uint8 RGB frame."""
-        img = content * exposure
+        img = np.asarray(content * float(exposure), np.float32)
+        bloom_gain = float(bloom_gain)
         if bloom_gain > 0:
             img = img + bloom(img, gain=bloom_gain)
         if ca > 0.05:
             img = _chromatic(img, ca)
         img = img + self.background
         if flash > 0:
-            img = img + flash
+            img = img + np.float32(flash)
         img = img * self.scan
         img = img * self.vignette
         # soft shoulder above 0.8 (keeps colours true below, rolls bright glow towards white gracefully)
@@ -103,7 +104,7 @@ def _chromatic(img: np.ndarray, amt: float) -> np.ndarray:
     s = amt / (W / 2)
     for c, sign in ((0, 1.0), (2, -1.0)):
         k = 1.0 + sign * s
-        ch = Image.fromarray(np.ascontiguousarray(img[..., c]), "F")
+        ch = Image.fromarray(np.ascontiguousarray(img[..., c], dtype=np.float32), "F")
         # scale about centre
         a = 1.0 / k
         ch = ch.transform((W, H), Image.AFFINE, (a, 0, W / 2 * (1 - a), 0, a, H / 2 * (1 - a)), Image.BILINEAR)

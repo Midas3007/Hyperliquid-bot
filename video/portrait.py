@@ -32,7 +32,7 @@ CLASS_COLOR = None   # set in _class_colors
 
 
 def _class_colors():
-    return np.array([BG, DEEP * 1.6, TEAL * 0.80, MINT * 0.75, CREAM * 0.80, MINT * 1.0, CREAM], np.float32)
+    return np.array([BG, DEEP * 1.6, TEAL * 0.80, MINT * 0.75, CREAM * 0.80, MINT * 0.88, CREAM * 0.95], np.float32)
 
 
 LINE_COLOR = TEAL * 0.55
@@ -230,7 +230,7 @@ def build_portrait(name, cw, ch, size, crop, rows, extra_chars="", light=None):
     """Build (or load from cache) the portrait grids for open / half / closed eyes."""
     p = PortraitData(cw, ch, size, crop, rows, extra_chars=extra_chars)
     p.masks()
-    cache = os.path.join(CACHE_DIR, f"portrait_{name}_{cw}x{ch}_{rows}_v8.npz")
+    cache = os.path.join(CACHE_DIR, f"portrait_{name}_{cw}x{ch}_{rows}_v9.npz")
     if os.path.exists(cache):
         z = np.load(cache)
         for k in z.files:
