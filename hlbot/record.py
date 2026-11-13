@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 FIELDS = ("id", "coin", "side", "strategy", "status", "exit_type", "entry", "fill_px", "exit_px", "sl", "tp",
           "result_r", "pnl", "risk_usd", "created_at", "filled_at", "closed_at", "version")
-SHOWN = ("pending", "open", "closed")
+SHOWN = ("pending", "open", "closed", "cancelled")  # cancelled must be sent too, or the page keeps a stale "pending"
 
 
 def build(engine, now: float | None = None, account: str | None = None) -> dict:

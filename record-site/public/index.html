@@ -453,6 +453,7 @@ tbody tr:hover td { background: #082220; }
         if (t.created_at) ev.push({ t: t.created_at, tag: B, msg: `ORDER #${t.id} ${t.coin} ${S} LMT ${fmtPx(t.entry)} · SL ${fmtPx(t.sl)} · TP ${fmtPx(t.tp)}` });
         if (t.filled_at) ev.push({ t: t.filled_at, tag: B, msg: `FILL  #${t.id} ${t.coin} @ ${fmtPx(t.fill_px || t.entry)}` });
         if (t.closed_at && t.status === "closed") ev.push({ t: t.closed_at, tag: B, msg: `CLOSE #${t.id} ${t.coin} ${EXIT[t.exit_type] || t.exit_type} ${t.result_r != null ? fmtR(Number(t.result_r)) : ""}` });
+        if (t.closed_at && t.status === "cancelled") ev.push({ t: t.closed_at, tag: B, msg: `CANCEL #${t.id} ${t.coin} · entry never filled` });
       }
     }
     for (const x of extra) ev.push(x);

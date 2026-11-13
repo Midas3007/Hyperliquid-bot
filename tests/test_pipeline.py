@@ -564,3 +564,14 @@ def test_demo_session_trades_on_its_own_account_and_ends_on_friday(eng, clock):
     d.manage()                           # Friday: unfilled entries are cancelled
     assert not d.store.trades("pending") and d.over()
     assert demo.make(eng, now=clock[0]) is None   # after that Friday the session never comes back
+
+
+def test_record_publishes_cancelled_entries_so_the_page_drops_them(eng, clock):
+    from hlbot.record import build
+
+    eng.start(None)
+    eng.confirm(None)
+    t = eng.store.trades("pending")[0]
+    eng.store.update_trade(t["id"], status="cancelled", closed_at=clock[0], close_reason="test")
+    rows = build(eng)["trades"]
+    assert [(r["id"], r["status"]) for r in rows] == [(t["id"], "cancelled")]

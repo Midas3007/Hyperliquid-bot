@@ -8,7 +8,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 
 const TEXT = ["coin", "strategy", "status", "exit_type", "version"] as const
 const NUM = ["entry", "fill_px", "exit_px", "sl", "tp", "result_r", "pnl", "risk_usd", "created_at", "filled_at", "closed_at"] as const
-const STATUS = new Set(["pending", "open", "closed"])
+const STATUS = new Set(["pending", "open", "closed", "cancelled"])
 // status.note can be a few sentences (demo / backtest explanations)
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest()
