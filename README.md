@@ -140,6 +140,7 @@ You don't need any of these; HEVI runs by itself.
 | Leverage | `floor(1 ÷ (SL% + MMR + 2%))`, MMR from Hyperliquid's margin tables, max 25x; liquidation ≥ 1.5% beyond the SL |
 | SL / TP | SL beyond 4H structure + 0.25×ATR, never under 1.5%. TP in front of the first 4H level, ≤ 1.2× ADR, net R/R ≥ 1:3 after fees, slippage and funding |
 | Direction | Long needs 4 of 5 triggers; shorts need 2+ trend or reversal triggers. Sweeps cover buy flow, momentum and sell flow |
+| Modes | `/mode swing` (protocol), `/mode day` (quicker, 24h), `/mode multi` (default: day when BTC moves 2%+ or is HIGH volatility). The hard rules are the same in all modes |
 | BTC gate | ≤ −4% no trades · −4 to −2% half risk · ≥ +3% post-pump check, never a size-up |
 | Window | Entries Mon–Thu UTC, flat by Fri 20:00 UTC, 48h time stop, unfilled entries cancel after 4h |
 | Breakers | SL → done for the day · 2 SLs → half risk · 3 SLs → 48h pause + review · −30% from peak → half risk · −50% → 7-day stop (needs you) |

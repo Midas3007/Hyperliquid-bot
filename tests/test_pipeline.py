@@ -60,6 +60,8 @@ class FakeMarket:
         self.fng = 62
         self.macro: list = []
         self.macro_cov = False
+        self.absent = set()   # coins no top-60 leaderboard account holds
+        self.adr_rng = 6.0    # 1d candle range in %, i.e. the 14-day ADR
 
     def stamp(self, key):
         return time.time()
@@ -77,12 +79,12 @@ class FakeMarket:
         return {"ratio": COINS[coin][1], "ts": time.time()}
 
     def whales(self):
-        return {c: {"ratio": w, "holders": 12, "accounts_scanned": 60} for c, (_, _, _, w) in COINS.items()}
+        return {c: {"ratio": w, "holders": 12, "accounts_scanned": 60} for c, (_, _, _, w) in COINS.items() if c not in self.absent}
 
     def candles(self, coin, interval, n):
         step = STEP[interval]
         last = int(time.time() * 1000) // step * step
-        rng = {"5m": 0.2, "1h": 0.5, "4h": 1.0, "1d": 6.0}[interval]
+        rng = {"5m": 0.2, "1h": 0.5, "4h": 1.0, "1d": self.adr_rng}[interval]
         return [{"t": last - (n - 1 - i) * step, "o": 100.0, "h": 100 + rng / 2, "l": 100 - rng / 2, "c": 100.0, "v": 10}
                 for i in range(n)]
 
@@ -182,7 +184,7 @@ def test_full_flow_start_card_confirm_fill_tp(eng, clock):
     p = res.plans[0]
     assert p.coin == "SOL" and p.side == "long"
     text = res.text
-    for s in ("HEVI", "Protocol v3.1", "PAPER", "post-only (ALO)", "5m confluence BB+FIB+VP+VWAP", "Isolated",
+    for s in ("HEVI", "Protocol v3.2", "PAPER", "post-only (ALO)", "5m confluence BB+FIB+VP+VWAP", "Isolated",
               "mark-price trigger", "Type \"y\" to confirm", "BTC gate: +1.01%"):
         assert s in text, s
     z = p.sizing
@@ -193,7 +195,7 @@ def test_full_flow_start_card_confirm_fill_tp(eng, clock):
     msg = eng.confirm(None)
     assert isinstance(msg, str) and msg.startswith("[PAPER] Placed #1"), msg
     t = eng.store.trades("pending")[0]
-    assert t["version"] == "3.1" and t["score"] == p.score and t["btc_band"] == "normal"
+    assert t["version"] == "3.2" and t["score"] == p.score and t["btc_band"] == "normal"
 
     # a second start while an entry rests: max 1 position
     assert "already open" in eng.start(100.0)
@@ -421,3 +423,35 @@ def test_status_says_when_the_next_scan_is(eng, clock):
     text = eng.status()
     assert "Next scan: Mon 09 Nov 00:00 UTC (entries are Mon-Thu UTC; none on Fri-Sun)" in text
     assert "Market history: 6h of the 24h needed" in text and "Sun 00:04 UTC" in text
+
+
+def test_absent_whale_blocks_swing_but_day_trades_it(eng, clock):
+    eng.mkt.absent = {"SOL"}   # no top-60 leaderboard account holds SOL
+    eng.mkt.adr_rng = 7.0      # day wants the target inside one day's range (1.0 x ADR)
+    eng.store.set("strategy", "swing")
+    res = eng.start(None)
+    assert isinstance(res, str) and "M3 whale L/S" in res
+    eng.store.set("strategy", "day")
+    res = eng.start(None)
+    assert isinstance(res, Proposal), res
+    p = res.plans[0]
+    assert p.coin == "SOL" and p.strategy == "day" and p.hold_h == 24
+    assert "[day]" in res.text and "Protocol v3.2" in res.text
+
+
+def test_multi_uses_day_only_when_btc_is_fast_or_volatile(eng):
+    assert eng._pick_mode({"change": 2.5, "vol_now": "NORMAL"})[0] == "day"
+    assert eng._pick_mode({"change": -2.2, "vol_now": "NORMAL"})[0] == "day"
+    assert eng._pick_mode({"change": 0.4, "vol_now": "HIGH"})[0] == "day"
+    assert eng._pick_mode({"change": 0.4, "vol_now": "NORMAL"})[0] == "swing"
+    eng.store.set("strategy", "swing")
+    assert eng._pick_mode({"change": 5.0, "vol_now": "HIGH"})[0] == "swing"
+
+
+def test_scan_report_names_the_blocker(eng, clock):
+    eng.mkt.absent = {"SOL"}
+    eng.store.set("strategy", "swing")
+    eng.start(None)
+    assert eng._scans["blockers"]["M3 whale L/S"] >= 1
+    assert "candidates" in eng._scans["funnel"] or "screened" in eng._scans["funnel"]
+    assert "Why no trade" in eng.daily_report() and "Strategy: swing" in eng.daily_report()

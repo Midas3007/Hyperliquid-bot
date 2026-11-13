@@ -137,11 +137,13 @@ def test_trade_stream_heals_after_going_quiet(monkeypatch):
     fc = market.FlowCollector("url", 60, 30, 15)
     fc.ensure(["SOL", "ETH"])
     assert len(made) == 1 and set(fc._subs) == {"SOL", "ETH"}
+    since0 = fc._since["SOL"]
     fc.heal()
     assert len(made) == 1  # still fresh
     fc._last_msg -= 200  # silent for > 2 min
     fc.heal()
     assert len(made) == 2 and set(fc._subs) == {"SOL", "ETH"}  # reconnected and resubscribed
+    assert fc._since["SOL"] == since0  # buy/sell coverage survives the reconnect
 
 
 def test_redeploy_overlap_is_one_line_but_a_second_copy_alerts(monkeypatch, caplog):

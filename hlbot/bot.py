@@ -54,6 +54,7 @@ risk 7% - set risk per trade (max 15%)
 override: [reason] - take the closest setup blocked only by soft rules. Hard rules never move.
 
 /status - equity, peak, drawdown, breakers, positions
+/mode swing|day|multi - how HEVI hunts (protocol.toml [strategy])
 /journal - recent trades in R
 /close SOL [reason] - market-close a position (logged as discretionary)
 /cancel - cancel resting entry orders (TP/SL stay on)
@@ -61,7 +62,7 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /pump - BTC post-pump check now
 /paperreset 100 - paper mode: restart the simulated account"""
 
-COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("review", "Track record in R"),
+COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("mode", "Strategy: swing, day or multi"), ("review", "Track record in R"),
             ("journal", "Recent trades"), ("pause", "Stop opening new trades"), ("resume", "Resume autopilot"),
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
             ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"), ("help", "How HEVI works")]
@@ -249,6 +250,10 @@ class Bot:
             e, A = self.engine, self.engine.P.autopilot
             await self._reply(update, HELP.format(v=e.P.version, mode=f"Mode: {e.label()}", scan=A.scan_every_min,
                                                   report=A.report_hour_utc))
+
+    async def cmd_mode(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, self.engine.set_strategy(ctx.args[0].lower() if ctx.args else ""))
 
     async def cmd_pause(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
@@ -518,7 +523,7 @@ class Bot:
             "review": self.cmd_review, "stats": self.cmd_review, "risk": self.cmd_risk, "close": self.cmd_close,
             "cancel": self.cmd_cancel, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
-            "pause": self.cmd_pause, "resume": self.cmd_resume,
+            "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode,
         }.items():
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text))

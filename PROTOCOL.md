@@ -1,4 +1,4 @@
-# HEVI — Futures Challenge Protocol v3.1 — Hyperliquid
+# HEVI — Futures Challenge Protocol v3.2 — Hyperliquid
 
 2026-11-06 · @Midas · adapted from Bybit v2.0 (canonical) and Bitget v2.1 ($1 micro phase)
 
@@ -472,7 +472,7 @@ Equity $100.00 (confirmed 12:00 UTC) | risk 10% | breakers: none active
 BTC gate: +1.01% from the UTC open -> NORMAL
 Fear & Greed: 62 (Greed)
 
-# HEVI - Open Limit Order - Protocol v3.1 (Hyperliquid) - PAPER
+# HEVI - Open Limit Order - Protocol v3.2 (Hyperliquid) - PAPER
 --------------------------
 Symbol:      SOL-PERP (Hyperliquid)
 Direction:   Long
@@ -551,6 +551,23 @@ HEVI autopilot: every rule passed - placing it now.
 | 11 | Manual entry fallback (M10) | — | not needed with autopilot; the card lists every field |
 
 ## Changelog
+
+**v3.2 (modes) vs v3.1:**
+
+- **Modes** (`/mode swing|day|multi`, default `multi`). The hard rules are identical in every mode.
+  - `swing`: the v3.1 protocol as written.
+  - `day`: holds up to 24h, and the target must sit within one day's range (1.0x ADR). Long needs 3 of the
+    measurable triggers (not 4 of 5). Buy/sell threshold 2.5x. A coin no top-60 whale holds is not penalised.
+    With fewer than 2 rated headlines there is no sentiment check, but a thesis-breaking catalyst still blocks.
+  - `multi`: day when BTC has moved 2%+ since the UTC open or BTC volatility is HIGH/EXTREME, otherwise swing.
+  - Scalping is not a mode. A 1.5% stop and a 1:3 net target need a 5%+ move, so a scalp would break the
+    stop-loss and reward-to-risk hard rules. Changing those needs your explicit approval.
+- **"No top whale holds it" is not missing data.** Only a failed leaderboard fetch counts as missing.
+- **Buy/sell coverage survives websocket reconnects.** A reconnect used to restart the 30-minute window, so the
+  screener's first sweep went empty for half an hour after every drop.
+- **Why-no-trade report.** Every scan logs its funnel and most common blockers; the daily report includes them.
+- Trades record their strategy, and `review` splits results by mode.
+- Removed the dead news feeds newsbtc.com and cryptopotato.com.
 
 **v3.1 (HEVI) vs v3.0:**
 

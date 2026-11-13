@@ -4,7 +4,7 @@
 # The loader rejects unknown or missing keys, so a typo fails loudly instead of silently using a default.
 # Values marked [OPEN Qn] are defaults waiting on an answer in PROTOCOL.md "Open questions".
 
-version = "3.1"
+version = "3.2"
 
 [data]                       # Conventions
 stale_after_min = 15         # older than this = FAIL for that check
@@ -84,14 +84,10 @@ structural_methods = ["SWING", "VP", "FIB"]   # Q5 (decided in v3.1) which 4H le
 level_merge_pct = 0.15                       # levels this close together are one level
 
 [direction]                  # Module 5. N/A counts as a fail everywhere.
-long_needed = 4
-long_buy_sell_min = 3.0
 long_whale_min = 1.5
 long_funding_min_8h_pct = 0.0
 long_funding_max_8h_pct = 0.03
 long_fng_min = 50
-trend_short_needed = 2
-short_sell_buy_min = 3.0
 short_whale_max = 0.7
 short_funding_max_8h_pct = -0.03
 short_fng_max = 40
@@ -168,3 +164,32 @@ act_on_early_exits = true    # close on the objective early-exit triggers (logge
 go_live_min_trades = 10      # owner's choice (was 20): fewer trades of proof, sooner live
 go_live_min_expectancy_r = 0.10
 go_live_min_profit_factor = 1.2
+
+[strategy]                   # v3.2: HOW HEVI hunts. The hard rules (Module 13: stop >= 1.5%, net R/R >= 1:3, TP at a
+default = "multi"            # real 4H level, risk <= 15%, no Fri-Sun, breakers) are identical in every mode.
+multi_day_btc_abs_move_pct = 2.0    # multi: BTC moved this far since the UTC open -> day, otherwise swing
+multi_day_vol = ["HIGH", "EXTREME"] # ... or BTC volatility is this high -> day
+
+[strategy.swing]             # the v3.1 protocol as written: selective, holds up to 48h, TP at a 4H level
+hold_h = 48
+max_adr_mult = 1.2           # TP reachable within 1.2 x 14-day ADR
+na_is_miss = true            # a trigger with no data counts as a miss (protocol)
+min_measurable = 5
+min_measurable_short = 3
+long_needed = 4              # long: 4 of 5 triggers
+trend_short_needed = 2
+long_buy_sell_min = 3.0
+short_sell_buy_min = 3.0
+news_optional_below = 0      # fewer rated headlines = N/A = fails
+
+[strategy.day]               # same hard rules, quicker: holds up to 24h, TP within one day's range
+hold_h = 24
+max_adr_mult = 1.0
+na_is_miss = false           # a trigger with no data is left out, not counted as a miss ...
+min_measurable = 4           # ... but at least 4 of 5 long triggers must be measurable
+min_measurable_short = 3
+long_needed = 3              # long: 3 of the measurable triggers
+trend_short_needed = 2
+long_buy_sell_min = 2.5
+short_sell_buy_min = 2.5
+news_optional_below = 2      # under 2 headlines: no sentiment check; a thesis-breaking catalyst still blocks

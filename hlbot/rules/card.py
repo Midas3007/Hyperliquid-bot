@@ -39,6 +39,9 @@ class Plan:
     overridden_rules: list = field(default_factory=list)
     price_at_card: float = 0.0
     tag: str = ""
+    strategy: str = "swing"
+    max_adr_allowed: float = 1.2
+    hold_h: float = 48.0
 
 
 def _t(ts: float) -> str:
@@ -56,7 +59,7 @@ def render(p: Plan, P: Protocol, now: float, paper: bool, index: int | None = No
             "micro": f"Micro {z.risk_pct:.1f}% (forced by the ${P.exchange.min_order_usd:g} minimum)"}[z.risk_mode]
     stop = schedule.time_stop_at(now + P.entry.cancel_after_h * 3600, P.schedule)
     tag = f"[{index}] " if index else ""
-    head = f"# {tag}HEVI - Open Limit Order - Protocol v{P.version} (Hyperliquid)" + (" - PAPER" if paper else "")
+    head = f"# {tag}HEVI - Open Limit Order - Protocol v{P.version} (Hyperliquid) [{p.strategy}]" + (" - PAPER" if paper else "")
     lines = [
         head,
         "--------------------------",
@@ -114,7 +117,7 @@ def final_check(p: Plan, P: Protocol, *, now: float, open_positions: int, pendin
         bad.append("liquidation must be >= 1.5% beyond the SL")
     if z.net_rr + 1e-9 < P.filters.min_net_rr:
         bad.append("net R/R below 1:3")
-    if not p.tp_label.startswith("4h") or p.tp_adr_mult > P.tp.max_adr_mult + 1e-9:
+    if not p.tp_label.startswith("4h") or p.tp_adr_mult > p.max_adr_allowed + 1e-9:
         bad.append("TP must sit at a real, reachable 4H level")
     if p.btc_band in (None, "no_trade"):
         bad.append("BTC -4% or worse (or gate data missing): no new trades")

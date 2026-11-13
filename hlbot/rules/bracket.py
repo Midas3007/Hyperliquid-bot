@@ -105,7 +105,8 @@ class TpPlan:
 
 
 def take_profit(entry: float, price: float, side: str, struct: list[Lvl], atr_4h_pct: float | None,
-                adr_pct: float | None, t: Tp) -> tuple[TpPlan | None, str]:
+                adr_pct: float | None, t: Tp,
+                max_adr_mult: float | None = None) -> tuple[TpPlan | None, str]:
     """TP just in front of the first real 4H level in the trade's direction (clean air: nothing in between),
     pulled in by max(0.2%, 0.1x 4H ATR), and no further than 1.2x the 14-day ADR. Never a 1D level."""
     if atr_4h_pct is None:
@@ -132,6 +133,7 @@ def take_profit(entry: float, price: float, side: str, struct: list[Lvl], atr_4h
     if dist <= 0:
         return None, f"first 4H level {lvl.label} is too close to entry"
     plan = TpPlan(tp, lvl, dist, dist / adr_pct)
-    if dist > t.max_adr_mult * adr_pct:
-        return None, f"TP {dist:.2f}% away = {plan.adr_mult:.2f}x ADR (max {t.max_adr_mult:g}x): not a 1-2 day target"
+    cap = t.max_adr_mult if max_adr_mult is None else max_adr_mult  # the mode's reach limit (v3.2)
+    if dist > cap * adr_pct:
+        return None, f"TP {dist:.2f}% away = {plan.adr_mult:.2f}x ADR (max {cap:g}x): not a 1-2 day target"
     return plan, "ok"

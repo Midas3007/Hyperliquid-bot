@@ -68,8 +68,6 @@ RSS_FEEDS = [
     "https://bitcoinmagazine.com/.rss/full/",
     "https://www.theblock.co/rss.xml",
     "https://bitcoinist.com/feed/",
-    "https://www.newsbtc.com/feed/",
-    "https://cryptopotato.com/feed/",
 ]
 GOOGLE_NEWS_URL = "https://news.google.com/rss/search"
 FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
@@ -180,7 +178,7 @@ class FlowCollector:
                 self._info.disconnect_websocket()
             except Exception:  # noqa: BLE001
                 pass
-            self._info, self._subs, self._since = None, {}, {}
+            self._info, self._subs = None, {}  # _since stays: buy/sell coverage survives a reconnect
         if self._info is None:
             self._info = Info(self.base_url, skip_ws=False)
             self._last_msg = time.time()
@@ -194,7 +192,7 @@ class FlowCollector:
                 continue
             try:
                 self._subs[coin] = self._info.subscribe({"type": "trades", "coin": coin}, self._on_trades)
-                self._since[coin] = time.time()
+                self._since.setdefault(coin, time.time())
             except Exception as e:  # noqa: BLE001
                 log.warning("subscribe %s failed: %s", coin, e)
 

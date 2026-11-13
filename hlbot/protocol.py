@@ -115,14 +115,10 @@ class Tp:
 
 @dataclass(frozen=True)
 class Direction:
-    long_needed: int
-    long_buy_sell_min: float
     long_whale_min: float
     long_funding_min_8h_pct: float
     long_funding_max_8h_pct: float
     long_fng_min: float
-    trend_short_needed: int
-    short_sell_buy_min: float
     short_whale_max: float
     short_funding_max_8h_pct: float
     short_fng_max: float
@@ -217,6 +213,29 @@ class Autopilot:
 
 
 @dataclass(frozen=True)
+class Mode:
+    hold_h: float
+    max_adr_mult: float
+    na_is_miss: bool
+    min_measurable: int
+    min_measurable_short: int
+    long_needed: int
+    trend_short_needed: int
+    long_buy_sell_min: float
+    short_sell_buy_min: float
+    news_optional_below: int
+
+
+@dataclass(frozen=True)
+class Strategy:
+    default: str
+    multi_day_btc_abs_move_pct: float
+    multi_day_vol: tuple
+    swing: Mode
+    day: Mode
+
+
+@dataclass(frozen=True)
 class Protocol:
     version: str
     data: Data
@@ -237,6 +256,7 @@ class Protocol:
     review: Review
     commands: Commands
     autopilot: Autopilot
+    strategy: Strategy
 
 
 def _coerce(name: str, typ: Any, v: Any) -> Any:

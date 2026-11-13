@@ -17,6 +17,7 @@ import json
 import logging
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 
 from . import protocol as proto
@@ -82,6 +83,8 @@ class Run:
     macro_hits: list | None
     fees: Fees
     lines: list = field(default_factory=list)
+    strategy: str = "swing"    # swing | day: the mode this scan used
+    mode: object = None         # the Mode object for that strategy
 
 
 @dataclass
@@ -125,7 +128,8 @@ class Engine:
         self._last_pump_alert = 0.0
         self._started = time.time()
         self._last_scan = 0.0
-        self._scans: dict = {"day": None, "n": 0, "last": None}
+        self._scans: dict = {"day": None, "n": 0, "last": None, "blockers": Counter(), "funnel": ""}
+        self._strategy_now = "-"
         self._auto_run = False
 
     # ------------------------------------------------------------------ helpers
@@ -208,14 +212,16 @@ class Engine:
         use("volume", d["volume_usd"], cts, "24h notional")
         flow = mkt.buy_sell(coin)
         use("buy_sell", flow and flow["ratio"], flow and flow["ts"], "taker trades")
-        wh = mkt.whales().get(coin)
-        ratio = None
-        if wh:
-            if wh.get("holders", 0) >= P.deep_dive.whale_min_holders:
-                ratio = wh["ratio"]
-            else:
-                x["na"]["whale_ls"] = f"only {wh.get('holders', 0)} of the top {wh['accounts_scanned']} accounts hold it"
-        use("whale_ls", ratio, mkt.stamp("whales"), "top leaderboard positions")
+        allw = mkt.whales()
+        wh = allw.get(coin)
+        x["whale_absent"] = False
+        if allw and not (wh and wh.get("holders", 0) >= P.deep_dive.whale_min_holders):
+            # the leaderboard loaded; this coin just isn't held by enough of the top accounts. A fact about the
+            # market, so it's not an "na" (missing data) entry.
+            x["whale_absent"] = True
+            x["whale_ls"] = None
+        else:
+            use("whale_ls", wh["ratio"] if wh else None, mkt.stamp("whales"), "top leaderboard positions")
         x["whale_24h"] = self.mkt.store.whale_at(coin, DAY)
         oi_then = self.mkt.store.oi_at(coin, DAY)
         use("oi_24h", mx.pct_change(d["oi_usd"], oi_then and oi_then["oi_usd"]), cts, "own hourly OI snapshots",
@@ -288,7 +294,7 @@ class Engine:
         return out
 
     # ------------------------------------------------------------------ Module 0 pre-flight + Module 1 gate
-    def _run(self, now: float, stated: float | None) -> Run | str:
+    def _run(self, now: float, stated: float | None, strategy: str | None = None) -> Run | str:
         P = self.P
         acct = self.trader.account()
         api_eq, avail = acct["account_value"], acct["withdrawable"]
@@ -315,7 +321,9 @@ class Engine:
         half = bool(st.half_risk) or band == "half"
         user = self.user_risk_pct
         risk = min(user, P.risk.half_pct, user / 2) if half else user
-        hold = sch.planned_hold(now, P.schedule, P.entry)
+        name, m = self._pick_mode(btc, strategy)
+        self._strategy_now = name
+        hold = sch.planned_hold(now, P.schedule, P.entry, hold_h=m.hold_h)
         events, covered = self._macro_events()
         macro, _ = sch.macro_in_window(events, covered, hold[0], hold[1], P.schedule)
         fng = self.mkt.fear_greed()
@@ -331,7 +339,47 @@ class Engine:
                          + (f" | N/A: {', '.join(btc['pump_na'])}" if btc["pump_na"] else ""))
         lines.append(f"Fear & Greed: {fng_v}" + (f" ({fng['label']})" if fng_v is not None and fng else f" N/A ({why})"))
         return Run(now, equity, avail, now, stated, band, btc, fng_v, st, risk, half, entries, hold, macro,
-                   self.trader.fees(), lines)
+                   self.trader.fees(), lines, strategy=name, mode=m)
+
+    def _pick_mode(self, btc: dict, override: str | None = None) -> tuple[str, object]:
+        """swing | day | multi. Multi uses day when BTC is moving fast or volatile, otherwise swing."""
+        S = self.P.strategy
+        choice = override or self.store.get("strategy", S.default)
+        if choice in ("swing", "day"):
+            return choice, getattr(S, choice)
+        chg = btc.get("change")
+        fast = (chg is not None and abs(chg) >= S.multi_day_btc_abs_move_pct) or btc.get("vol_now") in S.multi_day_vol
+        return ("day", S.day) if fast else ("swing", S.swing)
+
+    def _hold_h(self, t: dict) -> float:
+        """Each trade keeps the hold of the mode it was opened in (older trades count as swing)."""
+        S = self.P.strategy
+        return (S.day if t.get("strategy") == "day" else S.swing).hold_h
+
+    def strategy_label(self) -> str:
+        cur = self.store.get("strategy", self.P.strategy.default)
+        return cur if cur != "multi" else f"multi (now {self._strategy_now})"
+
+    def set_strategy(self, name: str) -> str:
+        opts = {
+            "swing": "selective: long needs 4 of 5 signals, every protocol filter; holds up to 48h",
+            "day": "quicker: 3 of the measurable long signals, no penalty for a coin no top whale holds, "
+                   "thin news not blocking; holds up to 24h, TP within 1x ADR",
+            "multi": "day when BTC moves 2%+ since the UTC open or volatility is HIGH, otherwise swing",
+        }
+        if name not in opts:
+            return ("HEVI strategy (now: " + self.strategy_label() + "):\n"
+                    + "\n".join(f"/mode {k} - {v}" for k, v in opts.items())
+                    + "\nThe hard rules (1.5% stop, 1:3 net, 4H target, 15% risk, breakers) are the same in every mode.")
+        self.store.set("strategy", name)
+        return f"Strategy set to {name}: {opts[name]}. Applies from the next scan."
+
+    def _note_scan(self, funnel: str, blockers) -> None:
+        """Why a scan placed nothing. Counted for the daily report and written to the logs."""
+        self._scans.setdefault("blockers", Counter()).update(blockers)
+        self._scans["funnel"] = funnel
+        top = ", ".join(f"{k} x{v}" for k, v in Counter(blockers).most_common(3))
+        log.info("scan [%s]: %s | blocked by: %s", self._strategy_now, funnel, top or "-")
 
     def _breakers(self, now: float, equity: float, band: str | None, entries: list[str]) -> brk.BreakerState:
         P = self.P
@@ -463,17 +511,17 @@ class Engine:
         if x["funding_8h"] is None:
             base.append(na_check("M7", "funding", "needed for net R/R: " + x["na"].get("funding_8h", "missing")))
 
-        d = P.direction
-        lt = dirn.long_triggers(d, buy_sell=x["buy_sell"], whale_ls=x["whale_ls"], funding_8h=x["funding_8h"],
+        d, m = P.direction, (run.mode or P.strategy.swing)
+        lt = dirn.long_triggers(d, m, buy_sell=x["buy_sell"], whale_ls=x["whale_ls"], funding_8h=x["funding_8h"],
                                 btc_band=run.band, fng=run.fng)
-        tt = dirn.trend_short_triggers(d, buy_sell=x["buy_sell"], whale_ls=x["whale_ls"], funding_8h=x["funding_8h"],
+        tt = dirn.trend_short_triggers(d, m, buy_sell=x["buy_sell"], whale_ls=x["whale_ls"], funding_8h=x["funding_8h"],
                                        btc_broke_4h_support=run.btc["broke_4h"], fng=run.fng)
         rt = dirn.reversal_short_triggers(d, rejection_wick=x["rejection"], funding_8h=x["funding_8h"],
                                           funding_rising=x["funding_rising"], oi_change_24h=x["oi_24h"],
                                           day_change=x["day_change"], whale_ls_now=x["whale_ls"],
                                           whale_ls_24h_ago=x["whale_24h"], btc_vol_now=run.btc["vol_now"],
                                           btc_vol_24h_ago=run.btc["vol_24h_ago"], btc_change=run.btc["change"])
-        sides, why = dirn.decide(d, lt, tt, rt)
+        sides, why = dirn.decide(d, m, lt, tt, rt)
         triggers = {"long": lt, "trend_short": tt, "reversal_short": rt}
         todo = [force_side] if force_side else (sides or ["long"])
         out = []
@@ -481,7 +529,8 @@ class Engine:
             checks = list(base)
             checks.append(Check("M5", "direction", side in sides, why))
             checks += flt.hard_filters(side, P.filters, P.screener, day_change_pct=x["day_change"],
-                                       whale_ls=x["whale_ls"], whale_is_true=True, crowd_ls=None,
+                                       whale_ls=x["whale_ls"], whale_is_true=True, crowd_ls=None, whale_absent=x["whale_absent"],
+                                       na_is_miss=m.na_is_miss, news_optional_below=m.news_optional_below,
                                        oi_change_24h_pct=x["oi_24h"], vol_label=x["vol_label"], news=news)
             ev = Eval(coin, side, tag, checks, None)
             self._bracket(ev, x, run, news, triggers)
@@ -500,7 +549,8 @@ class Engine:
         up = side == "short"  # entry rounds to the passive side; SL rounds away from entry
         entry = round_price_dir(conf.price, szd, up=up)
         sl, sl_how = bracket.stop_loss(entry, side, x["struct"], x["atr_4h"], P.risk)
-        tpp, tp_why = bracket.take_profit(entry, price, side, x["struct"], x["atr_4h_pct"], x["adr"], P.tp)
+        tpp, tp_why = bracket.take_profit(entry, price, side, x["struct"], x["atr_4h_pct"], x["adr"], P.tp,
+                                                    max_adr_mult=(run.mode or P.strategy.swing).max_adr_mult)
         if sl is None:
             ev.checks.append(Check("M7", "SL beyond 4H structure", False, sl_how, hard=True))
         if tpp is None:
@@ -543,7 +593,9 @@ class Engine:
             tp_label=tpp.level.label, tp_adr_mult=tpp.adr_mult, sizing=z, fees=run.fees, equity=run.equity,
             equity_ts=run.equity_ts, btc_band=run.band, vol_label=x["vol_label"], score=ev.score, score_points=pts,
             data_ts=min(stamps) if stamps else run.now, breakers=run.breakers.status(), notes=notes, info=info,
-            price_at_card=price, tag=ev.tag)
+            price_at_card=price, tag=ev.tag, strategy=run.strategy,
+            max_adr_allowed=(run.mode or P.strategy.swing).max_adr_mult,
+            hold_h=(run.mode or P.strategy.swing).hold_h)
 
     # ------------------------------------------------------------------ Module 12 flow
     def start(self, stated_equity: float | None) -> Proposal | str:
@@ -571,9 +623,11 @@ class Engine:
             return run
         hard = self._hard_blocks(run)
         if hard:
+            self._note_scan("blocked before screening", Counter({hard[0][:70]: 1}))
             return "\n".join(run.lines + ["", "No trade today:"] + hard)
         cands, notes = self._screen(run, exclude)
         if not cands:
+            self._note_scan("screener: no candidates", Counter({"screener": 1}))
             return "\n".join(run.lines + ["", "Screener: no coin passes the sweeps and automatic skips."] + notes[:10])
         evals = self._deep_dive(cands, run, notes)
         self.session["shown"].update(c for c, _ in cands)
@@ -585,7 +639,14 @@ class Engine:
                 self.store.add_skip(P.version, e.coin, e.side, f"{f.module} {f.rule}" if f else "no setup",
                                     "; ".join(c.line() for c in failed(e.checks))[:900],
                                     p and p.entry, p and p.sl, p and p.tp)
+        reasons = Counter()
+        for e in evals:
+            if not e.ok:
+                f = e.first_fail()
+                reasons[f"{f.module} {f.rule}" if f else "no complete setup"] += 1
         if not ok:
+            self._note_scan(f"{len(cands)} screened, {len(evals)} checked, none passed",
+                            reasons or Counter({"no candidate": 1}))
             soft = sorted((e for e in evals if e.plan and only_soft_failures(e.checks)), key=lambda e: (e.score, e.net_rr),
                           reverse=True)
             self.session["blocked"] = soft
@@ -613,8 +674,10 @@ class Engine:
         return self._propose(plans, run, self.session.get("news") or {}, stated)
 
     def _deep_dive(self, cands: list[tuple[str, str]], run: Run, notes: list[str]) -> list[Eval]:
-        """Two passes so Claude only reads news where it can change the outcome: every rule except news first,
-        then news ratings for coins whose setup passes everything else (or, with autopilot off, only soft rules)."""
+        """Two passes, so Claude only reads headlines where they can change the outcome. Pass 1 runs every rule with
+        the headline count but no sentiment; pass 2 rates headlines only for coins that pass everything else."""
+        counts = {c: len(self.mkt.news(c, limit=self.P.deep_dive.news_articles)) for c, _ in cands}
+
         def dive(coin: str, tag: str, news) -> list[Eval]:
             try:
                 return self._evaluate(coin, tag, run, news)
@@ -630,13 +693,16 @@ class Engine:
                     return True
             return False
 
-        first = {c: dive(c, tag, None) for c, tag in cands}
+        def unrated(c: str) -> flt.News:  # headlines counted, not rated yet: sentiment can't pass until rated
+            return flt.News(0, 0, counts.get(c, 0), None)
+
+        first = {c: dive(c, tag, unrated(c)) for c, tag in cands}
         want = [c for c, _ in cands if worth_news(first[c])]
         news = self._rate_news(want, run) if want else {}
         self.session["news"] = news
         out: list[Eval] = []
         for c, tag in cands:
-            out += dive(c, tag, news[c]) if c in news else first[c]
+            out += dive(c, tag, news[c] or unrated(c)) if c in news else first[c]
         return out
 
     def _propose(self, plans: list[Plan], run: Run, news: dict, stated: float | None) -> Proposal:
@@ -693,7 +759,7 @@ class Engine:
         plan = prop.plans[(choice or 1) - 1]
 
         # 1. re-fetch and re-run every filter for this coin and side
-        run = self._run(now, prop.stated_equity)
+        run = self._run(now, prop.stated_equity, strategy=plan.strategy)
         if isinstance(run, str):
             self.pending = None
             return "Card withdrawn: " + run
@@ -754,6 +820,7 @@ class Engine:
             coin=fresh.coin, side=fresh.side, status="open" if res.get("filled_now") else "pending",
             entry=fresh.entry, sl=fresh.sl, tp=fresh.tp, qty=z.qty, leverage=z.leverage, margin=z.margin,
             entry_oid=oid, filled_at=now if res.get("filled_now") else None, version=P.version, score=fresh.score,
+            strategy=fresh.strategy,
             btc_band=fresh.btc_band, risk_usd=z.loss_at_sl, risk_pct=z.loss_at_sl / fresh.equity * 100,
             risk_mode=z.risk_mode, override=fresh.override,
             plan={"card": prop.text, "plan": _plan_json(fresh), "equity": fresh.equity, "tp_label": fresh.tp_label,
@@ -971,7 +1038,7 @@ class Engine:
             why = None
             if sch.must_be_flat(now, s):
                 why = "friday"
-            elif t["filled_at"] and now >= sch.time_stop_at(t["filled_at"], s):
+            elif t["filled_at"] and now >= sch.time_stop_at(t["filled_at"], s, self._hold_h(t)):
                 why = "time"
             if why:
                 self._close(t, why)
@@ -1002,7 +1069,7 @@ class Engine:
         except Exception:  # noqa: BLE001
             btc = None
         events, _ = self._macro_events()
-        end = sch.time_stop_at(t["filled_at"] or now, P.schedule)
+        end = sch.time_stop_at(t["filled_at"] or now, P.schedule, self._hold_h(t))
         ahead = [(n, ts) for n, ts in events if now <= ts <= end and n in P.schedule.macro_events]
         out = []
         for s in sch.early_exit_suggestions(t["side"], btc, ahead, P.schedule):
@@ -1050,7 +1117,7 @@ class Engine:
                                                                     sk["ts"], sk["ts"] + P.review.skip_check_after_h * H))
         for t in self.store.closed(self._since()):
             if t.get("exit_type") in ("discretion", "early") and t.get("bracket_r") is None and t["filled_at"]:
-                end = sch.time_stop_at(t["filled_at"], P.schedule)
+                end = sch.time_stop_at(t["filled_at"], P.schedule, self._hold_h(t))
                 if time.time() >= end:
                     self.store.update_trade(t["id"], bracket_r=self._bracket_r(t, end))
         for t in self.store.trades("open"):
@@ -1154,6 +1221,11 @@ class Engine:
         s = rvw.summarize(self.logged(), P.review, P.risk)
         label = ("PAPER review (since reset)" if self.paper else "LIVE review") + f" - protocol v{P.version}"
         text = rvw.format_review(s, label, P.review)
+        by: dict[str, list[float]] = {}
+        for t in self.store.closed(self._since()):
+            by.setdefault(t.get("strategy") or "swing", []).append(t.get("result_r") or 0.0)
+        if by:
+            text += "\nBy strategy: " + " | ".join(f"{k} {len(v)} trades, {sum(v):+.2f}R" for k, v in sorted(by.items()))
         skips = [k for k in self.store.skips(500) if k["outcome"] in ("tp", "sl", "no fill", "neither")]
         if skips:
             n = {o: sum(1 for k in skips if k["outcome"] == o) for o in ("tp", "sl", "no fill", "neither")}
@@ -1176,7 +1248,7 @@ class Engine:
             return msgs
         day = brk.utc_day_start(now)
         if self._scans["day"] != day:
-            self._scans = {"day": day, "n": 0, "last": None}
+            self._scans = {"day": day, "n": 0, "last": None, "blockers": Counter(), "funnel": ""}
         if time.gmtime(now).tm_hour >= A.report_hour_utc and self.mkt.store.get("report_day") != day:
             self.mkt.store.set("report_day", day)
             msgs.append(self.daily_report())
@@ -1281,6 +1353,12 @@ class Engine:
         for p in acct["positions"]:
             out.append(f"Open: {p['coin']} {p['side']} {p['size']:g} @ {fmt(p['entry'])}, uPnL ${p['upnl']:+.2f}")
         out.append(f"Scans today: {self._scans['n']}" + (f" | last: {self._scans['last']}" if self._scans["last"] else ""))
+        out.append(f"Strategy: {self.strategy_label()}")
+        bl = self._scans.get("blockers") or Counter()
+        if bl:
+            out.append("Why no trade (most common): " + ", ".join(f"{k} x{v}" for k, v in bl.most_common(4)))
+        if self._scans.get("funnel"):
+            out.append(f"Last scan: {self._scans['funnel']}")
         out.append(f"Breakers: {st.status()}" + (" | autopilot PAUSED" if self.paused else ""))
         return "\n".join(out)
 
@@ -1305,7 +1383,7 @@ class Engine:
                 funding = self.trader.funding_paid(t["coin"], t["filled_at"] or t["created_at"])
             except Exception:  # noqa: BLE001
                 funding = 0.0
-            left = sch.time_stop_at(t["filled_at"] or time.time(), self.P.schedule) - time.time()
+            left = sch.time_stop_at(t["filled_at"] or time.time(), self.P.schedule, self._hold_h(t)) - time.time()
             out.append(f"#{t['id']} {t['coin']} {t['side']} {pos['size']:g} @ {fmt(pos['entry'])} | now {fmt(px)}\n"
                        f"uPnL ${pos['upnl']:+.2f}" + (f" = {pos['upnl'] / risk:+.2f}R" if risk else "")
                        + f" | to TP {abs(t['tp'] / px - 1) * 100:.2f}% | to SL {abs(t['sl'] / px - 1) * 100:.2f}%\n"
@@ -1320,7 +1398,7 @@ class Engine:
         acct = self.trader.account()
         st = self._breakers(time.time(), acct["account_value"], None, self.store.entries_since(brk.utc_day_start(time.time())))
         peak = max(self.store.peak_equity(self._since()), acct["account_value"])
-        out = [f"HEVI - {self.label()} | protocol v{self.P.version} | autopilot "
+        out = [f"HEVI - {self.label()} | protocol v{self.P.version} | strategy {self.strategy_label()} | autopilot "
                + ("PAUSED" if self.paused else "on" if self.P.autopilot.enabled else "off"),
                f"Equity ${acct['account_value']:.2f} | available ${acct['withdrawable']:.2f} | peak ${peak:.2f} "
                f"(drawdown {st.drawdown_pct:.1f}%)" + (f" | spot USDC ${acct['spot_usdc']:.2f}" if acct.get("spot_usdc") else ""),
@@ -1403,7 +1481,7 @@ def _first_reason(text: str) -> str:
 
 def _plan_json(p: Plan) -> dict:
     z = p.sizing
-    return {"coin": p.coin, "side": p.side, "entry": p.entry, "sl": p.sl, "tp": p.tp, "sl_label": p.sl_label,
+    return {"strategy": p.strategy, "coin": p.coin, "side": p.side, "entry": p.entry, "sl": p.sl, "tp": p.tp, "sl_label": p.sl_label,
             "tp_label": p.tp_label, "entry_methods": list(p.entry_methods), "score": p.score,
             "score_points": p.score_points, "qty": z.qty, "notional": z.notional, "leverage": z.leverage,
             "mmr": z.mmr, "margin": z.margin, "liq": z.liq, "liq_buffer_pct": z.liq_buffer_pct, "risk_mode": z.risk_mode,

@@ -9,6 +9,8 @@ from hlbot.levels import Level
 from hlbot.protocol import PROTOCOL as P
 from hlbot.protocol import load, load_calendar
 from hlbot.rules import bracket, breakers, direction, filters, gate, metrics, review, schedule, screen
+
+dirn, sch = direction, schedule
 from hlbot.rules.card import Plan, final_check, render
 from hlbot.rules.checks import Datum, usable
 from hlbot.rules.sizing import Fees, SizingInput, size
@@ -212,25 +214,50 @@ def test_take_profit_rule():
 
 # ---------------------------------------------------------------- Module 5
 def test_direction():
-    d = P.direction
-    lt = direction.long_triggers(d, buy_sell=3.5, whale_ls=1.8, funding_8h=0.01, btc_band="normal", fng=40)
+    d, sw, dy = P.direction, P.strategy.swing, P.strategy.day
+    lt = dirn.long_triggers(d, sw, buy_sell=3.5, whale_ls=1.8, funding_8h=0.01, btc_band="normal", fng=40)
     assert sum(t.hit for t in lt) == 4
-    na = direction.long_triggers(d, buy_sell=None, whale_ls=1.8, funding_8h=0.01, btc_band="normal", fng=40)
-    assert sum(t.hit for t in na) == 3 and na[0].detail == "N/A"  # N/A counts as a fail
-    st = direction.trend_short_triggers(d, buy_sell=0.25, whale_ls=0.6, funding_8h=0.0, btc_broke_4h_support=False,
-                                        fng=55)
+    na = dirn.long_triggers(d, sw, buy_sell=None, whale_ls=1.8, funding_8h=0.01, btc_band="normal", fng=40)
+    assert sum(t.hit for t in na) == 3 and na[0].detail == "N/A"  # swing: N/A counts as a miss
+    st = dirn.trend_short_triggers(d, sw, buy_sell=0.25, whale_ls=0.6, funding_8h=0.0, btc_broke_4h_support=False, fng=55)
     assert sum(t.hit for t in st) == 2
-    rv = direction.reversal_short_triggers(d, rejection_wick=True, funding_8h=0.04, funding_rising=True,
-                                           oi_change_24h=-6, day_change=6, whale_ls_now=0.9, whale_ls_24h_ago=1.3,
-                                           btc_vol_now="HIGH", btc_vol_24h_ago="NORMAL", btc_change=3.5)
+    rv = dirn.reversal_short_triggers(d, rejection_wick=True, funding_8h=0.04, funding_rising=True, oi_change_24h=-6,
+                                      day_change=6, whale_ls_now=0.9, whale_ls_24h_ago=1.3, btc_vol_now="HIGH",
+                                      btc_vol_24h_ago="NORMAL", btc_change=3.5)
     assert sum(t.hit for t in rv) == 5
-    none = [direction.Trigger("x", False, "")] * 5
-    assert direction.decide(d, lt, none, none)[0] == ["long"]
-    assert direction.decide(d, lt, none, rv)[0] == ["long", "short"]
-    assert direction.decide(d, na, none, rv)[0] == ["short"]
-    assert direction.decide(d, lt, st, none)[0] == []  # conflict -> skip
-    assert direction.decide(d, na, st, none)[0] == ["short"]
-    assert direction.decide(d, na, none, none)[0] == []
+    none = [dirn.Trigger("x", False, "N/A")] * 5
+    assert dirn.decide(d, sw, lt, none, none)[0] == ["long"]
+    assert dirn.decide(d, sw, lt, none, rv)[0] == ["long", "short"]
+    assert dirn.decide(d, sw, na, none, rv)[0] == ["short"]
+    assert dirn.decide(d, sw, lt, st, none)[0] == []
+    assert dirn.decide(d, sw, na, st, none)[0] == ["short"]
+    assert dirn.decide(d, sw, na, none, none)[0] == []
+    # day: a trigger with no data is left out; 3 of the 4 measurable long triggers are enough
+    dl = dirn.long_triggers(d, dy, buy_sell=2.6, whale_ls=None, funding_8h=0.01, btc_band="normal", fng=62)
+    assert dirn.decide(d, dy, dl, none, none)[0] == ["long"]
+    weak = dirn.long_triggers(d, dy, buy_sell=2.0, whale_ls=None, funding_8h=0.01, btc_band="normal", fng=40)
+    assert dirn.decide(d, dy, weak, none, none)[0] == []  # only funding and BTC hit
+    thin = dirn.long_triggers(d, dy, buy_sell=None, whale_ls=None, funding_8h=0.01, btc_band="normal", fng=62)
+    assert dirn.decide(d, dy, thin, none, none)[0] == []  # 3 hits, but only 3 measurable (day needs 4)
+
+
+def test_day_and_swing_holds_and_mode_aware_filters():
+    s = P.schedule
+    assert sch.time_stop_at(TUE, s, 24) == TUE + 24 * 3600
+    assert sch.time_stop_at(TUE, s) == TUE + 48 * 3600
+    kw = dict(day_change_pct=1.0, whale_ls=None, crowd_ls=None, oi_change_24h_pct=0.5, vol_label="NORMAL")
+    day = {c.rule: c for c in filters.hard_filters("long", P.filters, P.screener, news=filters.News(0, 0, 1, None),
+                                                   whale_absent=True, na_is_miss=False, news_optional_below=2, **kw)}
+    assert day["whale L/S"].ok and not day["whale L/S"].hard and day["news"].ok
+    cat = {c.rule: c for c in filters.hard_filters("long", P.filters, P.screener, news=filters.News(0, 0, 1, "exploit"),
+                                                   whale_absent=True, na_is_miss=False, news_optional_below=2, **kw)}
+    assert not cat["news"].ok  # a thesis-breaking catalyst still blocks
+    swing = {c.rule: c for c in filters.hard_filters("long", P.filters, P.screener, news=filters.News(0, 0, 3, None),
+                                                     whale_absent=True, na_is_miss=True, news_optional_below=0, **kw)}
+    assert not swing["whale L/S"].ok and not swing["whale L/S"].hard  # a soft miss, not missing data
+    assert not swing["news"].ok and not swing["news"].hard
+    none = {c.rule: c for c in filters.hard_filters("long", P.filters, P.screener, news=None, **kw)}
+    assert none["whale L/S"].hard and none["news"].hard  # no leaderboard data at all = missing = hard
 
 
 # ---------------------------------------------------------------- Module 8
@@ -376,7 +403,7 @@ def plan(**kw):
 def test_card_and_final_check():
     p = plan()
     text = render(p, P, TUE, paper=True)
-    for s in ("HEVI", "Protocol v3.1", "PAPER", "post-only (ALO)", "Isolated", "Leverage:    22x", "Net R/R:     1:3.06",
+    for s in ("HEVI", "Protocol v3.2", "PAPER", "post-only (ALO)", "Isolated", "Leverage:    22x", "Net R/R:     1:3.06",
               "mark-price trigger", "Risk mode:   Normal 10%", "TP slippage ~$0.08"):
         assert s in text, s
     assert final_check(p, P, now=TUE + 60, open_positions=0, pending_entries=0, breakers_blocked=[],

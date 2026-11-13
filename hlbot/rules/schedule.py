@@ -38,15 +38,15 @@ def must_be_flat(now: float, s: Schedule) -> bool:
     return d.weekday() >= 5 or (d.weekday() == 4 and d.hour >= s.friday_flat_hour)
 
 
-def time_stop_at(filled_at: float, s: Schedule) -> float:
-    """48h after the fill, or the Friday flatten, whichever comes first."""
-    return min(filled_at + s.time_stop_h * H, next_friday_flat(filled_at, s))
+def time_stop_at(filled_at: float, s: Schedule, hold_h: float | None = None) -> float:
+    """The mode's hold after the fill (48h swing, 24h day), or the Friday flatten, whichever comes first."""
+    return min(filled_at + (hold_h or s.time_stop_h) * H, next_friday_flat(filled_at, s))
 
 
-def planned_hold(now: float, s: Schedule, e: Entry) -> tuple[float, float]:
+def planned_hold(now: float, s: Schedule, e: Entry, hold_h: float | None = None) -> tuple[float, float]:
     """Window a new trade could be open: up to the entry TTL to fill, then the time stop, capped by Friday flat."""
     latest_fill = now + e.cancel_after_h * H
-    return now, min(latest_fill + s.time_stop_h * H, next_friday_flat(now, s))
+    return now, min(latest_fill + (hold_h or s.time_stop_h) * H, next_friday_flat(now, s))
 
 
 def macro_in_window(events: list[tuple[str, float]], covered_until: float | None, start: float, end: float,

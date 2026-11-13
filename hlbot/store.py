@@ -47,7 +47,7 @@ CREATE INDEX IF NOT EXISTS whale_coin_ts ON whale(coin, ts);
 TRADE_COLUMNS_V3 = {
     "version": "TEXT", "score": "INTEGER", "btc_band": "TEXT", "risk_usd": "REAL", "risk_pct": "REAL",
     "risk_mode": "TEXT", "fill_px": "REAL", "exit_type": "TEXT", "result_r": "REAL", "mae_r": "REAL",
-    "mfe_r": "REAL", "fees": "REAL", "funding": "REAL", "override": "TEXT", "bracket_r": "REAL",
+    "mfe_r": "REAL", "fees": "REAL", "funding": "REAL", "override": "TEXT", "bracket_r": "REAL", "strategy": "TEXT",
 }
 LESSON_COLUMNS_V3 = {"support": "TEXT"}  # JSON list of trade ids that support a hypothesis
 
