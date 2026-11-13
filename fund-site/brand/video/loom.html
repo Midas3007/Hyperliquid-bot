@@ -1,0 +1,120 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#07080c}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "The Loom": two markets are the warp, every trade is a pass of the shuttle. Row by row the cloth is woven and,
+// as the camera pulls back, the pattern in it turns out to be Kiyoshi's fan. 40 s, timed to score-loom.py (75 BPM).
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 40, TAU = Math.PI * 2
+const GOLD = '#D4AF37', GOLD2 = '#F3D77A', WHITE = '#F4F1EA', SOFT = '#cfc8b6', INDIGO = '#1a2140'
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x)), lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const inout = (t, a, b, f = .7) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+const STAT = { trades: P.get('trades') || '3,281', since: P.get('since') || '29 October' }
+
+// ---------- the cloth ----------
+const COLS = 84, ROWS = 60, CELL = 14, CW = COLS * CELL, CH = ROWS * CELL
+const T0 = 3.2, T1 = 27.5, ROW_T = (T1 - T0) / ROWS
+// the fan as a mask over the cloth (13 blades from a pivot near the bottom, a small fan under it)
+const NB = 13, A0 = Math.PI * 1.07, A1 = Math.PI * 1.93
+function inFan(x, y) { // x, y in cloth cells, origin top-left
+  const cx = COLS / 2, cy = ROWS * .8, dx = x - cx, dy = y - cy, r = Math.hypot(dx, dy), a = Math.atan2(dy, dx) + TAU
+  if (r < 5 && dy > 0 && Math.abs(dx) < r * .9) return r > 2 ? 2 : 0 // the small fan below the pivot
+  const an = a > TAU ? a - TAU : a
+  if (r < 3 || r > 36 || an < A0 || an > A1) return 0
+  const k = (an - A0) / (A1 - A0) * NB, f = k - Math.floor(k)
+  if (f < .1 || f > .9) return 0 // the gap between blades
+  const hole = Math.hypot(x - (cx + Math.cos(A0 + (A1 - A0) * .82) * 27), y - (cy + Math.sin(A0 + (A1 - A0) * .82) * 27))
+  return hole < 2.2 ? 0 : 1
+}
+const MASK = []; for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) MASK.push(inFan(x + .5, y + .5))
+
+const WARP = (x) => (x < COLS / 2 ? '#c9a33c' : '#b88f2a') // left half Uniswap, right half Textile: warp threads
+function cell(x, y, k) { // one crossing; k = how far the weft has been laid (0..1)
+  const px = x * CELL, py = y * CELL, over = (x + y) % 2 === 0, m = MASK[y * COLS + x]
+  const weft = m === 1 ? GOLD2 : m === 2 ? '#e7c868' : INDIGO
+  // warp (vertical)
+  g.fillStyle = WARP(x); g.fillRect(px + 3, py, CELL - 6, CELL)
+  if (k <= 0) return
+  // weft (horizontal), over or under the warp
+  g.globalAlpha = k
+  g.fillStyle = weft; g.fillRect(px, py + 2.5, CELL, CELL - 5)
+  if (!over) { g.fillStyle = WARP(x); g.fillRect(px + 3, py, CELL - 6, CELL) }
+  g.fillStyle = 'rgba(255,255,255,.16)'; g.fillRect(px, py + 3, CELL, 1.5) // sheen
+  g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(px, py + CELL - 4, CELL, 1.5)
+  g.globalAlpha = 1
+}
+function cloth(t) {
+  const rowsDone = (t - T0) / ROW_T
+  for (let y = ROWS - 1; y >= 0; y--) { // weaving runs bottom to top
+    const r = ROWS - 1 - y, f = rowsDone - r
+    for (let x = 0; x < COLS; x++) {
+      const dir = r % 2 ? COLS - 1 - x : x, k = f >= 1 ? 1 : f <= 0 ? 0 : clamp((f * COLS - dir) / 3)
+      cell(x, y, k)
+    }
+  }
+  // the shuttle on the current row
+  const r = Math.floor(rowsDone), f = rowsDone - r
+  if (r >= 0 && r < ROWS) {
+    const y = ROWS - 1 - r, dir = r % 2, sx = (dir ? 1 - f : f) * CW, sy = y * CELL + CELL / 2
+    g.save(); g.translate(sx, sy); g.shadowColor = 'rgba(243,215,122,.8)'; g.shadowBlur = 18
+    const gr = g.createLinearGradient(-26, 0, 26, 0); gr.addColorStop(0, '#6b4a14'); gr.addColorStop(.5, '#f3d77a'); gr.addColorStop(1, '#6b4a14')
+    g.fillStyle = gr; g.beginPath(); g.moveTo(-28, 0); g.quadraticCurveTo(0, -9, 28, 0); g.quadraticCurveTo(0, 9, -28, 0); g.fill(); g.restore()
+  }
+  return { r, f }
+}
+
+// ---------- camera: close on the shuttle, then the whole cloth ----------
+function camera(t) {
+  const rowsDone = clamp((t - T0) / ROW_T, 0, ROWS), r = Math.floor(rowsDone), f = rowsDone - r
+  const sy = (ROWS - 1 - Math.min(r, ROWS - 1)) * CELL + CELL / 2, sx = ((r % 2 ? 1 - f : f) * CW)
+  const pull = smooth((t - 6) / (T1 - 4)) // 6 s -> 23.5 s: from 3.2x to the whole cloth
+  const z = Math.exp(lerp(Math.log(3.2), Math.log(.98), pull)) * lerp(1, .92, smooth((t - 30) / 6))
+  const follow = 1 - pull
+  return { x: lerp(CW / 2, lerp(CW / 2, sx, .55), follow), y: lerp(CH / 2 + 10, sy, follow), z, r: lerp(-.04, 0, pull) }
+}
+
+function txt(s, x, y, size, color, a = 1, o = {}) { if (a <= .003) return; g.save(); g.globalAlpha = a; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.shadowColor = 'rgba(0,0,0,.85)'; g.shadowBlur = 22; g.fillText(s, x, y); g.restore() }
+
+function draw(t) {
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  g.fillStyle = '#07080c'; g.fillRect(0, 0, 1920, 1080)
+  const bg = g.createRadialGradient(960, 520, 50, 960, 540, 1100); bg.addColorStop(0, '#141826'); bg.addColorStop(1, '#07080c'); g.fillStyle = bg; g.fillRect(0, 0, 1920, 1080)
+  const cam = camera(t), appear = smooth((t - .4) / 2.4)
+  g.save(); g.translate(960, 540); g.rotate(cam.r); g.scale(cam.z, cam.z); g.translate(-cam.x, -cam.y)
+  g.globalAlpha = appear
+  // the loom's frame
+  g.fillStyle = '#2a1d0c'; g.fillRect(-40, -30, CW + 80, 18); g.fillRect(-40, CH + 12, CW + 80, 18)
+  g.globalAlpha = 1
+  // the warp, drawn in from the top at the start
+  g.save(); g.beginPath(); g.rect(-20, -20, CW + 40, (CH + 40) * appear); g.clip()
+  cloth(t)
+  g.restore()
+  g.restore()
+  // light passing over the finished cloth
+  const s = smooth((t - 27.5) / 3.5); if (s > 0 && s < 1) { const x = lerp(-400, 2400, s), lg = g.createLinearGradient(x - 300, 0, x + 300, 0); lg.addColorStop(0, 'rgba(255,240,200,0)'); lg.addColorStop(.5, 'rgba(255,240,200,.14)'); lg.addColorStop(1, 'rgba(255,240,200,0)'); g.fillStyle = lg; g.fillRect(0, 0, 1920, 1080) }
+  // words
+  txt('Two markets, side by side.', 960, 980, 50, WHITE, inout(t, .9, 4.4), { italic: true })
+  txt('UNISWAP', 960 - 300, 90, 22, SOFT, inout(t, 1.2, 5.6) * .9, { font: MONO, spacing: 9 })
+  txt('TEXTILE', 960 + 300, 90, 22, SOFT, inout(t, 1.2, 5.6) * .9, { font: MONO, spacing: 9 })
+  txt('Every trade passes between them.', 960, 980, 50, WHITE, inout(t, 5.2, 10.4), { italic: true })
+  txt('One thread at a time.', 960, 980, 50, WHITE, inout(t, 11, 15.6), { italic: true })
+  txt(`${STAT.trades} passes since ${STAT.since}.`, 960, 980, 50, WHITE, inout(t, 16.4, 21.4), { italic: true })
+  txt('Patient work makes the pattern.', 960, 980, 50, WHITE, inout(t, 22.2, 27), { italic: true })
+  // the end
+  const e = smooth((t - 31) / 1.4)
+  if (e > 0) { g.fillStyle = `rgba(7,8,12,${.62 * e})`; g.fillRect(0, 0, 1920, 1080) }
+  txt('MIDAS × KIYOSHI', 960, 500, 86, WHITE, smooth((t - 31.6) / 1.1), { weight: 700, spacing: 18 })
+  txt('woven around the clock', 960, 585, 40, GOLD2, smooth((t - 32.4) / 1.1), { italic: true })
+  txt('Not financial advice · you can lose money', 960, 1010, 18, SOFT, smooth((t - 33.4) / 1) * .7, { font: MONO })
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .35, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.6)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .8) + clamp((t - (DUR - 1.4)) / 1.4); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready
+</script></body></html>
