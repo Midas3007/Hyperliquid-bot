@@ -90,32 +90,33 @@ class Film:
         self.fin_post = Finisher()
         # ---------------------------------------------------------------- portraits
         self.hero = build_portrait("hero", 6, 12, 10, (100, 20, 690, 780), 86, extra_chars=RAIN_CHARS)
-        self.final = build_portrait("final", 8, 16, 13.4, (112, 18, 652, 640), 62, extra_chars=SCRAMBLE,
+        self.final = build_portrait("final", 7, 14, 11.7, (112, 18, 652, 640), 60, extra_chars=SCRAMBLE,
                                     light=(0.30, 0.92))
         hp = self.hero
         rr = np.arange(hp.R)[:, None]
         hp.light = (hp.light * (1 - 0.9 * smoothstep((rr - (hp.R - 30)) / 30.0))).astype(np.float32)
         self.hero_glow = {m: glow_underlay(hp, getattr(hp, f"tint_{m}")) for m in ("open", "half", "closed")}
         fp = self.final
-        self.final_glow = {m: glow_underlay(fp, getattr(fp, f"tint_{m}"), blur=5) for m in ("open", "half", "closed")}
         self.fine = hp.atlas                                      # 6x12 Bold — rain shares the portrait grid
         # ---------------------------------------------------------------- atlases
-        self.term = GlyphAtlas("".join(BOOT_LINES) + "█▌_", 18, 48, 30, weight="Regular", proc="")
+        ascii_ = "".join(chr(c) for c in range(32, 127))
+        self.term = GlyphAtlas("".join(BOOT_LINES) + "█▌_", 28, 64, 46, weight="Regular", proc="")
         self.near = GlyphAtlas(RAIN_CHARS, 12, 24, 19, weight="Regular")
-        self.hud = GlyphAtlas("".join(chr(c) for c in range(32, 127)) + "·•●○◂▸◀◆→−━─│┌┐└┘╌▌█✓—▲▼",
-                              11, 24, 17, weight="Regular")
-        self.hudb = GlyphAtlas("".join(chr(c) for c in range(32, 127)) + "·→", 11, 24, 17, weight="SemiBold")
-        self.small = GlyphAtlas("".join(chr(c) for c in range(32, 127)) + "·•●○", 9, 18, 14, weight="Regular")
-        self.caps = GlyphAtlas("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ·", 15, 24, 15, weight="Medium")
-        self.sub = GlyphAtlas(SUBTITLE + "▌", 25, 40, 24, weight="Light", proc="")
+        self.hud = GlyphAtlas(ascii_ + "·•●○◂▸◀◆→−━─│┌┐└┘╌▌█✓—▲▼", 17, 38, 28, weight="Regular")
+        self.node = GlyphAtlas("·•●", 20, 20, 30, weight="Regular")
+        self.small = GlyphAtlas(ascii_ + "·•●○", 13, 28, 22, weight="Regular")
+        self.tiny = GlyphAtlas("·•", 9, 18, 14, weight="Regular")
+        self.caps = GlyphAtlas("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ·", 26, 38, 26, weight="Medium")
+        self.caps2 = GlyphAtlas(ascii_ + "→", 20, 46, 32, weight="Regular")
+        self.sub = GlyphAtlas(SUBTITLE + "▌", 28, 46, 30, weight="Light", proc="")
         self.block = GlyphAtlas(blockfont.CHARS, 26, 52, 26, proc_weight=1.2)
-        self.check = GlyphAtlas("".join(CHECKS) + "✓", 16, 48, 26, weight="Regular")
-        self.checkbig = GlyphAtlas("✓", 48, 64, 52, weight="Bold")
-        self.statement = GlyphAtlas(STATEMENT, 19, 48, 30, weight="Light")
-        self.title = GlyphAtlas("HEVI", 64, 96, 66, weight="Light")
-        self.tag = GlyphAtlas(TAGLINE, 18, 44, 28, weight="Regular")
-        self.url = GlyphAtlas(URL_LINE, 11, 24, 16, weight="Regular")
-        self.tpat = GlyphAtlas("TP filled · on-exchange · isolated", 15, 30, 21, weight="Regular")
+        self.check = GlyphAtlas("".join(CHECKS) + "✓", 21, 56, 34, weight="Regular")
+        self.checkbig = GlyphAtlas("✓", 60, 80, 66, weight="Bold")
+        self.statement = GlyphAtlas(STATEMENT, 24, 60, 38, weight="Light")
+        self.title = GlyphAtlas("HEVI", 84, 120, 90, weight="Light")
+        self.tag = GlyphAtlas(TAGLINE, 26, 60, 40, weight="Regular")
+        self.url = GlyphAtlas(URL_LINE, 17, 40, 28, weight="Regular")
+        self.tpat = GlyphAtlas("TP filled · on-exchange · isolated", 21, 48, 33, weight="Regular")
         self._build_candle_atlas()
         # ---------------------------------------------------------------- precomputed pieces
         self._build_boot()
@@ -434,7 +435,7 @@ class Film:
         ang = np.linspace(0, 2 * np.pi, n, endpoint=False) + 0.3
         xs = cx + r * np.cos(ang)
         ys = cy + r * np.sin(ang) * 1.05
-        splat(cv, self.small, xs, ys, np.full(n, self.small.index["·"]), np.tile(MINT * a, (n, 1)))
+        splat(cv, self.tiny, xs, ys, np.full(n, self.tiny.index["·"]), np.tile(MINT * a, (n, 1)))
 
     def _build_blocks(self):
         self.letters = self._block_word("HEVI", grad=(MINT * 0.80, TEAL * 0.74), shadow=DEEP * 1.8)
@@ -464,7 +465,7 @@ class Film:
             out.append(dict(ch=ch, x=x, img=img, w=n_c))
         return dict(items=out, width=width)
 
-    def draw_block_word(self, cv, word, x0, y0, t_slams, t, alpha=1.0, glint=None, dy=0.0, amp=0.32):
+    def draw_block_word(self, cv, word, x0, y0, t_slams, t, alpha=1.0, glint=None, dy=0.0, amp=0.32, boost_decay=0.11):
         at = self.block
         for it, ts in zip(word["items"], t_slams):
             u = t - ts
@@ -472,7 +473,7 @@ class Film:
                 continue
             s = damped_overshoot(u / 0.34, amp=amp, freq=9.0, damp=9.0)
             a = float(smoothstep(u / 0.05)) * alpha
-            boost = 1 + 1.3 * np.exp(-u / 0.11)
+            boost = 1 + 1.3 * np.exp(-u / boost_decay)
             img = it["img"]
             if glint is not None:
                 img = img * glint(x0 + it["x"] * at.cw, y0, img.shape)
@@ -567,25 +568,22 @@ class Film:
         a = fade(t, t0, t0 + 0.35) * out
         if a <= 0.005:
             return
-        x, y = 560, 150
-        self.text(cv, self.caps, num, x, y, DIM * 1.6, a)
-        self.typed(cv, self.caps, name, x + 3 * self.caps.cw, y, CREAM * 0.92, t, t0, 0.25, alpha=out)
-        # rule
+        x, y = 560, 70
+        self.text(cv, self.caps, num, x, y, DIM * 1.7, a)
+        self.typed(cv, self.caps, name, x + 3 * self.caps.cw, y, CREAM * 0.95, t, t0, 0.25, alpha=out)
         x1 = x + (4 + len(name)) * self.caps.cw
         x2 = 1830
         k = float(ease_out_expo(prog(t, t0 + 0.05, t0 + 0.7)))
         n = int((x2 - x1) * k / self.hud.cw)
         if n > 0:
             xs = x1 + self.hud.cw * (np.arange(n) + 0.5)
-            splat(cv, self.hud, xs, np.full(n, y + 12.0), np.full(n, self.hud.index["─"]),
+            splat(cv, self.hud, xs, np.full(n, y + 19.0), np.full(n, self.hud.index["─"]),
                   np.tile(DIM * 0.9 * a, (n, 1)), subpixel=False)
-        # panel progress dots
         for i in range(3):
             on = (i == int(num) - 1)
-            self.text(cv, self.small, "●" if on else "○", 1790 + i * 14 - 28, y + 40,
-                      (MINT if on else DIM * 1.2) * a)
+            splat(cv, self.small, [1790 + i * 18], [y + 58.0], [self.small.index["●" if on else "○"]],
+                  [(MINT if on else DIM * 1.3) * a])
 
-    # -------------------------------------------------- (a) whales
     def _build_whales(self, rng):
         n = 200
         k = np.arange(n) + 0.5
@@ -617,7 +615,7 @@ class Film:
         if out <= 0:
             return
         self.hud_header(cv, t, 22.3, "01", "WHALES", out)
-        cx, cy, R = 1130, 540, 290
+        cx, cy, R = 1135, 505, 330
         tt = t - 22.25
         ang = 0.32 * (tt - 0.6 * (1 - np.exp(-tt / 0.6))) + 0.4      # eased spin-up
         ca, sa = np.cos(ang), np.sin(ang)
@@ -627,21 +625,19 @@ class Film:
         z = -p[:, 0] * sa + p[:, 2] * ca
         y = p[:, 1] * np.cos(tilt) - z * np.sin(tilt)
         z = p[:, 1] * np.sin(tilt) + z * np.cos(tilt)
-        f = 1 / (1 - 0.22 * z)
+        f = 1 / (1 - 0.12 * z)
         sx = cx + R * x * f
         sy = cy + R * y * f
         depth = (z + 1) / 2
-        # nodes pop in
         order_t = 22.4 + 1.0 * (np.argsort(self.wh_order) / 200.0)
         age = t - order_t
         vis = np.clip(age / 0.12, 0, 1)
-        # edges (dotted, dim), drawn in progressively
         ek = float(ease_out_cubic(prog(t, 22.8, 24.0)))
         if ek > 0:
             e = self.wh_edges
             a, b = e[:, 0], e[:, 1]
             L = np.hypot(sx[b] - sx[a], sy[b] - sy[a])
-            m = np.maximum((L / 7).astype(int), 1)
+            m = np.maximum((L / 8).astype(int), 1)
             tot = int(m.sum())
             seg = np.repeat(np.arange(len(e)), m)
             within = np.arange(tot) - np.repeat(np.cumsum(m) - m, m)
@@ -651,55 +647,49 @@ class Film:
             px = sx[a[seg]] + (sx[b[seg]] - sx[a[seg]]) * u
             py = sy[a[seg]] + (sy[b[seg]] - sy[a[seg]]) * u
             dd = (depth[a[seg]] + depth[b[seg]]) / 2
-            al = (0.06 + 0.22 * dd ** 2) * out * np.minimum(vis[a[seg]], vis[b[seg]])
-            splat(cv, self.small, px, py, np.full(len(px), self.small.index["·"]),
-                  (TEAL * 0.9)[None] * al[:, None])
-        # nodes
-        gl = np.where(depth > 0.62, self.hud.index["●"], np.where(depth > 0.3, self.hud.index["•"], self.hud.index["·"]))
+            al = (0.08 + 0.30 * dd ** 2) * out * np.minimum(vis[a[seg]], vis[b[seg]])
+            splat(cv, self.tiny, px, py, np.full(len(px), self.tiny.index["·"]), (TEAL * 0.95)[None] * al[:, None])
+        nd = self.node
+        gl = np.where(depth > 0.62, nd.index["●"], np.where(depth > 0.3, nd.index["•"], nd.index["·"]))
         big = self.wh_size > 0.86
-        gl = np.where(big & (depth > 0.45), self.hud.index["●"], gl)
+        gl = np.where(big & (depth > 0.45), nd.index["●"], gl)
         col = np.where(self.wh_long[:, None] == 1, MINT[None], RED[None] * 0.95)
-        bri = (0.22 + 0.85 * depth ** 1.4) * vis * out
+        bri = (0.25 + 0.85 * depth ** 1.4) * vis * out
         flash = np.exp(-np.maximum(age, 0) / 0.15) * (age > 0)
         c = col * bri[:, None] + CREAM[None] * (flash * 0.8 * out)[:, None]
-        # beat pings: a front node rings on every beat
         if t >= 23.0:
             bi = int(np.floor(t / BEAT))
             u = (t % BEAT) / BEAT
             front = np.argsort(-depth)[:40]
             node = front[self.wh_ping[bi % 200] % 40]
             c[node] += CREAM * 0.9 * (1 - u) ** 2 * out
-            rr = 6 + 30 * float(ease_out_cubic(u))
-            nn = 24
+            rr = 10 + 44 * float(ease_out_cubic(u))
+            nn = 30
             aa = np.linspace(0, 2 * np.pi, nn, endpoint=False)
-            col_r = (MINT if self.wh_long[node] else RED) * 0.55 * (1 - u) ** 2 * out
-            splat(cv, self.small, sx[node] + rr * np.cos(aa), sy[node] + rr * np.sin(aa),
-                  np.full(nn, self.small.index["·"]), np.tile(col_r, (nn, 1)))
+            col_r = (MINT if self.wh_long[node] else RED) * 0.6 * (1 - u) ** 2 * out
+            splat(cv, self.tiny, sx[node] + rr * np.cos(aa), sy[node] + rr * np.sin(aa),
+                  np.full(nn, self.tiny.index["·"]), np.tile(col_r, (nn, 1)))
         order = np.argsort(depth)
-        splat(cv, self.hud, sx[order], sy[order], gl[order], c[order])
-        # label + L/S bar + legend
-        la = out
+        splat(cv, nd, sx[order], sy[order], gl[order], c[order])
         lab = "200 most profitable traders · L/S 0.42"
-        cols = np.tile(CREAM * 0.86, (len(lab), 1))
-        k = lab.index("L/S")
-        cols[k:] = MINT
+        cols = np.tile(CREAM * 0.92, (len(lab), 1))
+        cols[lab.index("L/S"):] = MINT
         x0 = cx - len(lab) * self.hud.cw // 2
-        self.typed(cv, self.hud, lab, x0, 862, cols, t, 22.7, 0.55, alpha=la)
+        self.typed(cv, self.hud, lab, x0, 884, cols, t, 22.7, 0.55, alpha=out)
         bk = float(ease_out_expo(prog(t, 23.3, 24.1)))
-        nb = int(56 * bk)
+        nb = int(len(lab) * bk)
         if nb > 0:
-            nl = int(round(56 * 59 / 200))
-            xs = x0 + 4 + self.hud.cw * (np.arange(nb) + 0.5) * (len(lab) * self.hud.cw - 8) / (56 * self.hud.cw)
-            cc = np.where((np.arange(nb) < nl)[:, None], MINT[None] * 0.9, RED[None] * 0.8) * la
-            splat(cv, self.hud, xs, np.full(nb, 905.0), np.full(nb, self.hud.index["━"]), cc, subpixel=False)
+            nl = int(round(len(lab) * 59 / 200))
+            xs = x0 + self.hud.cw * (np.arange(nb) + 0.5)
+            cc = np.where((np.arange(nb) < nl)[:, None], MINT[None] * 0.9, RED[None] * 0.85) * out
+            splat(cv, self.hud, xs, np.full(nb, 944.0), np.full(nb, self.hud.index["━"]), cc, subpixel=False)
         lg = fade(t, 23.4, 23.9) * out
         if lg > 0:
-            self.text(cv, self.hud, "●", 1530, 440, MINT * lg)
-            self.text(cv, self.hud, "long", 1530 + 2 * self.hud.cw, 440, CREAM * 0.75 * lg)
-            self.text(cv, self.hud, "●", 1530, 474, RED * lg)
-            self.text(cv, self.hud, "short", 1530 + 2 * self.hud.cw, 474, CREAM * 0.75 * lg)
+            for i, (lab2, cl) in enumerate((("long", MINT), ("short", RED))):
+                yy = 440 + i * 50
+                splat(cv, nd, [1555.0], [yy + 19.0], [nd.index["●"]], [cl * lg])
+                self.text(cv, self.hud, lab2, 1580, yy, CREAM * 0.85 * lg)
 
-    # -------------------------------------------------- (b) flow
     def _build_flow(self, rng):
         n = 9
         self.fl_side = np.array([1, 0, 1, 1, 0, 1, 0, 1, 1])
@@ -718,81 +708,76 @@ class Film:
         self.hud_header(cv, t, 26.1, "02", "FLOW", out)
         hud = self.hud
         x0 = 560
-        # buy / sell pressure bars (segmented, breathing)
         grow = float(ease_out_expo(prog(t, 26.2, 26.9)))
         tt = t - 26.0
-        buy = (0.60 + 0.05 * np.sin(2 * np.pi * tt / 2.0 + 0.4) + 0.015 * np.sin(2 * np.pi * tt / 0.5)) * grow
+        buy = (0.62 + 0.05 * np.sin(2 * np.pi * tt / 2.0 + 0.4) + 0.015 * np.sin(2 * np.pi * tt / 0.5)) * grow
         sell = (0.40 - 0.04 * np.sin(2 * np.pi * tt / 2.0 + 0.4) + 0.012 * np.sin(2 * np.pi * tt / 0.5 + 1)) * grow
-        maxw = 1100
         for row, (lab, v, col) in enumerate((("buy", buy, GREEN), ("sell", sell, RED))):
-            y = 248 + row * 42
-            self.text(cv, hud, lab, x0, y, CREAM * 0.8 * out)
-            n = maxw / hud.cw
+            y = 160 + row * 54
+            self.text(cv, hud, lab, x0, y, CREAM * 0.9 * out)
+            n = 1560 / hud.cw
             m = int(n * v)
             fracp = n * v - m
             xs = x0 + 100 + hud.cw * (np.arange(m + 1) + 0.5)
             a = np.ones(m + 1)
             a[-1] = fracp
-            a *= np.linspace(0.75, 1.0, m + 1)
-            splat(cv, hud, xs, np.full(m + 1, y + 12.0), np.full(m + 1, hud.index["▌"]),
+            a *= np.linspace(0.7, 1.0, m + 1)
+            splat(cv, hud, xs, np.full(m + 1, y + 19.0), np.full(m + 1, hud.index["▌"]),
                   col[None] * 0.85 * a[:, None] * out, subpixel=False)
-        # big orders tape
-        self.typed(cv, hud, "big orders > $100k", x0, 400, CREAM * 0.86, t, 26.35, 0.35, alpha=out)
-        ty = 470
+        self.typed(cv, hud, "big orders > $100k", x0, 312, CREAM * 0.92, t, 26.35, 0.35, alpha=out)
+        ty = 430
         nseg = int((1830 - x0) / hud.cw)
         xs = x0 + hud.cw * (np.arange(nseg) + 0.5)
         splat(cv, hud, xs, np.full(nseg, float(ty)), np.full(nseg, hud.index["─"]),
-              np.tile(DIM * 0.55 * out, (nseg, 1)), subpixel=False)
+              np.tile(DIM * 0.6 * out, (nseg, 1)), subpixel=False)
         beats = [26.5 + 0.5 * i for i in range(9)]
+        nd = self.node
         for i, tb in enumerate(beats):
             if t < tb:
                 continue
             age = t - tb
-            # each new order enters at the right; older ones glide left one slot per beat
             pos_slot = sum(float(ease_out_cubic(prog(t, b, b + 0.3))) for b in beats if tb < b <= t)
-            xb = 1760 - 132 * pos_slot
+            xb = 1770 - 150 * pos_slot
+            if xb < x0 + 20:
+                continue
             side = self.fl_side[i]
             v = self.fl_val[i]
             colb = GREEN if side else RED
-            pop = damped_overshoot(age / 0.3, 0.5)
-            glyph = "●" if v >= 200 else "•"
-            yb = ty - 26 if side else ty + 26
+            glyph = "●"
+            yb = ty - 30 if side else ty + 30
             a = float(smoothstep(age / 0.06)) * out
-            splat(cv, hud, [xb], [yb], [hud.index[glyph]], [colb * a * (1 + 1.5 * np.exp(-age / 0.12))])
+            splat(cv, nd, [xb], [yb], [nd.index[glyph]], [colb * a * (1 + 1.5 * np.exp(-age / 0.12))])
             lbl = f"${v}k"
             self.text(cv, self.small, lbl, round(xb - len(lbl) * self.small.cw / 2),
-                      yb + (-36 if side else 14), (colb * 0.55 + CREAM * 0.25) * a)
-            if pop > 1.02:
-                rr = 8 + 26 * float(ease_out_cubic(age / 0.3))
-                nn = 18
+                      yb + (-52 if side else 22), (colb * 0.6 + CREAM * 0.3) * a)
+            if age < 0.3:
+                rr = 10 + 30 * float(ease_out_cubic(age / 0.3))
+                nn = 20
                 aa = np.linspace(0, 2 * np.pi, nn, endpoint=False)
-                splat(cv, self.small, xb + rr * np.cos(aa), yb + rr * np.sin(aa), np.full(nn, self.small.index["·"]),
-                      np.tile(colb * 0.5 * (1 - age / 0.3) * out, (nn, 1)))
-        # open interest line drawing left -> right
-        self.typed(cv, hud, "open interest", x0, 590, CREAM * 0.86, t, 26.5, 0.3, alpha=out)
-        cx0, cx1, cy0, cy1 = x0, 1830, 890, 660
+                splat(cv, self.tiny, xb + rr * np.cos(aa), yb + rr * np.sin(aa), np.full(nn, self.tiny.index["·"]),
+                      np.tile(colb * 0.6 * (1 - age / 0.3) * out, (nn, 1)))
+        self.typed(cv, hud, "open interest", x0, 548, CREAM * 0.92, t, 26.5, 0.3, alpha=out)
+        cx0, cx1, cy0, cy1 = x0, 1830, 960, 640
         k = float(ease_in_out_cubic(prog(t, 26.6, 29.6)))
         n = len(self.fl_oi)
         m = int(n * k)
         if m > 1:
             xs = cx0 + (cx1 - cx0) * np.arange(m) / (n - 1)
             ys = cy0 + (cy1 - cy0) * (self.fl_oi[:m] - 0.22) / 0.62
-            splat(cv, self.small, xs, ys, np.full(m, self.small.index["•"]), np.tile(MINT * 0.55 * out, (m, 1)))
-            # faint fill below the line (sparse grid of dots)
-            gx = np.arange(cx0, xs[-1], 22.0)
-            for i, xg in enumerate(gx):
+            splat(cv, self.tiny, xs, ys, np.full(m, self.tiny.index["•"]), np.tile(MINT * 0.75 * out, (m, 1)))
+            gx = np.arange(cx0, xs[-1], 20.0)
+            for xg in gx:
                 yl = cy0 + (cy1 - cy0) * (np.interp(xg, xs, self.fl_oi[:m]) - 0.22) / 0.62
-                yy = np.arange(yl + 14, cy0, 18.0)
+                yy = np.arange(yl + 14, cy0, 16.0)
                 if len(yy):
-                    al = 0.20 * out * np.linspace(1, 0.25, len(yy))
-                    splat(cv, self.small, np.full(len(yy), xg), yy, np.full(len(yy), self.small.index["·"]),
+                    al = 0.22 * out * np.linspace(1, 0.25, len(yy))
+                    splat(cv, self.tiny, np.full(len(yy), xg), yy, np.full(len(yy), self.tiny.index["·"]),
                           (TEAL[None] * al[:, None]), subpixel=False)
-            splat(cv, self.hud, [xs[-1]], [ys[-1]], [self.hud.index["●"]], [MINT * 1.2 * out])
+            splat(cv, nd, [xs[-1]], [ys[-1]], [nd.index["●"]], [MINT * 1.2 * out])
         nb = int((cx1 - cx0) / hud.cw)
-        splat(cv, hud, cx0 + hud.cw * (np.arange(nb) + 0.5), np.full(nb, cy0 + 16.0), np.full(nb, hud.index["─"]),
+        splat(cv, hud, cx0 + hud.cw * (np.arange(nb) + 0.5), np.full(nb, cy0 + 18.0), np.full(nb, hud.index["─"]),
               np.tile(DIM * 0.6 * out * fade(t, 26.5, 27.0), (nb, 1)), subpixel=False)
 
-    # -------------------------------------------------- (c) funnel
     def _build_funnel(self, rng):
         n = len(COINS)
         sol = COINS.index("SOL")
@@ -817,23 +802,20 @@ class Film:
             return
         self.hud_header(cv, t, 30.1, "03", "FUNNEL", out)
         hud = self.hud
-        # radar
-        rcx, rcy, rR = 760, 560, 210
+        rcx, rcy, rR = 765, 540, 235
         ra = fade(t, 30.1, 30.6) * out
         beat_i = np.floor((t - 30.0) / BEAT)
         frac = ((t - 30.0) % BEAT) / BEAT
         sweep = (beat_i + float(ease_in_out_sine(frac))) * (np.pi / 2) - np.pi / 2
-        # rings & crosshair
         for rr in (0.36, 0.68, 1.0):
-            nn = int(2 * np.pi * rR * rr / 11)
+            nn = int(2 * np.pi * rR * rr / 10)
             aa = np.linspace(0, 2 * np.pi, nn, endpoint=False)
-            splat(cv, self.small, rcx + rR * rr * np.cos(aa), rcy + rR * rr * np.sin(aa),
-                  np.full(nn, self.small.index["·"]), np.tile(DIM * 0.9 * ra, (nn, 1)))
+            splat(cv, self.tiny, rcx + rR * rr * np.cos(aa), rcy + rR * rr * np.sin(aa),
+                  np.full(nn, self.tiny.index["·"]), np.tile(DIM * 1.4 * ra, (nn, 1)))
         for ang in (0, np.pi / 2):
-            ll = np.linspace(-rR, rR, 2 * int(rR / 14) + 1)
-            splat(cv, self.small, rcx + ll * np.cos(ang), rcy + ll * np.sin(ang), np.full(len(ll), self.small.index["·"]),
-                  np.tile(DIM * 0.55 * ra, (len(ll), 1)))
-        # sweep wedge on the fine grid
+            ll = np.linspace(-rR, rR, 2 * int(rR / 12) + 1)
+            splat(cv, self.tiny, rcx + ll * np.cos(ang), rcy + ll * np.sin(ang), np.full(len(ll), self.tiny.index["·"]),
+                  np.tile(DIM * 0.9 * ra, (len(ll), 1)))
         gx0, gy0 = (rcx - rR) // 6 * 6, (rcy - rR) // 12 * 12
         nr, nc = int(2 * rR / 12) + 2, int(2 * rR / 6) + 2
         gy, gx = np.mgrid[0:nr, 0:nc]
@@ -846,13 +828,11 @@ class Film:
         lvl = np.clip((trail * 5).astype(int), 0, 4)
         chars = self.fine.idx(" .:+*")
         idx = np.where(trail > 0.04, chars[lvl], 0)
-        col = (MINT[None, None] * 0.75 * trail[..., None] + CREAM[None, None] * 0.5 * (trail > 0.93)[..., None]) * ra
+        col = (MINT[None, None] * 0.8 * trail[..., None] + CREAM[None, None] * 0.5 * (trail > 0.93)[..., None]) * ra
         rows, cols_ = np.nonzero(idx)
         compose_sparse(cv, self.fine, rows + gy0 // 12, cols_ + gx0 // 6, idx[rows, cols_], col[rows, cols_])
-        # coin list
-        lx, ly = 1040, 300
-        cw_, rh = 196, 38
-        n = len(COINS)
+        lx, ly = 1080, 150
+        cw_, rh = 190, 54
         stage_t = {1: 31.0, 2: 32.0, 3: 33.0}
         for i, name in enumerate(COINS):
             r, c = i // 4, i % 4
@@ -863,52 +843,49 @@ class Film:
                 continue
             a = float(smoothstep((t - appear) / 0.12)) * out
             st = self.fu_stage[i]
-            col = CREAM * 0.78
+            col = CREAM * 0.95
             dim = 1.0
             if st <= 3:
                 tr = stage_t[st] + self.fu_delay[i] * 0.8
                 if t >= tr:
                     u = t - tr
-                    dim = 0.16 + 0.84 * np.exp(-u / 0.18)
-                    col = lerp(RED * 0.9, CREAM * 0.5, float(smoothstep(u / 0.25)))
-            # survivors brighten as the funnel narrows
-            if st >= 2 and t >= 31.1:
-                col = lerp(col, MINT * 0.95, 0.5 * fade(t, 31.1, 31.4))
+                    dim = 0.24 + 0.76 * np.exp(-u / 0.18)
+                    col = lerp(RED * 1.0, CREAM * 0.62, float(smoothstep(u / 0.3)))
+            if st >= 2 and t >= 31.1 and not (st <= 3 and t >= stage_t[st]):
+                col = lerp(col, MINT * 1.0, 0.45 * fade(t, 31.1, 31.4))
             if i == self.fu_sol and t >= 33.0:
                 g = fade(t, 33.0, 33.25)
-                col = lerp(col, MINT * 1.25, g) + CREAM * 0.8 * np.exp(-(t - 33.0) / 0.2)
+                col = lerp(col, MINT * 1.35, g) + CREAM * 0.9 * np.exp(-(t - 33.0) / 0.2)
             self.text(cv, hud, name, x, y, col * dim * a)
-            # radar blip
             if st >= 2 or t < stage_t[1] + 0.4:
                 bx = rcx + rR * self.fu_rad[i] * np.cos(self.fu_ang[i])
                 by = rcy + rR * self.fu_rad[i] * np.sin(self.fu_ang[i])
                 dd = (sweep - self.fu_ang[i]) % (2 * np.pi)
                 lit = np.exp(-dd / 0.6)
-                ba = (0.25 + 0.9 * lit) * ra * (dim if st <= 3 else 1.0)
-                bcol = MINT if i == self.fu_sol and t >= 33.0 else (TEAL if st >= 2 else DIM * 1.5)
-                splat(cv, self.small, [bx], [by], [self.small.index["•" if st < 4 else "●"]], [bcol * ba])
+                ba = (0.3 + 0.9 * lit) * ra * (dim if st <= 3 else 1.0)
+                sol_on = (i == self.fu_sol and t >= 33.0)
+                bcol = MINT * (1.6 if sol_on else 1.0) if (st >= 2) else DIM * 1.8
+                splat(cv, self.node, [bx], [by], [self.node.index["●" if sol_on else "•"]], [bcol * ba])
         if t >= 33.0:
-            # SOL survivor: bracket glow
             i = self.fu_sol
             r, c = i // 4, i % 4
             x = lx + c * cw_
             y = ly + r * rh
             g = fade(t, 33.0, 33.3) * out
-            self.text(cv, hud, "[", x - 2 * hud.cw, y, MINT * 0.8 * g)
-            self.text(cv, hud, "]", x + 4 * hud.cw, y, MINT * 0.8 * g)
-        # counter: 48 coins → 9 → 3 → 1
+            self.text(cv, hud, "[", x - 2 * hud.cw, y, MINT * 0.95 * g)
+            self.text(cv, hud, "]", x + 4 * hud.cw, y, MINT * 0.95 * g)
         parts = [("48 coins", 30.25), (" → 9", 31.0), (" → 3", 32.0), (" → 1", 33.0)]
         x = lx
-        y = ly + 12 * rh + 40
+        y = ly + 12 * rh + 34
+        at = self.caps2
         for s, ts in parts:
             if t >= ts:
-                age = t - ts
-                cols = np.tile(CREAM * 0.88, (len(s), 1))
+                cols = np.tile(CREAM * 0.95, (len(s), 1))
                 for j, ch in enumerate(s):
                     if ch.isdigit():
-                        cols[j] = MINT
-                self.typed(cv, hud, s, x, y, cols, t, ts, 0.12, alpha=out)
-            x += len(s) * hud.cw
+                        cols[j] = MINT * 1.1
+                self.typed(cv, at, s, x, y, cols, t, ts, 0.12, alpha=out)
+            x += len(s) * at.cw
 
     # ===================================================================================== 5 TRADE
     def _build_candle_atlas(self):
@@ -919,7 +896,9 @@ class Film:
         def mk_body(y0, y1):
             def f(cw, ch, ss):
                 a = np.zeros((ch * ss, cw * ss), np.float32)
-                a[int(y0 * ch * ss / 8):int(y1 * ch * ss / 8), ss * 1:cw * ss - ss * 1] = 1
+                bw = 14 * ss
+                x0 = (cw * ss - bw) // 2
+                a[int(y0 * ch * ss / 8):int(y1 * ch * ss / 8), x0:x0 + bw] = 1
                 return a
             return f
 
@@ -927,7 +906,7 @@ class Film:
             def f(cw, ch, ss):
                 a = np.zeros((ch * ss, cw * ss), np.float32)
                 c = cw * ss // 2
-                a[int(y0 * ch * ss / 8):int(y1 * ch * ss / 8), c - int(0.8 * ss):c + int(0.8 * ss)] = 1
+                a[int(y0 * ch * ss / 8):int(y1 * ch * ss / 8), c - int(1.0 * ss):c + int(1.0 * ss)] = 1
                 return a
             return f
 
@@ -940,16 +919,16 @@ class Film:
                 custom[chr(code)] = mk_wick(y0, y1)
                 self.cwick[(y0, y1)] = chr(code)
                 code += 1
-        self.candle = GlyphAtlas("", 12, 24, 14, custom=custom)
-        self.cline = GlyphAtlas("─╌·", 10, 20, 14, proc="─╌", proc_weight=1.1)
+        self.candle = GlyphAtlas("", 22, 24, 14, custom=custom)
+        self.cline = GlyphAtlas("─╌·", 10, 20, 14, proc="─╌", proc_weight=1.3)
 
     def _build_chart(self, rng):
-        self.ch_x0, self.ch_y0 = 144, 120               # grid origin (multiple of the 12x24 cell)
-        self.ch_pitch = 24
-        self.p_lo, self.p_hi = 96.8, 107.2
-        self.y_lo, self.y_hi = 930.0, 150.0
+        self.ch_x0, self.ch_y0 = 140, 96               # grid origin of the 22x24 candle cells
+        self.ch_pitch = 22
+        self.p_lo, self.p_hi = 97.3, 106.7
+        self.y_lo, self.y_hi = 990.0, 96.0
+        self.lab_x = 1458
         self.entry, self.sl, self.tp = 99.61, 99.61 * (1 - 0.015), 99.61 * (1 + 0.062)
-        # history candles (32) ending at the entry
         n = 32
         base = np.concatenate([np.linspace(101.6, 100.4, 8), np.linspace(100.4, 98.95, 10),
                                np.linspace(98.95, 100.9, 8), np.linspace(100.9, 99.70, 6)])
@@ -962,7 +941,6 @@ class Film:
         lows = np.maximum(lows, 98.80)
         lows[17] = 98.82                                 # the 4H structure low (SL sits beyond it)
         self.hist = np.stack([opens, highs, lows, closes], 1)
-        # live price path 36 -> 44 (keyframes + smooth noise), touches TP exactly at 44.0
         kt = np.array([36.0, 36.6, 37.3, 38.0, 38.7, 39.4, 40.0, 40.6, 41.2, 41.7, 42.0, 42.5, 43.0, 43.5, 44.0])
         kp = np.array([99.61, 99.98, 99.72, 100.18, 99.83, 99.58, 99.32, 98.88, 98.57, 98.36, 98.47, 99.45,
                        101.05, 103.35, self.tp])
@@ -1029,12 +1007,11 @@ class Film:
             a = alpha_fn(slot)
             if a <= 0.003:
                 continue
-            gc = (self.ch_x0 + slot * self.ch_pitch) // cw - self.ch_x0 // cw
             up = c >= o
-            colr = (GREEN * 0.92 if up else RED * 0.92) * a * dim
+            colr = (GREEN * 0.95 if up else RED * 0.95) * a * dim
             yb0, yb1 = sorted((float(self.price_y(o)), float(self.price_y(c))))
-            if yb1 - yb0 < 2.5:
-                yb1 = yb0 + 2.5
+            if yb1 - yb0 < 3.0:
+                yb1 = yb0 + 3.0
             yw0, yw1 = float(self.price_y(h)), float(self.price_y(l))
             cells = {}
             for (y0, y1, kind) in ((yw0, yw1, "w"), (yb0, yb1, "b")):
@@ -1047,13 +1024,12 @@ class Film:
                     g = (self.cbody if kind == "b" else self.cwick)[(e0, e1)]
                     cells[r] = self.candle.index[g]        # body (drawn second) wins over the wick
             for r, gi in cells.items():
-                rows.append(r + self.ch_y0 // ch)
-                cols.append(gc + self.ch_x0 // cw)
+                rows.append(r)
+                cols.append(slot)
                 idx.append(gi)
                 col.append(colr)
         if rows:
-            # body and wick can share a cell: the body glyph wins (it covers the wick's middle)
-            compose_sparse(cv, self.candle, rows, cols, np.array(idx), np.array(col))
+            compose_sparse(cv, self.candle, rows, cols, np.array(idx), np.array(col), self.ch_x0, self.ch_y0)
 
     def hline(self, cv, y, x0, x1, col, glyph="─", k=1.0):
         at = self.cline
@@ -1067,7 +1043,6 @@ class Film:
         if t < 33.95 or t >= 46.4:
             return
         out = 1 - float(smoothstep(prog(t, 46.0, 46.35)))
-        # tension 40-42: everything dims, heartbeat on the half-time kick
         tens = fade(t, 40.0, 40.35, 42.0, 42.5)
         hb = 0.0
         for tb in (40.0, 41.0):
@@ -1076,32 +1051,28 @@ class Film:
                 if d >= 0:
                     hb += amp * np.exp(-d / 0.11)
         hb *= tens
-        post_hit = float(smoothstep(prog(t, 44.15, 44.6)))
-        dim_all = (1 - 0.6 * tens) * (1 - 0.78 * post_hit) * out
-        x_right = self.ch_x0 + (32 + self.n_live) * self.ch_pitch + 30
-        # grid + price labels
+        post_hit = float(smoothstep(prog(t, 44.08, 44.45)))
+        dim_all = (1 - 0.6 * tens) * (1 - 0.8 * post_hit) * out
+        x_right = self.ch_x0 + (32 + self.n_live) * self.ch_pitch + 12
         ga = fade(t, 34.0, 34.6) * dim_all
-        for p in range(97, 108):
+        for p in range(98, 107):
             y = float(self.price_y(p))
             k = float(ease_out_expo(prog(t, 34.0 + 0.03 * (p - 97), 34.8 + 0.03 * (p - 97))))
             n = int((x_right - self.ch_x0) * k / 16)
             if n > 0:
                 xs = self.ch_x0 + 16 * np.arange(n) + 8
-                splat(cv, self.small, xs, np.full(n, y), np.full(n, self.small.index["·"]),
-                      np.tile(DIM * 0.55 * ga, (n, 1)), subpixel=False)
-            self.text(cv, self.small, f"{p:.2f}", 52, round(y - 9), DIM * 1.3 * ga)
-        # history candles draw left -> right 34.1 - 35.9
+                splat(cv, self.tiny, xs, np.full(n, y), np.full(n, self.tiny.index["·"]),
+                      np.tile(DIM * 0.9 * ga, (n, 1)), subpixel=False)
+            self.text(cv, self.small, f"{p:.2f}", 36, round(y - 14), DIM * 1.7 * ga)
         rx = 32 * float(ease_in_out_cubic(prog(t, 34.1, 35.9)))
 
         def hist_alpha(slot):
             return float(np.clip(rx - slot, 0, 1))
 
-        self.draw_candles(cv, self.hist, 0, hist_alpha, dim=dim_all * (0.78 if t >= 36 else 1.0))
+        self.draw_candles(cv, self.hist, 0, hist_alpha, dim=dim_all * (0.8 if t >= 36 else 1.0))
         live = self.live_candles(t) if t >= 36.0 else []
-        live_dim = (1 - 0.25 * tens) * (1 - 0.7 * post_hit) * out
+        live_dim = (1 - 0.25 * tens) * (1 - 0.75 * post_hit) * out
         self.draw_candles(cv, live, 32, lambda s: 1.0, dim=live_dim)
-        # setup lines lock at 36.0
-        lab_x = 1828
         specs = [(self.entry, BLUE, "─", "ENTRY 99.61 · post-only", 36.0),
                  (self.sl, RED, "╌", "SL −1.50%", 36.08),
                  (self.tp, GREEN, "╌", "TP +6.2% · net 1:3.4", 36.16)]
@@ -1111,10 +1082,8 @@ class Film:
             y = float(self.price_y(p))
             k = float(ease_out_expo(prog(t, t0, t0 + 0.45)))
             lock = np.exp(-(t - t0) / 0.2)
-            gain = 1.0
             if colr is RED:
-                gain = (1 - 0.6 * tens) + 1.0 * tens + 1.6 * hb
-                gain *= (1 - 0.6 * post_hit)
+                gain = ((1 - 0.6 * tens) + 1.0 * tens + 1.6 * hb) * (1 - 0.6 * post_hit)
             elif colr is GREEN:
                 gain = (1 - 0.6 * tens) * (1 + 0.8 * float(smoothstep(prog(t, 42.0, 44.0))))
                 if t >= 44.0:
@@ -1122,65 +1091,60 @@ class Film:
                 gain *= (1 - 0.45 * post_hit)
             else:
                 gain = (1 - 0.6 * tens) * (1 - 0.6 * post_hit)
-            c = colr * 0.7 * gain * out + CREAM * 0.6 * lock * out
-            x_from = self.ch_x0
-            self.hline(cv, y, x_from, lab_x, c, g, k)
-            # label right-aligned above the line
-            lw = len(lab) * self.hud.cw
-            cols = np.tile(colr * 0.95, (len(lab), 1))
-            cols[len(lab.split()[0]):] = CREAM * 0.8
-            self.typed(cv, self.hud, lab, lab_x - lw, round(y) - 30, cols * gain, t, t0 + 0.12, 0.3,
+            c = colr * 0.75 * gain * out + CREAM * 0.6 * lock * out
+            self.hline(cv, y, self.ch_x0, self.lab_x - 14, c, g, k)
+            cols = np.tile(colr * 1.0, (len(lab), 1))
+            cols[len(lab.split()[0]):] = CREAM * 0.88
+            self.typed(cv, self.hud, lab, self.lab_x, round(y) - 19, cols * gain, t, t0 + 0.12, 0.3,
                        flash=colr, alpha=out)
         if t >= 36.0:
             ye = float(self.price_y(self.entry))
-            xe = self.ch_x0 + 32 * self.ch_pitch + 5
+            xe = self.ch_x0 + 32 * self.ch_pitch + self.ch_pitch / 2
             pop = damped_overshoot((t - 36.0) / 0.3, 0.6)
             a = (1 - 0.6 * tens) * (1 - 0.6 * post_hit) * out
             splat(cv, self.hud, [xe], [ye], [self.hud.index["◆"]], [BLUE * a * pop])
-        # live price tag following the head
         if live:
             k = len(live) - 1
             pnow = live[-1][3] if t < 44.0 else self.tp
             y = float(self.price_y(pnow))
-            x = self.ch_x0 + (32 + k) * self.ch_pitch + 22
-            above = pnow >= self.entry
-            colr = GREEN if above else RED
-            ta = out * (1 - 0.5 * post_hit)
-            self.text(cv, self.hud, "◀", x, round(y - 12), colr * ta)
-            self.text(cv, self.hud, f"{pnow:.2f}", x + 14, round(y - 12), CREAM * 0.92 * ta)
-        # red heartbeat glow at the frame edges
+            x = self.ch_x0 + (32 + k) * self.ch_pitch + self.ch_pitch + 6
+            colr = GREEN if pnow >= self.entry else RED
+            ta = out * (1 - float(smoothstep(prog(t, 43.7, 44.0))))
+            if ta > 0.01:
+                self.text(cv, self.hud, "◀", x, round(y - 19), colr * ta)
+                self.text(cv, self.hud, f"{pnow:.2f}", x + 22, round(y - 19), CREAM * 0.95 * ta)
         if hb > 0.01:
             cv += self.edge_glow * (RED * 0.10 * hb)[None, None, :]
-        # 44.0: TP touched -> shockwave, +3.4R, fill line
         if t >= 44.0:
-            ox = self.ch_x0 + (32 + self.n_live - 1) * self.ch_pitch + 5
+            ox = self.ch_x0 + (32 + self.n_live - 1) * self.ch_pitch + self.ch_pitch / 2
             oy = float(self.price_y(self.tp))
-            self.shockwave(cv, t, 44.0, ox, oy, out)
-            items, width = self.r34["items"], self.r34["width"]
+            self.shockwave(cv, t, 44.0, 960, 440, out, rmax=430)
+            self.shockwave(cv, t, 44.0, ox, oy, out, rmax=150, dur=0.7, amp=0.7)
+            width = self.r34["width"]
             bx = W // 2 - width * self.block.cw // 2
-            self.draw_block_word(cv, self.r34, bx, 262, [44.0] * 5, t, alpha=out, amp=0.42)
+            self.draw_block_word(cv, self.r34, bx, 268, [44.0] * 5, t, alpha=out, amp=0.42, boost_decay=0.035)
             s = "TP filled · on-exchange · isolated"
-            cols = np.tile(CREAM * 0.86, (len(s), 1))
+            cols = np.tile(CREAM * 0.9, (len(s), 1))
             cols[:9] = GREEN
             x = W // 2 - len(s) * self.tpat.cw // 2
-            self.typed(cv, self.tpat, s, x, 628, cols, t, 44.5, 0.5, alpha=out)
+            self.typed(cv, self.tpat, s, x, 640, cols, t, 44.5, 0.5, alpha=out)
 
-    def shockwave(self, cv, t, t0, ox, oy, out=1.0):
-        u = (t - t0) / 1.5
-        if u >= 1:
+    def shockwave(self, cv, t, t0, ox, oy, out=1.0, rmax=430, dur=1.3, amp=1.0):
+        u = (t - t0) / dur
+        if u >= 1 or u < 0:
             return
         d = np.hypot(self.gcx - ox, self.gcy - oy)
         total = np.zeros_like(d)
         colw = np.zeros(d.shape + (3,), np.float32)
-        for delay, amp, wid, col in ((0.0, 1.0, 1.0, MINT), (0.10, 0.55, 0.6, GREEN)):
-            uu = (t - t0 - delay) / 1.5
+        for delay, a0, wid, col in ((0.0, 1.0, 1.0, MINT), (0.09, 0.55, 0.6, GREEN)):
+            uu = (t - t0 - delay) / dur
             if uu <= 0 or uu >= 1:
                 continue
-            r = 2300 * float(ease_out_cubic(uu)) ** 0.9
-            w = (14 + 120 * uu) * wid
-            ring = np.exp(-((d - r) / w) ** 2) * (d < r + 2 * w) * amp * (1 - uu) ** 1.6
-            # bright leading edge
-            lead = np.exp(-((d - r - w * 0.6) / (w * 0.35)) ** 2) * amp * (1 - uu) ** 1.2
+            r = rmax * float(ease_out_cubic(uu))
+            w = (8 + 0.12 * rmax * uu) * wid
+            fadek = (1 - uu) ** 1.8 * a0 * amp
+            ring = np.exp(-((d - r) / w) ** 2) * fadek
+            lead = np.exp(-((d - r - w * 0.6) / (w * 0.35)) ** 2) * fadek
             total += ring
             colw += col[None, None] * ring[..., None] + CREAM[None, None] * 0.7 * lead[..., None]
         m = total > 0.03
@@ -1201,24 +1165,21 @@ class Film:
         at = self.check
         n_max = max(len(s) for s in CHECKS) + 3
         x0 = (W - n_max * at.cw) // 2
-        y0 = 300
-        lh = 60
+        lh = 70
+        y0 = (H - (6 * lh + 40 + self.statement.ch)) // 2
         for i, s in enumerate(CHECKS):
             tb = 46.5 + 0.5 * i
             if t < tb - 0.02:
                 continue
             age = t - tb
             y = y0 + i * lh
-            # ✓ pops
             sc = damped_overshoot(age / 0.32, amp=0.7, freq=10, damp=9)
             a = float(smoothstep(age / 0.04)) * out
             tile = self.checkbig.tiles[self.checkbig.index["✓"]]
             img = tile[..., None] * (GREEN * (1 + 1.4 * np.exp(-age / 0.12)) + CREAM * 0.6 * np.exp(-age / 0.08))[None, None]
-            s2 = sc * 0.62
-            im2 = resize_layer(img, s2, Image.BILINEAR)
+            im2 = resize_layer(img, sc * 0.6, Image.BILINEAR)
             cx, cy = x0 + at.cw * 0.5 + 4, y + at.ch * 0.55
             add_layer(cv, im2, cx - im2.shape[1] / 2, cy - im2.shape[0] / 2, a)
-            # text reveals left -> right with a soft per-char fade and slide
             n = len(s)
             ci = np.arange(n)
             ta = np.clip((age - 0.05 - ci * 0.006) / 0.12, 0, 1)
@@ -1226,23 +1187,20 @@ class Film:
             if vis.any():
                 xs = x0 + at.cw * (3 + ci + 0.5) + 8 * (1 - ta) ** 2
                 ys = np.full(n, y + at.ch * 0.5)
-                cols = (CREAM * 0.84)[None] * ta[:, None] * out
+                cols = (CREAM * 0.9)[None] * ta[:, None] * out
                 gi = at.idx(s)
                 keep = vis & (gi != 0)
                 splat(cv, at, xs[keep], ys[keep], gi[keep], cols[keep])
-        # 50.5 statement, tracking in
         if t >= 50.5:
             st = self.statement
             age = t - 50.5
             a = float(smoothstep(age / 0.6)) * out
-            trk = st.cw + 7 * (1 - float(ease_out_expo(age / 1.0)))
+            trk = st.cw + 8 * (1 - float(ease_out_expo(age / 1.0)))
             n = len(STATEMENT)
-            cx = W / 2
-            xs = cx + (np.arange(n) - (n - 1) / 2) * trk
-            ys = np.full(n, y0 + 6 * lh + 92.0)
-            cols = np.tile(CREAM * 0.95, (n, 1))
-            k = STATEMENT.index("by design.")
-            cols[k:] = MINT * 1.0
+            xs = W / 2 + (np.arange(n) - (n - 1) / 2) * trk
+            ys = np.full(n, y0 + 6 * lh + 40 + st.ch / 2)
+            cols = np.tile(CREAM * 1.0, (n, 1))
+            cols[STATEMENT.index("by design."):] = MINT * 1.05
             gi = st.idx(STATEMENT)
             keep = gi != 0
             splat(cv, st, xs[keep], ys[keep], gi[keep], cols[keep] * a)
@@ -1252,10 +1210,10 @@ class Film:
         fp = self.final
         self.f_face = fp.to_layer(372, 300)
         self.f_x = W / 2 - self.f_face[0]
-        self.f_y = 452 - self.f_face[1]
-        # fade the body out below the face so the titles sit on darkness
+        self.f_y = 384 - self.f_face[1]
+        # fade the body out below the face so the titles sit on clean darkness
         ys = self.f_y + (np.arange(fp.R) + 0.5) * fp.ch
-        fade_rows = (1 - smoothstep((ys - 560) / 230.0))[:, None]
+        fade_rows = (1 - smoothstep((ys - 505) / 200.0))[:, None]
         fp.light = (fp.light * fade_rows).astype(np.float32)
         self.final_glow = {m: glow_underlay(fp, getattr(fp, f"tint_{m}"), blur=5) for m in ("open", "half", "closed")}
         gy, gx = np.mgrid[0:fp.R, 0:fp.C].astype(np.float32)
@@ -1264,14 +1222,12 @@ class Film:
         d = np.hypot(cx - self.f_face[0], (cy - self.f_face[1]) * 0.9)
         dn = d / d.max()
         self.f_lock = (52.0 + 0.95 * dn ** 0.85 + 0.06 * hash01(gy.astype(int), gx.astype(int), 11)).astype(np.float32)
-        # dissolve: release times (outside first, the face last) and drift params
         self.f_rel = (58.0 + 0.95 * (1 - dn) ** 1.2 + 0.28 * hash01(gy.astype(int), gx.astype(int), 12)).astype(np.float32)
         ang = np.arctan2(cy - self.f_face[1], cx - self.f_face[0])
         self.f_vx = (np.cos(ang) * rng.uniform(20, 70, dn.shape) + rng.normal(0, 14, dn.shape)).astype(np.float32)
         self.f_vy = (np.sin(ang) * rng.uniform(10, 40, dn.shape) - rng.uniform(20, 60, dn.shape)).astype(np.float32)
         self.f_ph = rng.uniform(0, 2 * np.pi, dn.shape).astype(np.float32)
         self.f_cx, self.f_cy = cx, cy
-        # edge glow mask (heartbeat)
         yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
         nx = (xx - W / 2) / (W / 2)
         ny = (yy - H / 2) / (H / 2)
@@ -1361,11 +1317,11 @@ class Film:
             at = self.title
             age = t - 53.0
             a = float(smoothstep(age / 0.7))
-            trk = at.cw + 26 * (1 - float(ease_out_expo(age / 1.4)))
+            trk = at.cw + 30 * (1 - float(ease_out_expo(age / 1.4)))
             n = 4
             xs = W / 2 + (np.arange(n) - (n - 1) / 2) * trk
             cols = np.tile(CREAM * 1.0 * a, (n, 1)) * (1 + 0.6 * np.exp(-age / 0.3))
-            chars_dissolve(at, "HEVI", xs, 742, cols, 1)
+            chars_dissolve(at, "HEVI", xs, 704, cols, 1)
         if t >= 54.0:
             at = self.tag
             n = len(TAGLINE)
@@ -1373,17 +1329,17 @@ class Film:
             ta = np.clip((t - 54.0 - ci * 0.018) / 0.35, 0, 1)
             xs = W / 2 + (ci - (n - 1) / 2) * at.cw
             cols = (CREAM * 0.92)[None] * ta[:, None]
-            chars_dissolve(at, TAGLINE, xs, 858, cols, 2)
+            chars_dissolve(at, TAGLINE, xs, 836, cols, 2)
         if t >= 56.0:
             at = self.url
             n = len(URL_LINE)
             a = float(smoothstep((t - 56.0) / 0.6))
             ci = np.arange(n)
             xs = W / 2 + (ci - (n - 1) / 2) * at.cw
-            cols = np.tile(CREAM * 0.55, (n, 1))
+            cols = np.tile(CREAM * 0.72, (n, 1))
             k = URL_LINE.index("hevi-record")
-            cols[k:] = TEAL * 0.9
-            chars_dissolve(at, URL_LINE, xs, 990, cols * a, 3)
+            cols[k:] = MINT * 0.95
+            chars_dissolve(at, URL_LINE, xs, 930, cols * a, 3)
 
     # ===================================================================================== frame
     def content(self, t):
@@ -1438,7 +1394,7 @@ class Film:
             ca = 7.0 * np.exp(-(t - 14.0) / 0.12)
         if 44.0 <= t < 44.7:
             ca = 6.0 * np.exp(-(t - 44.0) / 0.14)
-            bloom += 1.1 * np.exp(-(t - 44.0) / 0.35)
+            bloom += 1.0 * np.exp(-(t - 44.0) / 0.05)
         if 52.0 <= t:
             bloom = 1.05 + 0.25 * fade(t, 52.0, 54.0)
         # tension: global exposure breathes down
