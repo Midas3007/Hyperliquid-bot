@@ -176,10 +176,21 @@ async function scan(size: bigint): Promise<Opp[]> {
 }
 
 let lastSkipped = false
-async function execute(o: Opp): Promise<number | null> {
+// First-leg tolerance (Telegram /tight_on|off, on unless switched off): the first swap may slip only as far as still
+// leaves the minimum edge, instead of a flat 0.3%. A first leg that would eat the profit is refused, nothing bought.
+async function firstLegMin(o: Opp, minEdgeUsd: number) {
+  const loose = withSlippage(o.mid)
+  if ((await botSettings()).tight_slip === false) return loose
+  const size = o.size, edge = parseUnits(Math.max(0, o.edge).toFixed(6), 6), need = parseUnits(Math.max(0, minEdgeUsd).toFixed(6), 6)
+  const tight = (o.mid * (size + need)) / (size + edge) // the first leg's output that still ends at size + minimum edge
+  return tight > loose ? tight : loose
+}
+
+async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
   const X = o.X
+  const firstMin = await firstLegMin(o, minEdgeUsd)
   if (o.route === 'uni->textile') {
-    const { hash: tx1, out: got } = await uniSwap('USDT', X, o.size, o.uniFee, withSlippage(o.mid))
+    const { hash: tx1, out: got } = await uniSwap('USDT', X, o.size, o.uniFee, firstMin)
     // Sell on Textile only if the firm quote still breaks even; otherwise hold it for flatten().
     const r = await textileSwap(X, 'USDT', got, o.size)
     const filled = r.status === 'filled'
@@ -189,7 +200,7 @@ async function execute(o: Opp): Promise<number | null> {
     return pnl
   }
   const skip = await skipReserved()
-  const r = await textileSwap('USDT', X, o.size, withSlippage(o.mid), { skipIfReserved: skip })
+  const r = await textileSwap('USDT', X, o.size, firstMin, { skipIfReserved: skip })
   if (r.status === 'reserved') {
     textileHold = { amount: 2n ** 128n, until: Date.now() + r.retryAfterMs } // nothing fits until Textile lets go
     recordSkip()
@@ -201,6 +212,13 @@ async function execute(o: Opp): Promise<number | null> {
   if (r.status !== 'filled') { log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), leg1: r.status, pnl: null }); return null }
   textileHold = { amount: o.size, until: Date.now() + TEXTILE_HOLD_MS }
   const q = await uniQuote(X, 'USDT', r.received)
+  // If Uniswap's price collapsed since the scan (e.g. the pool's USDT side drained), don't dump: hold for flatten().
+  // (From Mel's kiyoshi, d81b1bf.)
+  if (q && shouldHold(q.out, o.size, 0, MAX_FLATTEN_LOSS_BPS, MAX_HOLD_MS)) {
+    pending.set(X, { costUsdt: o.size, since: Date.now() })
+    log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, textileUsd: usd(o.size), leg2: 'uniswap_price_collapsed', pnl: null })
+    return null
+  }
   if (!q) {
     pending.set(X, { costUsdt: o.size, since: Date.now() })
     log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, textileUsd: usd(o.size), leg2: 'no_uniswap_quote', pnl: null })
@@ -263,7 +281,7 @@ async function cycle() {
   console.log(`  >> ${LIVE ? 'TRADING' : 'would trade'}: ${best.X} ${best.route} at $${usd(best.size).toFixed(2)}, expected +$${best.edge.toFixed(4)}`)
   if (LIVE) {
     lastSkipped = false
-    const pnl = await execute(best)
+    const pnl = await execute(best, minEdge(usd(best.size)))
     chase = pnl !== null && pnl > 0 ? { X: best.X, route: best.route } : null
     if (chase) console.log(`  chasing ${best.X} ${best.route}, next check in ${CHASE_MS / 1000}s`)
     console.log(`  result: ${pnl === null ? (lastSkipped ? 'skipped (nothing bought)' : 'incomplete (leftover held and managed by flatten)') : (pnl >= 0 ? '+' : '') + pnl.toFixed(4) + ' USDT'}`)

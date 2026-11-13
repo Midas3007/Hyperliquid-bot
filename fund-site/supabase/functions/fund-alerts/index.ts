@@ -47,6 +47,7 @@ const COMMANDS = [
   { command: 'skipwait', description: 'Skipping trades Textile makes wait for: on/off' },
   { command: 'smart', description: 'Smart sizing by time of day: on/off' },
   { command: 'schedule', description: 'The smart sizing schedule for the week' },
+  { command: 'tight', description: 'Tight first-leg tolerance: on/off' },
   { command: 'help', description: 'What this bot does' },
 ]
 const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, or the fund is paused. After each daily settlement you get a summary.
@@ -60,6 +61,7 @@ Commands (nothing here moves money):
 /skipwait: is the bot skipping trades Textile makes wait for? /skipwait_off and /skipwait_on switch it
 /smart: is smart sizing on? It sets the max trade and minimum edge by time of day. /smart_on and /smart_off switch it
 /schedule: the smart sizing schedule for the week
+/tight: is the tight first-leg tolerance on? /tight_on and /tight_off switch it
 /help: this message
 
 Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
@@ -166,6 +168,7 @@ Deno.serve(async (req) => {
       : cmd === '/skipwait_on' || cmd === '/skipwait_off' ? await setSkip(cmd === '/skipwait_on')
       : cmd === '/smart' ? await smartText() : cmd === '/schedule' ? await scheduleText()
       : cmd === '/smart_on' || cmd === '/smart_off' ? await setSmart(cmd === '/smart_on')
+      : cmd === '/tight' ? await tightText() : cmd === '/tight_on' || cmd === '/tight_off' ? await setTight(cmd === '/tight_on')
       : cmd === '/dashboard' || cmd === '/menu' ? 'Command dashboard. Tap a button; the switches show their current state. Nothing here moves money.'
       : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
   }
@@ -173,7 +176,7 @@ Deno.serve(async (req) => {
   // The dashboard's buttons. Switch labels show the current state; tapping one flips it.
   async function dashboardKeys() {
     const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
-    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true
+    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true, tight = st?.tight_slip !== false
     const b = (text: string, data: string) => ({ text, callback_data: data })
     return { inline_keyboard: [
       [b('Status', '/status'), b('Today', '/today')],
@@ -181,6 +184,7 @@ Deno.serve(async (req) => {
       [b(`Smart sizing: ${smart ? 'ON' : 'OFF'} (tap to turn ${smart ? 'off' : 'on'})`, smart ? '/smart_off' : '/smart_on')],
       [b('Smart sizing now', '/smart'), b('Weekly schedule', '/schedule')],
       [b(`Skip waits: ${skip ? 'ON' : 'OFF'} (tap to turn ${skip ? 'off' : 'on'})`, skip ? '/skipwait_off' : '/skipwait_on')],
+      [b(`Tight first leg: ${tight ? 'ON' : 'OFF'} (tap to turn ${tight ? 'off' : 'on'})`, tight ? '/tight_off' : '/tight_on')],
       [{ text: 'Open the site', url: SITE }, b('Help', '/help')],
     ] }
   }
@@ -203,6 +207,16 @@ Deno.serve(async (req) => {
   async function scheduleText() {
     const [{ data: st }, { data: hb }] = await Promise.all([db.from('bot_settings').select('smart_sizing').eq('id', 1).single(), db.from('bot_heartbeat').select('smart_schedule').eq('id', 1).single()])
     return `Smart sizing schedule, Lagos time (${st?.smart_sizing === true ? 'ON' : 'OFF'}):\n${hb?.smart_schedule ?? 'The bot has not sent its schedule yet; it does within 5 minutes of its next start.'}\nA trade never uses more than 90% of the bot's USDT, so a bigger peak size only applies when the cash is there.`
+  }
+
+  async function tightText() {
+    const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
+    const on = st?.tight_slip !== false
+    return `Tight first-leg tolerance: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.tight_updated_at)})\n${on ? "The first swap may slip only as far as still leaves the minimum edge; a trade whose first leg would eat the profit is not started." : 'The first swap may fill up to 0.3% worse than scanned (the old rule).'}\n${on ? '/tight_off to go back' : '/tight_on to turn it on'}`
+  }
+  async function setTight(on: boolean) {
+    await db.from('bot_settings').update({ tight_slip: on, tight_updated_at: new Date().toISOString() }).eq('id', 1)
+    return `Done: tight first-leg tolerance is now ${on ? 'ON' : 'OFF'}. The bot picks this up within 2 minutes.`
   }
 
   async function skipText() {
