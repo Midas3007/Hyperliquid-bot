@@ -372,7 +372,11 @@ class Engine:
 
     def strategy_label(self) -> str:
         cur = self.store.get("strategy", self.P.strategy.default)
-        return cur if cur != "multi" else f"multi (now {self._strategy_now})"
+        if cur != "multi":
+            return cur
+        if self._strategy_now in ("swing", "day"):
+            return f"multi (now {self._strategy_now})"
+        return "multi (picks swing or day at each scan)"  # no scan since the last restart
 
     def set_strategy(self, name: str) -> str:
         opts = {

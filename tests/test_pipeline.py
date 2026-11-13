@@ -526,3 +526,12 @@ def test_track_record_payload_and_publisher(eng, clock):
     clock[0] += 7200
     assert pub.maybe_push(eng, now=4000.0)              # changed
     assert not Publisher("", "x").enabled and not Publisher("https://x", "").maybe_push(eng)
+
+
+def test_strategy_label_before_and_after_the_first_scan(eng):
+    eng.store.set("strategy", "multi")
+    assert eng.strategy_label() == "multi (picks swing or day at each scan)"
+    eng.start(None)
+    assert eng.strategy_label() in ("multi (now swing)", "multi (now day)")
+    eng.store.set("strategy", "day")
+    assert eng.strategy_label() == "day"
