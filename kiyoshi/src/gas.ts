@@ -82,3 +82,49 @@ export async function gasTopUp(opts: { canTrade: boolean }): Promise<string | nu
     return `gas: top-up not done: ${gasState.lastError}`
   }
 }
+
+// ---------- the keeper's gas ----------
+// The keeper (the vault's operator wallet) posts the fund value and settles; it burns about 6.8 CELO a month. When it is
+// down to 10 days, the bot buys about a month of CELO with $0.55 of USDT and has it sent straight to the keeper.
+// The keeper's address is read from the vault on the chain (never from a database), at most once every 15 days.
+// The USDT spent is a small router swap, so the treasury books it as gas, like the bot's own top-ups.
+const VAULT: Address = '0xd4845c6fe467845dcba2997191127d68ece4f1c4'
+const KEEPER_LOW = parseEther('2.27') // about 10 days at 6.8 CELO a month
+const KEEPER_SPEND = parseUnits('0.55', 6)
+const KEEPER_EVERY_MS = 15 * 86_400_000
+const KEEPER_CHECK_MS = 60 * 60_000
+let keeperCheckedAt = 0
+export const keeperState: { celo: number | null; lastTopUp: TopUp | null; lastError: string | null } = { celo: null, lastTopUp: null, lastError: null }
+
+export async function keeperTopUp(opts: { canTrade: boolean }): Promise<string | null> {
+  if (Date.now() - keeperCheckedAt < KEEPER_CHECK_MS) return null
+  keeperCheckedAt = Date.now()
+  try {
+    const keeper = await pub.readContract({ address: VAULT, abi: parseAbi(['function operator() view returns (address)']), functionName: 'operator' })
+    const bal = await pub.getBalance({ address: keeper })
+    keeperState.celo = Number(formatEther(bal))
+    const last = keeperState.lastTopUp ? Date.parse(keeperState.lastTopUp.at) : 0
+    if (bal >= KEEPER_LOW || !opts.canTrade || Date.now() - last < KEEPER_EVERY_MS) return null
+    const cash = await pub.readContract({ address: TOKENS.USDT.address, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] })
+    if (cash < KEEPER_SPEND) throw new Error('not enough USDT')
+    const route = await bestPath(KEEPER_SPEND)
+    if (!route) throw new Error('no Uniswap route from USDT to CELO')
+    const f = await pub.readContract({ address: UNI.ROUTER, abi: routerAbi, functionName: 'factory' })
+    if (f.toLowerCase() !== UNI.FACTORY.toLowerCase()) throw new Error('router factory mismatch, refusing to swap')
+    await ensureAllowance(TOKENS.USDT.address, UNI.ROUTER, KEEPER_SPEND)
+    keeperState.lastTopUp = { at: new Date().toISOString(), usdt: 0.55, celo: 0, tx: '0x' as Hex } // set first: never retried within 15 days
+    const receipt = await sendTaggedReceipt({
+      to: UNI.ROUTER,
+      data: encodeFunctionData({ abi: routerAbi, functionName: 'exactInput', args: [{ path: route.path, recipient: keeper, amountIn: KEEPER_SPEND, amountOutMinimum: (route.out * (10_000n - SLIPPAGE_BPS)) / 10_000n }] }),
+    })
+    const got = parseEventLogs({ abi: erc20Abi, logs: receipt.logs, eventName: 'Transfer' })
+      .filter((l) => l.address.toLowerCase() === CELO.toLowerCase() && l.args.to.toLowerCase() === keeper.toLowerCase())
+      .reduce((s, l) => s + l.args.value, 0n)
+    keeperState.lastTopUp = { at: keeperState.lastTopUp.at, usdt: 0.55, celo: Number(formatEther(got)), tx: receipt.transactionHash }
+    keeperState.lastError = null
+    return `keeper gas: sent ${keeperState.lastTopUp.celo.toFixed(2)} CELO to the keeper ${keeper} for $0.55 (${receipt.transactionHash})`
+  } catch (e: any) {
+    keeperState.lastError = String(e.shortMessage ?? e.message).split('\n')[0]
+    return `keeper gas: top-up not done: ${keeperState.lastError}`
+  }
+}

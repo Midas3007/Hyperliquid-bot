@@ -355,6 +355,14 @@ Deno.serve(async (req) => {
     sent.push('topup')
   }
 
+  // A treasury withdrawal the bot has paid (confirmed on the chain)
+  const { data: po } = await db.from('treasury_entries').select('id, amount, peer, tx').eq('kind', 'render').eq('status', 'done').order('id', { ascending: false }).limit(1).maybeSingle()
+  if (po && po.id !== ac?.last_payout_id) {
+    await send(`💸 Treasury withdrawal paid: $${Number(po.amount).toFixed(2)} to ${po.peer}. It came out of the running-costs pot, not the share price.${po.tx ? `\n${net.explorer}/tx/${po.tx}` : ''}`)
+    await db.from('alert_config').update({ last_payout_id: po.id }).eq('id', 1)
+    sent.push('payout')
+  }
+
   // Daily summary, once the day's settlement is done
   if (vault && vc?.last_settle_day === today && ac?.summary_day !== today) {
     const [nav, price] = await Promise.all([readV('nav'), readV('sharePrice')]).catch(() => [null, null])

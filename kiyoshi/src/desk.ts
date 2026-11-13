@@ -11,7 +11,7 @@ import { uniQuote, uniSwap } from './uniswap.js'
 import { convertStats, handleConvert } from './convert.js'
 import { settlePause } from './settle-pause.js'
 import { heartbeat } from './heartbeat.js'
-import { gasState, gasTopUp } from './gas.js'
+import { gasState, gasTopUp, keeperTopUp } from './gas.js'
 import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from './skip-reserved.js'
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { botSettings } from './settings.js'
@@ -191,11 +191,13 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
   const firstMin = await firstLegMin(o, minEdgeUsd)
   if (o.route === 'uni->textile') {
     const { hash: tx1, out: got } = await uniSwap('USDT', X, o.size, o.uniFee, firstMin)
+    // Bought: remember the cost now, so if the second leg fails or throws, flatten() keeps the 0.5% loss guard
+    pending.set(X, { costUsdt: o.size, since: Date.now() })
     // Sell on Textile only if the firm quote still breaks even; otherwise hold it for flatten().
     const r = await textileSwap(X, 'USDT', got, o.size)
     const filled = r.status === 'filled'
     const pnl = filled ? usd(r.received) - usd(o.size) : null
-    if (!filled) pending.set(X, { costUsdt: o.size, since: Date.now() })
+    if (filled) pending.delete(X)
     log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1, leg2: r.status, ...(filled ? { tx2: r.txHash, textileUsd: usd(r.received) } : {}), pnl })
     return pnl
   }
@@ -209,8 +211,9 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
     log({ event: 'skip', X, route: o.route, sizeUsd: usd(o.size), reason: 'textile_reserved', retryAfterMs: r.retryAfterMs })
     return null
   }
-  if (r.status !== 'filled') { log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), leg1: r.status, pnl: null }); return null }
+  if (r.status !== 'filled') { lastSkipped = true; log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), leg1: r.status, pnl: null }); return null }
   textileHold = { amount: o.size, until: Date.now() + TEXTILE_HOLD_MS }
+  pending.set(X, { costUsdt: o.size, since: Date.now() }) // bought: guarded from here even if the sale below throws
   const q = await uniQuote(X, 'USDT', r.received)
   // If Uniswap's price collapsed since the scan (e.g. the pool's USDT side drained), don't dump: hold for flatten().
   // (From Mel's kiyoshi, d81b1bf.)
@@ -225,6 +228,7 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
     return null
   }
   const { hash: tx2, out } = await uniSwap(X, 'USDT', r.received, q.fee, withSlippage(q.out))
+  pending.delete(X)
   const pnl = usd(out) - usd(o.size)
   if (r.waited) { recordWaited(pnl); console.log(`  this trade waited for Textile (${skipSummary()})`) }
   log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, tx2, textileUsd: usd(o.size), pnl, waited: r.waited })
@@ -348,6 +352,8 @@ while (true) {
     const gas = await gasTopUp({ canTrade: !holdingInventory && !status.settlePause })
     status.gas = gasState
     if (gas) { console.log('  ' + gas); log({ event: 'gas', message: gas }) }
+    const kg = await keeperTopUp({ canTrade: !holdingInventory && !status.settlePause })
+    if (kg) { console.log('  ' + kg); log({ event: 'keeper_gas', message: kg }) }
     await updateFlows().catch((e: any) => console.error('  flows:', e.shortMessage ?? e.message))
     const net = netDeposits()
     state.baselineEquity = resolveBaseline(net, state.baselineEquity)

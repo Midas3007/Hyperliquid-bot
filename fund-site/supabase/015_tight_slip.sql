@@ -9,3 +9,6 @@ language sql stable security definer set search_path = '' as $$
 $$;
 revoke all on function public.bot_settings() from public;
 grant execute on function public.bot_settings() to anon, authenticated;
+
+-- Telegram: the last treasury withdrawal already announced
+alter table public.alert_config add column if not exists last_payout_id bigint;
