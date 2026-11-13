@@ -244,6 +244,17 @@ class Strategy:
 
 
 @dataclass(frozen=True)
+class Demo:
+    """v3.3: a one-day demo session on a separate paper account (owner's request). Never touches the real record."""
+    entries_until: str      # ISO UTC; no demo entries after this, and the session is off after Friday's flatten
+    min_net_rr: float
+    max_adr_mult: float
+    entry_min_methods: int
+    max_entries: int
+    scan_every_min: float
+
+
+@dataclass(frozen=True)
 class Protocol:
     version: str
     data: Data
@@ -265,6 +276,7 @@ class Protocol:
     commands: Commands
     autopilot: Autopilot
     strategy: Strategy
+    demo: Demo
 
 
 def _coerce(name: str, typ: Any, v: Any) -> Any:

@@ -62,6 +62,7 @@ class Setup:
     exit_type: str = ""
     r: float | None = None
     trend: bool = False   # on the side of the last 24h move
+    exit_px: float | None = None
 
 
 @dataclass
@@ -149,8 +150,8 @@ def plan(side: str, price: float, struct, atr4: float | None, adr: float | None,
 
 
 def walk(c1h: list[dict], i: int, side: str, entry: float, sl: float, tp: float, z, hold_h: float,
-         fees: Fees) -> tuple[int | None, str, float | None]:
-    """Follow hourly candles after the fill at the close of candle i. -> (exit time ms, exit type, R)."""
+         fees: Fees) -> tuple[int | None, str, float | None, float | None]:
+    """Follow hourly candles after the fill at the close of candle i. -> (exit time ms, exit type, R, exit price)."""
     t_fill = c1h[i]["t"] + H_MS
     stop = sch.time_stop_at(t_fill / 1000, P.schedule, hold_h) * 1000
     s = 1 if side == "long" else -1
@@ -160,16 +161,16 @@ def walk(c1h: list[dict], i: int, side: str, entry: float, sl: float, tp: float,
         hit_sl = c["l"] <= sl if side == "long" else c["h"] >= sl
         hit_tp = c["h"] >= tp if side == "long" else c["l"] <= tp
         if hit_sl:  # also when the same candle touched the TP: worst case
-            return end, "sl", -1.0
+            return end, "sl", -1.0, sl
         if hit_tp:
-            return end, "tp", z.net_rr
+            return end, "tp", z.net_rr, tp
         if end >= stop:
             px = c["c"]
             held_h = (end - t_fill) / H_MS
             pnl = (s * (px - entry) * z.qty - z.entry_fee - z.qty * px * (fees.taker_pct + fees.slippage_pct) / 100
                    - max(0.0, s * BASE_FUNDING_8H / 100 / 8 * z.notional * held_h))
-            return end, ("friday" if stop < t_fill + hold_h * H_MS else "time"), pnl / risk
-    return None, "open", None  # the data ends before the trade does
+            return end, ("friday" if stop < t_fill + hold_h * H_MS else "time"), pnl / risk, px
+    return None, "open", None, None  # the data ends before the trade does
 
 
 def run_coin(coin: str, ser: Series, variants: list[Variant], szd: int, tiers, fees: Fees, rep: Report,
@@ -206,8 +207,8 @@ def run_coin(coin: str, ser: Series, variants: list[Variant], szd: int, tiers, f
                     continue
                 if v.hold_h not in walked:
                     walked[v.hold_h] = walk(c1h, i, side, entry, sl, tp, z, v.hold_h, fees)
-                exit_t, kind, r = walked[v.hold_h]
-                rep.setups.append(Setup(coin, t, side, v.name, entry, sl, tp, z.net_rr, exit_t, kind, r, side == trend))
+                exit_t, kind, r, px = walked[v.hold_h]
+                rep.setups.append(Setup(coin, t, side, v.name, entry, sl, tp, z.net_rr, exit_t, kind, r, side == trend, px))
 
 
 # ------------------------------------------------------------------ results

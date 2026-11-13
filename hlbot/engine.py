@@ -13,6 +13,8 @@ With autopilot off, no order is placed without the user's 'y', except protocol-m
 
 from __future__ import annotations
 
+import dataclasses
+
 import json
 import logging
 import time
@@ -99,7 +101,17 @@ class Proposal:
     context: dict = field(default_factory=dict)
 
 
+def _relaxed(c: Check) -> Check:
+    """Demo session only: the whale/OI/24h/news (M3) and direction (M5) filters don't block. EXTREME volatility and a
+    thesis-breaking catalyst still do."""
+    if c.ok or c.module not in ("M3", "M5") or c.rule == "volatility" or "catalyst" in c.detail:
+        return c
+    return dataclasses.replace(c, ok=True, detail=f"{c.detail} - ignored in the demo")
+
+
 class Engine:
+    relax_filters = False  # True only for the one-day demo session (hlbot/demo.py)
+
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.P = proto.load(cfg.protocol_path) if cfg.protocol_path else proto.PROTOCOL
@@ -133,6 +145,7 @@ class Engine:
         self._scans: dict = {"day": None, "n": 0, "last": None, "blockers": Counter(), "funnel": ""}
         self._strategy_now = "-"
         self._auto_run = False
+        self.last_backtest = None
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -543,6 +556,8 @@ class Engine:
         sides, why = dirn.decide(d, m, lt, tt, rt)
         triggers = {"long": lt, "trend_short": tt, "reversal_short": rt}
         todo = [force_side] if force_side else (sides or ["long"])
+        if self.relax_filters and not force_side and not sides:  # demo: the side of today's move
+            todo = ["long" if (x["day_change"] or 0) >= 0 else "short"]
         out = []
         for side in todo:
             checks = list(base)
@@ -551,6 +566,8 @@ class Engine:
                                        whale_ls=x["whale_ls"], whale_is_true=True, crowd_ls=None, whale_absent=x["whale_absent"],
                                        na_is_miss=m.na_is_miss, news_optional_below=m.news_optional_below,
                                        oi_change_24h_pct=x["oi_24h"], vol_label=x["vol_label"], news=news)
+            if self.relax_filters:
+                checks = [_relaxed(c) for c in checks]
             ev = Eval(coin, side, tag, checks, None)
             self._bracket(ev, x, run, news, triggers)
             out.append(ev)
@@ -1486,6 +1503,7 @@ class Engine:
 
         variants = bt.current_variants()
         rep = bt.run(self.mkt.info, self.mkt.ctxs(), top=top, variants=variants)
+        self.last_backtest = rep
         return bt.summarize(rep, variants)
 
     def journal(self, n: int = 10) -> str:

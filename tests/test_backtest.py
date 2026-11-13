@@ -29,21 +29,21 @@ def test_walk_tp_sl_same_candle_and_time_stop():
     z = sizing()
     assert z.ok
     c = hours(t0, [(99.9, 100.1, 100)] + [(99.5, 101, 100.5)] * 3 + [(100, 107.5, 107)])
-    assert bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES)[1:] == ("tp", z.net_rr)
+    assert bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES)[1:] == ("tp", z.net_rr, 107)
     c = hours(t0, [(99.9, 100.1, 100), (97.0, 108.0, 100)])  # touches both: the SL counts
-    assert bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES)[1:] == ("sl", -1.0)
+    assert bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES)[1:] == ("sl", -1.0, 98)
     c = hours(t0, [(99.9, 100.1, 100)] + [(99.5, 100.6, 100.5)] * 30)
-    end, kind, r = bt.walk(c, 0, "long", 100, 98, 107, z, 24, FEES)
-    assert kind == "time" and end == t0 + 25 * H and -0.2 < r < 0.3
+    end, kind, r, px = bt.walk(c, 0, "long", 100, 98, 107, z, 24, FEES)
+    assert kind == "time" and end == t0 + 25 * H and -0.2 < r < 0.3 and px == 100.5
     c = hours(t0, [(99.9, 100.1, 100)] * 10)
-    assert bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES) == (None, "open", None)  # data ends first
+    assert bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES) == (None, "open", None, None)  # data ends first
 
 
 def test_walk_flattens_on_friday():
     t0 = ms(2026, 11, 5, 18)  # Thursday 18:00 UTC -> Friday 20:00 flat is 26h later
     z = sizing()
     c = hours(t0, [(99.9, 100.1, 100)] + [(99.5, 100.6, 100.2)] * 40)
-    end, kind, _ = bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES)
+    end, kind, _, _ = bt.walk(c, 0, "long", 100, 98, 107, z, 48, FEES)
     assert kind == "friday" and end == ms(2026, 11, 6, 20)
 
 

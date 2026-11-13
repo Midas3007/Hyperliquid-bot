@@ -29,7 +29,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .config import CFG
 from .engine import Engine, Proposal
-from .record import Publisher
+from . import demo as demo_mod
+from .record import Publisher, backtest_body, post
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,9 @@ class Bot:
         self._busy = asyncio.Lock()
         self._bt_running = False
         self.publisher = Publisher(CFG.record_url, CFG.record_token)
+        self.demo = demo_mod.make(self.engine)  # one-day demo session (protocol.toml [demo]); None outside its window
+        self.demo_pub = Publisher(CFG.record_url, CFG.record_token, account="demo")
+        self._demo_announced = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app: Application | None = None
         self._fills_on = False
@@ -292,6 +296,10 @@ class Bot:
         async def job() -> None:
             try:
                 text = await asyncio.to_thread(self.engine.backtest)
+                if self.publisher.enabled and self.engine.last_backtest:
+                    body = backtest_body(self.engine.last_backtest, "swing")
+                    await asyncio.to_thread(post, CFG.record_url, CFG.record_token, body)
+                    text += f"\n\nPublished {len(body['trades'])} backtest trades to the record page (BACKTEST tab)."
             except Exception as e:  # noqa: BLE001
                 log.exception("backtest failed")
                 text = f"Backtest failed: {e}"
@@ -488,6 +496,32 @@ class Bot:
         """Public track record: push the journal when it changed (RECORD_URL / RECORD_TOKEN)."""
         await asyncio.to_thread(self.publisher.maybe_push, self.engine)
 
+    async def job_demo(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """One-day demo session: manage, fill and scan the separate demo paper account, then publish it."""
+        d = self.demo
+        if d is None:
+            ctx.job.schedule_removal()
+            return
+        if not self._demo_announced:
+            self._demo_announced = True
+            await self._push(ctx.application, demo_mod.TAG + (
+                f"One-day demo session on a separate $100 paper account, looser entry rules, entries until "
+                f"{time.strftime('%H:%M', time.gmtime(d.until))} UTC, everything flat by "
+                f"{time.strftime('%H:%M', time.gmtime(d.ends))} UTC. Not counted toward going live; your real "
+                f"record and Monday's trading are untouched."))
+        if d.over():
+            await asyncio.to_thread(self.demo_pub.maybe_push, d)
+            self.demo = None
+            ctx.job.schedule_removal()
+            log.info("demo session over")
+            await self._push(ctx.application, demo_mod.TAG + "Demo session over - back to the normal protocol.")
+            return
+        if not await self._net_check(ctx.application) or self._busy.locked():
+            return
+        async with self._busy:
+            await self._job(ctx, [d.manage, d.sync, d.autopilot_tick])
+        await asyncio.to_thread(self.demo_pub.maybe_push, d)
+
     async def job_autopilot(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._net_check(ctx.application):
             return
@@ -573,4 +607,6 @@ class Bot:
         jq.run_repeating(self.job_autopilot, interval=60, first=45)
         if self.publisher.enabled:
             jq.run_repeating(self.job_record, interval=300, first=90)
+        if self.demo is not None:
+            jq.run_repeating(self.job_demo, interval=60, first=60)
         app.run_polling(allowed_updates=Update.ALL_TYPES)

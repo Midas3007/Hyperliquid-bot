@@ -201,3 +201,15 @@ trend_short_needed = 2
 long_buy_sell_min = 2.5
 short_sell_buy_min = 2.5
 news_optional_below = 2      # under 2 headlines: no sentiment check; a thesis-breaking catalyst still blocks
+
+[demo]                       # v3.3: ONE-DAY demo session (owner's request, Fri 13 Nov 2026) so the record page isn't empty.
+# A separate $100 paper account with looser entry rules: whale/OI/news/direction filters are ignored, net R/R >= 1:1.5
+# instead of 1:3, and no breakers. Stops, isolated sizing, liquidation buffer, BTC gate, EXTREME volatility, missing
+# price data and the Friday 20:00 UTC flatten still apply. Its trades never count toward the go-live gate, the paper
+# record or the breakers, and the page labels them DEMO. Once entries_until has passed this section does nothing.
+entries_until = "2026-11-13T17:00:00Z"   # unfilled entries are cancelled from 17:00; everything flat by 20:00 UTC
+min_net_rr = 1.5
+max_adr_mult = 2.0
+entry_min_methods = 2
+max_entries = 4
+scan_every_min = 15

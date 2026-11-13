@@ -535,3 +535,32 @@ def test_strategy_label_before_and_after_the_first_scan(eng):
     assert eng.strategy_label() in ("multi (now swing)", "multi (now day)")
     eng.store.set("strategy", "day")
     assert eng.strategy_label() == "day"
+
+
+def test_demo_session_trades_on_its_own_account_and_ends_on_friday(eng, clock):
+    from hlbot import demo
+    from hlbot.record import build
+
+    fri = datetime(2026, 11, 13, 13, 0, tzinfo=timezone.utc).timestamp()
+    clock[0] = fri
+    eng._started = fri - 3600
+    eng.mkt.absent = {"SOL"}            # swing would fail the whale check
+    eng.store.set("strategy", "swing")
+    assert eng.autopilot_tick() == []   # the real protocol: no entries on Friday
+    d = demo.make(eng)
+    assert d is not None and d.P.version == "3.3-demo" and d.P.filters.min_net_rr == 1.5
+    assert d.store is not eng.store and "demo" in d.cfg.data_dir and d.cfg.mode == "paper"
+    msgs = d.autopilot_tick()
+    assert len(msgs) == 1 and msgs[0].startswith("[DEMO] ") and "looser rules passed" in msgs[0], msgs
+    assert "Placed #1" in msgs[0] and "v3.3-demo" in msgs[0]
+    assert d.store.trades("pending") and not eng.store.trades(limit=10)   # never in the real journal
+    assert not eng.logged() and eng.go_live_status().startswith("paper only")
+    body = build(d, account="demo")
+    assert body["account"] == "demo" and body["trades"][0]["version"] == "3.3-demo" and "demo" in body["status"]["note"]
+    clock[0] = datetime(2026, 11, 13, 17, 1, tzinfo=timezone.utc).timestamp()
+    assert d.autopilot_tick() == []      # no entries after entries_until
+    assert not d.over()                  # a resting entry, before the flatten
+    clock[0] = datetime(2026, 11, 13, 20, 1, tzinfo=timezone.utc).timestamp()
+    d.manage()                           # Friday: unfilled entries are cancelled
+    assert not d.store.trades("pending") and d.over()
+    assert demo.make(eng, now=clock[0]) is None   # after that Friday the session never comes back
