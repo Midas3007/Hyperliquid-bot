@@ -504,12 +504,11 @@ tbody tr:hover td { background: #082220; }
   (function () {
     const cv = $("tube"); if (!cv) return;
     const COLS = 125, ROWS = 76, PX = 10, PY = 9, ctx = cv.getContext("2d");
-    const MINT = "#7dffd9", TEAL = "#2fd3b0", DEEP = "#168f7c";
+    const MINT = "#7dffd9", TEAL = "#2fd3b0", DEEP = "#168f7c", CREAM = "#fff6e0";
     let cw = 5, ch = 10, dpr = 1, P = null, off = null, G = [];
     function size() {
       dpr = Math.min(2, window.devicePixelRatio || 1); const w = cv.clientWidth || 600;
       cw = w / COLS; ch = cw * 2; cv.width = Math.round(w * dpr); cv.height = Math.round(ch * ROWS * dpr); cv.style.height = ch * ROWS + "px";
-      if (P) bake();
     }
     function bake() {
       off = {};
@@ -525,56 +524,117 @@ tbody tr:hover td { background: #082220; }
       }
     }
     const put = (x, y, c, col, a) => { x = Math.round(x); y = Math.round(y); if (x >= 0 && x < COLS && y >= 0 && y < ROWS) G[y * COLS + x] = [c, col, a == null ? 1 : a]; };
-    function frame(t) {
-      if (!off) return;
-      const L = 3, R = COLS - 4, top = 5, bot = ROWS - 5, ph = t * Math.PI * 2, beat = Math.abs(Math.sin(ph));
-      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      // tube interior glow
-      const g = ctx.createLinearGradient(0, 0, 0, ROWS * ch); g.addColorStop(0, "rgba(47,211,176,.02)"); g.addColorStop(1, "rgba(47,211,176,.14)");
-      ctx.fillStyle = g; ctx.fillRect((L + 1) * cw, (top + 1) * ch, (R - L - 1) * cw, (bot - top - 1) * ch);
-      // portrait: whole-cell row offsets = sway, bounce, underwater wobble
-      const blink = (t % 3.4) > 3.25 ? off.closed : off.open;
-      ctx.globalAlpha = 0.9 + 0.1 * beat;
-      for (let r = 0; r < P.R; r++) {
-        const up = 1 - r / P.R, lag = ph - up * 1.1;
-        let dx = Math.sin(lag) * (1.5 + 7 * Math.pow(up, 1.3)) - Math.sin(ph) * 2 * (1 - up) + Math.sin(t * 2.1 + r * 0.22) * 0.9;
-        const dy = -Math.round(beat * 2.2) + Math.round(Math.sin(t * 1.4) * 0.6);
-        dx = Math.max(L + 2 - PX, Math.min(R - 2 - PX - P.C, Math.round(dx)));
-        const yy = PY + r + dy; if (yy <= top || yy >= bot) continue;
-        ctx.drawImage(blink, 0, r * ch * dpr, blink.width, ch * dpr, (PX + dx) * cw, yy * ch, P.C * cw, ch);
+    // head sprite: the film's portrait, sampled 2x2 -> one glyph, rows 0..35 (hair, face, headphones)
+    function headCell(d, r, c) {
+      let best = null;
+      for (const [dr, dc] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
+        const g = d.rows[r + dr] && d.rows[r + dr][c + dc]; if (!g || g === " ") continue;
+        if (g === "@" || g === "o") return [g, d.pal[d.A.indexOf(d.cols[r + dr][c + dc])] || TEAL];
+        if (!best) best = [g, d.pal[d.A.indexOf(d.cols[r + dr][c + dc])] || TEAL];
       }
-      ctx.globalAlpha = 1;
-      // beat flash on the headphone side + light sweep
-      const sw = ((t * 0.28) % 1.5) * ROWS;
-      const sg = ctx.createLinearGradient(0, (sw - 5) * ch, 0, (sw + 5) * ch); sg.addColorStop(0, "rgba(125,255,217,0)"); sg.addColorStop(.5, "rgba(125,255,217,.16)"); sg.addColorStop(1, "rgba(125,255,217,0)");
-      ctx.fillStyle = sg; ctx.fillRect((L + 1) * cw, (top + 1) * ch, (R - L - 1) * cw, (bot - top - 1) * ch);
-      // glyph layer: liquid specks, bubbles, surface, glass, caps, plumbing
-      G = [];
+      return best;
+    }
+    function cap(p, q, rad, fn) {          // fill a capsule between two points (column units, y in col units)
+      const x0 = Math.floor(Math.min(p[0], q[0]) - rad), x1 = Math.ceil(Math.max(p[0], q[0]) + rad);
+      const y0 = Math.floor((Math.min(p[1], q[1]) - rad) / 2), y1 = Math.ceil((Math.max(p[1], q[1]) + rad) / 2);
+      const vx = q[0] - p[0], vy = q[1] - p[1], L2 = vx * vx + vy * vy || 1;
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const t = Math.max(0, Math.min(1, ((x - p[0]) * vx + (y * 2 - p[1]) * vy) / L2));
+        const d = Math.hypot(x - (p[0] + vx * t), y * 2 - (p[1] + vy * t));
+        if (d <= rad) fn(x, y, d / rad);
+      }
+    }
+    function drawScene(t, L, R, top, bot) {
+      const ph = t * Math.PI * 2, cx = COLS / 2, beat = Math.abs(Math.sin(ph));
+      // behind her: liquid specks, bubbles, surface
       for (let y = top + 1; y < bot; y++) for (let x = L + 1; x < R; x++) if ((x * 7 + y * 13 + Math.floor(t * 3)) % 23 === 0) put(x, y, ".", TEAL, 0.3);
       for (let i = 0; i < 18; i++) {
         const bx = L + 3 + ((i * 53) % (R - L - 6)), by = bot - ((t * (3 + (i % 4) * 1.6) + i * 4.7) % (bot - top - 3));
         put(bx + Math.sin(t * 2 + i) * 1.4, by, i % 3 ? "o" : "°", MINT, 0.6);
       }
       for (let x = L + 1; x < R; x++) put(x, top + 1 + Math.round(Math.sin(t * 3 + x * 0.5) * 0.7 + 0.7), "~", MINT, 0.55);
+      // skeleton (x in columns, y in column units = rows * 2)
+      const hipX = cx + 7 * Math.sin(ph), hipY = 92 - beat * 3, chestX = cx - 5 * Math.sin(ph - 0.3), chestY = hipY - 36, neckY = chestY - 6;
+      const hem = (k) => hipX + k * 30 + Math.sin(ph - 0.7) * 6 * k;
+      // legs
+      for (const sd of [-1, 1]) {
+        const k = sd < 0 ? 0 : Math.PI, up = Math.max(0, Math.sin(ph + k)), hp = [hipX + sd * 6, hipY + 6];
+        const foot = [hipX + sd * 12 + Math.sin(ph + k) * 9, bot * 2 - 6 - up * 7], knee = [(hp[0] + foot[0]) / 2 + sd * 5, (hp[1] + foot[1]) / 2 - 2 - up * 5];
+        for (const [a, b, r2] of [[hp, knee, 5.2], [knee, foot, 4.2]]) cap(a, b, r2, (x, y, d) => put(x, y, d < 0.5 ? "+" : "=", d < 0.5 ? CREAM : MINT));
+        cap([foot[0] - 1, foot[1] + 1], [foot[0] + sd * 5, foot[1] + 2], 3.6, (x, y) => put(x, y, "#", DEEP));
+      }
+      // dress: bodice + flared skirt, apron panel, ruffled hem
+      const y0 = Math.round(chestY / 2), y1 = Math.round((hipY + 26) / 2);
+      for (let y = y0; y <= y1; y++) {
+        const f = (y * 2 - chestY) / (hipY + 26 - chestY), mx = chestX + (hipX - chestX) * Math.min(1, f * 1.5);
+        const w = f < 0.38 ? 11 - f * 12 : 6.4 + (f - 0.38) * 36 + Math.sin(ph - 0.6 + y * 0.35) * 2.2 * f;
+        for (let x = Math.round(mx - w); x <= Math.round(mx + w); x++) {
+          const apron = f > 0.34 && Math.abs(x - mx) < w * 0.46;
+          put(x, y, apron ? ((x + y) % 3 ? ":" : "·") : ((x + y) % 4 === 0 ? "=" : "%"), apron ? CREAM : (f < 0.38 ? TEAL : DEEP));
+        }
+        if (y === y1) for (let x = Math.round(mx - w); x <= Math.round(mx + w); x++) put(x, y, x % 2 ? "^" : "~", CREAM);
+      }
+      for (const o of [-5, 5]) put(chestX + o, chestY / 2 + 2, "*", MINT);
+      // arms: right arm raised holding a light stick, left arm waves
+      let hand = null;
+      for (const sd of [-1, 1]) {
+        const sh = [chestX + sd * 12, chestY + 3], k = sd > 0 ? 0 : Math.PI;
+        const a1 = sd > 0 ? 2.55 + 0.45 * Math.sin(ph) : 0.8 + 0.6 * Math.sin(ph + 1.2), a2 = a1 + (sd > 0 ? 0.55 * Math.sin(ph * 2) : 0.7 * Math.sin(ph * 2 + k));
+        const cl = (x) => Math.max(L + 5, Math.min(R - 5, x));
+        const el = [cl(sh[0] + sd * Math.sin(a1) * 17), sh[1] + Math.cos(a1) * 17], ha = [cl(el[0] + sd * Math.sin(a2) * 16), el[1] + Math.cos(a2) * 16];
+        cap(sh, el, 3.6, (x, y, d) => put(x, y, d < 0.5 ? "+" : "=", d < 0.5 ? CREAM : MINT));
+        cap(el, ha, 3.0, (x, y, d) => put(x, y, d < 0.5 ? "+" : "=", d < 0.5 ? CREAM : MINT));
+        put(el[0], el[1] / 2, "o", MINT);
+        if (sd > 0) {
+          const dx = ha[0] - el[0], dy = ha[1] - el[1], n = Math.hypot(dx, dy) || 1, tip = [cl(ha[0] + dx / n * 18), ha[1] + dy / n * 18];
+          cap(ha, tip, 1.8, (x, y) => put(x, y, "#", "#ffffff")); hand = [tip[0], tip[1] / 2];
+        }
+      }
+      // head: the film portrait, tilted with the beat; shear gives the tilt, whole-cell steps keep it ASCII
+      const d = (t % 3.4) > 3.25 ? P.closed : P.open, hr = 18, hc = Math.floor(P.C / 2), tilt = Math.sin(ph - 0.5) * 0.09;
+      const hx = chestX + Math.sin(ph - 0.9) * 2.5, chinRow = Math.round(neckY / 2);
+      for (let r = 0; r < hr; r++) for (let c = 0; c < hc; c++) {
+        const cell = headCell(d, r * 2, c * 2); if (!cell) continue;
+        put(hx - hc / 2 + c + tilt * (hr - r) * 2, chinRow - hr + r + 1 - Math.round(beat * 1.2), cell[0], cell[1], 1);
+      }
+      return hand;
+    }
+    function frame(t) {
+      if (!P) return;
+      const L = 3, R = COLS - 4, top = 5, bot = ROWS - 5, ph = t * Math.PI * 2, beat = Math.abs(Math.sin(ph));
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // tube interior glow
+      const g0 = ctx.createLinearGradient(0, 0, 0, ROWS * ch); g0.addColorStop(0, "rgba(47,211,176,.02)"); g0.addColorStop(1, "rgba(47,211,176,.14)");
+      ctx.fillStyle = g0; ctx.fillRect((L + 1) * cw, (top + 1) * ch, (R - L - 1) * cw, (bot - top - 1) * ch);
+      G = [];
+      const hand = drawScene(t, L, R, top, bot);
+      // beat flash on the headphone side + light sweep
+      const sw = ((t * 0.28) % 1.5) * ROWS;
+      const sg = ctx.createLinearGradient(0, (sw - 5) * ch, 0, (sw + 5) * ch); sg.addColorStop(0, "rgba(125,255,217,0)"); sg.addColorStop(.5, "rgba(125,255,217,.16)"); sg.addColorStop(1, "rgba(125,255,217,0)");
+      ctx.fillStyle = sg; ctx.fillRect((L + 1) * cw, (top + 1) * ch, (R - L - 1) * cw, (bot - top - 1) * ch);
+      // glyph layer: liquid specks, bubbles, surface, glass, caps, plumbing
       for (let y = top; y <= bot; y++) { put(L, y, "|", TEAL, 0.9); put(R, y, "|", TEAL, 0.9); put(L + 2, y, "¦", MINT, (y + Math.floor(t * 8)) % 9 === 0 ? 0.6 : 0.18); put(R - 2, y, "¦", MINT, 0.12); }
       for (let x = L; x <= R; x++) { put(x, top - 1, "=", TEAL, 0.95); put(x, bot + 1, "=", TEAL, 0.95); }
       for (let x = L - 3; x <= R + 3; x++) { put(x, top - 2, "#", DEEP, 1); put(x, top - 3, "%", DEEP, 0.8); put(x, bot + 2, "#", DEEP, 1); put(x, bot + 3, "%", DEEP, 0.9); put(x, bot + 4, "▀", DEEP, 0.7); }
       put(L, top - 1, "(", MINT); put(R, top - 1, ")", MINT); put(L, bot + 1, "(", MINT); put(R, bot + 1, ")", MINT);
       for (let y = 0; y < top - 3; y++) for (const o of [-9, -6, 6, 9]) put(COLS / 2 + o, y, o % 2 ? "|" : "║", DEEP, 0.9);
       for (const o of [-18, -10, 10, 18]) put(COLS / 2 + o, bot + 3, "*", MINT, 0.5 + 0.5 * Math.sin(t * 4 + o));
+      if (hand) { const gr = ctx.createRadialGradient(hand[0] * cw, hand[1] * ch, 0, hand[0] * cw, hand[1] * ch, cw * 18);
+        gr.addColorStop(0, "rgba(255,246,224,.55)"); gr.addColorStop(.35, "rgba(125,255,217,.22)"); gr.addColorStop(1, "rgba(125,255,217,0)");
+        ctx.fillStyle = gr; ctx.fillRect(0, 0, COLS * cw, ROWS * ch); }
       ctx.font = `600 ${cw * 1.6}px "IBM Plex Mono", ui-monospace, monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
       for (let i = 0; i < G.length; i++) { const q = G[i]; if (!q) continue; ctx.globalAlpha = q[2]; ctx.fillStyle = q[1]; ctx.fillText(q[0], ((i % COLS) + 0.5) * cw, (Math.floor(i / COLS) + 0.5) * ch); }
       ctx.globalAlpha = 1;
     }
     size(); window.addEventListener("resize", () => { size(); frame(performance.now() / 1000); });
     fetch("hevi-portrait.json").then((r) => r.json()).then((d) => {
-      P = d; bake(); frame(0.7);
+      P = d; window.__tubeFrame = frame; frame(0.7);
       const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches; if (still) return;
       let on = true, last = 0;
       if ("IntersectionObserver" in window) new IntersectionObserver((e) => { on = e[0].isIntersecting; }).observe(cv);
       (function loop(ts) { if (on && ts - last > 50) { last = ts; frame(ts / 1000); } requestAnimationFrame(loop); })(0);
       window.__tubeFrame = frame;
-    }).catch(() => {});
+    }).catch((e) => console.error('tube', e));
   })();
 
   // ---------- record
