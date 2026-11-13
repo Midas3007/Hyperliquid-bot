@@ -4,7 +4,7 @@
 # The loader rejects unknown or missing keys, so a typo fails loudly instead of silently using a default.
 # Values marked [OPEN Qn] are defaults waiting on an answer in PROTOCOL.md "Open questions".
 
-version = "3.2"
+version = "3.3"
 
 [data]                       # Conventions
 stale_after_min = 15         # older than this = FAIL for that check
@@ -56,8 +56,16 @@ flow_min_coverage_min = 30            # Q3 (decided in v3.1) less trade history 
 adr_days = 14
 atr_period = 14
 news_articles = 3
-whale_accounts = 60                   # top leaderboard accounts by account value
+whale_accounts = 200                  # v3.3: the most profitable active traders this month (v3.2: 60 largest accounts)
+whale_min_account_usd = 100000        # v3.3: smaller accounts are ignored
+whale_min_turnover = 0.5              # v3.3: month volume / account value below this = not actively trading perps
+whale_max_turnover = 100.0            # v3.3: above this = market maker (its positions are inventory, not bets)
+whale_list_refresh_h = 6              # v3.3: re-pick the 200 every 6h; their positions refresh every 10 min
 whale_min_holders = 5                 # Q2 (decided in v3.1) fewer whales holding the coin = N/A
+big_trade_window_min = 240            # v3.3 whale fallback: big taker orders over the last 4h ...
+big_trade_min_usd = 10000.0           # ... an order counts as big at max($10k, 0.02% of the coin's 24h volume)
+big_trade_vol_pct = 0.02
+big_trade_min_orders = 5              # ... with at least 5 big orders; fewer = no whale reading
 rv_window_h = 24                      # realized vol = stdev of hourly log returns over 24h ...
 rv_lookback_d = 30                    # ... ranked against the last 30 days
 vol_low_below_pct = 25                # Q6 (decided in v3.1) percentile bands; only EXTREME >= 85 comes from the protocol

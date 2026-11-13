@@ -155,6 +155,14 @@ class Store:
         if value > 0:
             self._x("INSERT INTO equity(ts,value) VALUES(?,?)", (time.time(), value))
 
+    def equity_series(self, since: float = 0.0, step_s: float = 3600) -> list[tuple[float, float]]:
+        """Equity snapshots since `since`, at most one per `step_s` (the last of each bucket), oldest first."""
+        rows = self._q("SELECT ts, value FROM equity WHERE ts>=? ORDER BY ts", (since,))
+        out: dict[int, tuple[float, float]] = {}
+        for r in rows:
+            out[int(r["ts"] // step_s)] = (r["ts"], r["value"])
+        return list(out.values())
+
     def peak_equity(self, since: float = 0.0) -> float:
         rows = self._q("SELECT MAX(value) m FROM equity WHERE ts>=?", (since,))
         return float(rows[0]["m"] or 0.0)
@@ -225,6 +233,9 @@ class Store:
             self._db.executemany("INSERT INTO whale(coin,ts,ratio) VALUES(?,?,?)", [(c, now, r) for c, r in rows])
             self._db.execute("DELETE FROM whale WHERE ts < ?", (now - 40 * 86400,))
             self._db.commit()
+
+    def clear_whales(self) -> None:
+        self._x("DELETE FROM whale")
 
     def whale_at(self, coin: str, seconds_ago: float, tolerance_s: float = 7200) -> float | None:
         target = time.time() - seconds_ago

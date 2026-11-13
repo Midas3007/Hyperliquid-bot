@@ -80,7 +80,15 @@ class DeepDive:
     atr_period: int
     news_articles: int
     whale_accounts: int
+    whale_min_account_usd: float
+    whale_min_turnover: float
+    whale_max_turnover: float
+    whale_list_refresh_h: float
     whale_min_holders: int
+    big_trade_window_min: float
+    big_trade_min_usd: float
+    big_trade_vol_pct: float
+    big_trade_min_orders: int
     rv_window_h: int
     rv_lookback_d: int
     vol_low_below_pct: float

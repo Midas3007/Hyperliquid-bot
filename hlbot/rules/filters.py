@@ -1,7 +1,8 @@
 """Module 3 - hard filters (any fail = skip) and ranking of survivors.
 
 Strategy modes (protocol.toml [strategy]) change two things here, and nothing else:
-  * whale_absent: no top-60 leaderboard account holds the coin. That's a fact about the market, not missing data.
+  * whale_absent: too few tracked top traders hold the coin and too few big orders traded it. That's a fact about
+    the market, not missing data.
     swing counts it as a miss (protocol); day skips the check.
   * news_optional_below: with fewer rated headlines than this, the sentiment check is skipped in that mode. A
     thesis-breaking catalyst still blocks. Zero headlines in swing stays N/A (missing data).
@@ -55,14 +56,14 @@ def hard_filters(
         out.append(Check("M3", "whale L/S", ok, f"whale L/S {whale_ls:.2f} (need {need})"))
     elif whale_absent:
         if na_is_miss:
-            out.append(Check("M3", "whale L/S", False, "no top-60 leaderboard account holds it (swing needs whale data)"))
+            out.append(Check("M3", "whale L/S", False, "too few top traders hold it and too few big orders (swing needs whale data)"))
         else:
-            out.append(Check("M3", "whale L/S", True, "no top-60 leaderboard account holds it - check skipped in this mode"))
+            out.append(Check("M3", "whale L/S", True, "too few top traders hold it and too few big orders - check skipped in this mode"))
     elif crowd_ls is not None:
         ok = crowd_ls <= f.crowd_max_ratio if long else crowd_ls >= 1 / f.crowd_max_ratio
         out.append(Check("M3", "crowd L/S", ok, f"crowd L/S {crowd_ls:.2f} (whale data N/A)"))
     else:
-        out.append(na_check("M3", "whale L/S", "whale leaderboard unavailable (missing data)"))
+        out.append(na_check("M3", "whale L/S", "whale data unavailable (missing data)"))
 
     if oi_change_24h_pct is None:
         out.append(na_check("M3", "OI 24h", "no OI snapshot from 24h ago yet"))

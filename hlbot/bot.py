@@ -29,6 +29,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .config import CFG
 from .engine import Engine, Proposal
+from .record import Publisher
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ Autopilot scans every {scan:g} min (Mon-Thu UTC) and places any setup that passe
 do anything; you'll get a message for every trade and a daily report at {report}:00 UTC.
 
 /status - mode, equity, peak, drawdown, breakers, positions
+/why - the last scan coin by coin: the rule that blocked each one
 /pause - stop opening new trades (open positions stay protected) | /resume
 how is it going - live price, uPnL in $ and R, distance to TP/SL, funding, time left
 review - stats in R (also /review)
@@ -60,12 +62,15 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /cancel - cancel resting entry orders (TP/SL stay on)
 /lessons - rules and hypotheses; /approve N promotes one (needs 5+ supporting trades and 20 closed)
 /pump - BTC post-pump check now
-/paperreset 100 - paper mode: restart the simulated account"""
+/paperreset 100 - paper mode: restart the simulated account
+/backtest - replay ~200 days of Hyperliquid prices through the stop/target rules (takes a few minutes)"""
 
-COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("mode", "Strategy: swing, day or multi"), ("review", "Track record in R"),
+COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
+            ("mode", "Strategy: swing, day or multi"), ("review", "Track record in R"),
             ("journal", "Recent trades"), ("pause", "Stop opening new trades"), ("resume", "Resume autopilot"),
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
-            ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"), ("help", "How HEVI works")]
+            ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"),
+            ("backtest", "Test the stop/target rules on past prices"), ("help", "How HEVI works")]
 
 START_RE = re.compile(r"^\s*start\b(?:\s*\(?\s*\$?\s*([\d.]+)\s*\)?)?(.*)$", re.I)
 YES_RE = re.compile(r"^\s*y(?:es)?\s*([12])?\s*$", re.I)
@@ -121,6 +126,8 @@ class Bot:
         self.engine = Engine(CFG)
         self.chat_id = CFG.telegram_chat_id
         self._busy = asyncio.Lock()
+        self._bt_running = False
+        self.publisher = Publisher(CFG.record_url, CFG.record_token)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app: Application | None = None
         self._fills_on = False
@@ -266,6 +273,33 @@ class Bot:
     async def cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
             await self._run(update, self.engine.status)
+
+    async def cmd_why(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, await asyncio.to_thread(self.engine.why))
+
+    async def cmd_backtest(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Runs outside the command lock: it only reads price history, so trading and other commands carry on."""
+        if not await self._guard(update):
+            return
+        if self._bt_running:
+            await self._reply(update, "A backtest is already running - its result is on the way.")
+            return
+        self._bt_running = True
+        await self._reply(update, "Backtest started: ~200 days of hourly prices on the top 15 coins. It takes about "
+                                  "4 minutes (downloads are paced for Hyperliquid's rate limit); HEVI keeps running.")
+
+        async def job() -> None:
+            try:
+                text = await asyncio.to_thread(self.engine.backtest)
+            except Exception as e:  # noqa: BLE001
+                log.exception("backtest failed")
+                text = f"Backtest failed: {e}"
+            finally:
+                self._bt_running = False
+            await self._reply(update, text)
+
+        ctx.application.create_task(job())
 
     async def cmd_journal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
@@ -450,6 +484,10 @@ class Bot:
     async def job_hourly(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await self._job(ctx, [self.engine.hourly])
 
+    async def job_record(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Public track record: push the journal when it changed (RECORD_URL / RECORD_TOKEN)."""
+        await asyncio.to_thread(self.publisher.maybe_push, self.engine)
+
     async def job_autopilot(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._net_check(ctx.application):
             return
@@ -523,7 +561,8 @@ class Bot:
             "review": self.cmd_review, "stats": self.cmd_review, "risk": self.cmd_risk, "close": self.cmd_close,
             "cancel": self.cmd_cancel, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
-            "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode,
+            "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode, "why": self.cmd_why,
+            "backtest": self.cmd_backtest,
         }.items():
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text))
@@ -532,4 +571,6 @@ class Bot:
         jq.run_repeating(self.job_pump, interval=900, first=120)
         jq.run_repeating(self.job_hourly, interval=3600, first=30)
         jq.run_repeating(self.job_autopilot, interval=60, first=45)
+        if self.publisher.enabled:
+            jq.run_repeating(self.job_record, interval=300, first=90)
         app.run_polling(allowed_updates=Update.ALL_TYPES)

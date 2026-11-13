@@ -1,0 +1,10 @@
+# HEVI track record. Deploy from this folder (record-site/), not the repo root.
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"

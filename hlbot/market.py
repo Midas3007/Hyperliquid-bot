@@ -3,7 +3,8 @@
 Hyperliquid stand-ins for Bybit/Bitget metrics (see PROTOCOL.md, "Hyperliquid mapping"):
   * buy/sell ratio  -> taker buy vs sell notional from Hyperliquid's live trade stream. N/A until
                        `flow_min_coverage_min` of trades are collected (no substitute metric is used).
-  * whale L/S       -> live positions of the largest accounts on Hyperliquid's public leaderboard
+  * whale L/S       -> live positions of the most profitable active traders on Hyperliquid's leaderboard;
+                      big taker orders from the trade stream when too few of them hold the coin
   * volatility      -> Deribit DVOL percentile (BTC/ETH IV), 30-day realized-vol percentile otherwise (RV)
   * OI / whale trend -> snapshots recorded hourly by this bot (history builds up over time)
   * news            -> public crypto RSS feeds + a per-coin Google News RSS search (no API key)
@@ -17,6 +18,7 @@ it was fetched (`stamp(key)`), so the rules engine can show and check data age.
 
 from __future__ import annotations
 
+import gc
 import logging
 import re
 import threading
@@ -132,12 +134,47 @@ def base_symbol(coin: str) -> str:
     return coin
 
 
+def is_zero_hash(h: str | None) -> bool:
+    return not h or set(h[2:] if h.startswith("0x") else h) <= {"0"}
+
+
+def pick_whales(rows: list[dict], dd) -> list[str]:
+    """Leaderboard rows -> the `whale_accounts` most profitable active traders this month (v3.3).
+
+    Kept: account >= whale_min_account_usd, profitable this month AND all-time, and month volume between
+    whale_min_turnover and whale_max_turnover times the account (below = not trading perps; above = a market maker,
+    whose positions are inventory rather than bets). Ranked by this month's profit."""
+    out = []
+    for r in rows:
+        try:
+            av = float(r.get("accountValue") or 0)
+            w = {k: v for k, v in r.get("windowPerformances") or []}
+            m, a = w.get("month") or {}, w.get("allTime") or {}
+            mp, mv, ap = float(m.get("pnl") or 0), float(m.get("vlm") or 0), float(a.get("pnl") or 0)
+            addr = r["ethAddress"]
+        except (TypeError, ValueError, KeyError):
+            continue
+        if av < dd.whale_min_account_usd or mp <= 0 or ap <= 0:
+            continue
+        if dd.whale_min_turnover <= mv / av <= dd.whale_max_turnover:
+            out.append((mp, addr))
+    out.sort(key=lambda t: t[0], reverse=True)
+    return [a for _, a in out[: dd.whale_accounts]]
+
+
 class FlowCollector:
     """Rolling taker buy/sell notional per coin from the websocket trade stream."""
 
-    def __init__(self, base_url: str, window_min: float, min_coverage_min: float, stale_min: float):
+    def __init__(self, base_url: str, window_min: float, min_coverage_min: float, stale_min: float,
+                 big_window_min: float = 240, big_floor_usd: float = 10_000):
         self.base_url = base_url
         self.window_s = window_min * 60
+        self.big_window_s = big_window_min * 60
+        self.big_floor_usd = big_floor_usd
+        # one taker order fills against several makers -> several trades with the same hash. Fills are grouped for a
+        # few seconds, and orders >= big_floor_usd are kept for the big-order (whale) reading.
+        self._pending: dict[str, dict] = defaultdict(dict)   # coin -> {order key: [received, side, notional]}
+        self._big: dict[str, deque] = defaultdict(deque)     # coin -> (exchange ts, side, notional)
         self.min_coverage_min = min_coverage_min
         self.stale_s = stale_min * 60
         self._info: Info | None = None
@@ -161,7 +198,22 @@ class FlowCollector:
             for t in msg.get("data", []):
                 coin = t["coin"]
                 notional = float(t["px"]) * float(t["sz"])
-                self._trades[coin].append((t["time"] / 1000, t["side"], notional))
+                ts = t["time"] / 1000
+                self._trades[coin].append((ts, t["side"], notional))
+                h = t.get("hash")
+                key = f"tid:{t.get('tid')}" if is_zero_hash(h) else h
+                p = self._pending[coin].setdefault(key, [now, t["side"], 0.0, ts])
+                p[2] += notional
+            self._flush(now)
+
+    def _flush(self, now: float, settle_s: float = 5.0) -> None:
+        """Move grouped orders older than settle_s out of _pending; keep the big ones. Caller holds the lock."""
+        for coin, pend in self._pending.items():
+            done = [k for k, v in pend.items() if now - v[0] >= settle_s]
+            for k in done:
+                _, side, n, ts = pend.pop(k)
+                if n >= self.big_floor_usd:
+                    self._big[coin].append((ts, side, n))
 
     def heal(self, silent_s: float = 120) -> None:
         """Reconnect the trade stream if it has gone quiet (Hyperliquid expires sockets; phones drop networks).
@@ -214,6 +266,29 @@ class FlowCollector:
         return {"ratio": buy / sell if sell > 0 else 99.0, "buy_usd": buy, "sell_usd": sell,
                 "minutes": round(covered_min), "source": "Hyperliquid taker trades", "ts": self._last_msg}
 
+    def big_orders(self, coin: str, threshold_usd: float) -> dict | None:
+        """Big taker orders (fills grouped by order) over the big-order window: buy vs sell notional of orders
+        >= threshold_usd. None until min_coverage_min of trades or if the stream is stale."""
+        since = self._since.get(coin)
+        if not since:
+            return None
+        now = time.time()
+        threshold_usd = max(threshold_usd, self.big_floor_usd)
+        with self._lock:
+            self._flush(now)
+            dq = self._big[coin]
+            while dq and dq[0][0] < now - self.big_window_s:
+                dq.popleft()
+            rows = [(s, n) for _, s, n in dq if n >= threshold_usd]
+        covered_min = min(self.big_window_s, now - since) / 60
+        if covered_min < self.min_coverage_min or now - self._last_msg > self.stale_s:
+            return None
+        buy = sum(n for s, n in rows if s == "B")
+        sell = sum(n for s, n in rows if s != "B")
+        ratio = buy / sell if sell > 0 else (99.0 if buy > 0 else None)
+        return {"orders": len(rows), "buy_usd": buy, "sell_usd": sell, "ratio": ratio, "threshold_usd": threshold_usd,
+                "minutes": round(covered_min), "source": "big taker orders", "ts": self._last_msg}
+
 
 class Market:
     def __init__(self, cfg: Config, store: Store):
@@ -222,7 +297,7 @@ class Market:
         self.base_url = constants.MAINNET_API_URL if cfg.is_mainnet else constants.TESTNET_API_URL
         self.info = Info(self.base_url, skip_ws=True)
         self.flow = FlowCollector(self.base_url, P.screener.flow_window_min, P.screener.flow_min_coverage_min,
-                                  P.data.stale_after_min)
+                                  P.data.stale_after_min, P.deep_dive.big_trade_window_min, P.deep_dive.big_trade_min_usd)
         self._cache: dict[str, tuple[float, object]] = {}
         self._http = requests.Session()
         self._http.headers.update(UA)
@@ -294,6 +369,11 @@ class Market:
 
     def buy_sell(self, coin: str) -> dict | None:
         return self.flow.ratio(coin)
+
+    def big_orders(self, coin: str, volume_usd: float | None) -> dict | None:
+        """Whale fallback: big taker orders. Big = max(big_trade_min_usd, big_trade_vol_pct % of 24h volume)."""
+        dd = P.deep_dive
+        return self.flow.big_orders(coin, max(dd.big_trade_min_usd, (volume_usd or 0) * dd.big_trade_vol_pct / 100))
 
     def day_open(self, coin: str) -> float | None:
         """Open of today's UTC daily candle (the protocol's "daily change" reference)."""
@@ -404,27 +484,51 @@ class Market:
 
         return self._cached(f"dvol:{currency}", 600, load)
 
+    def whale_list(self) -> list[str]:
+        """Addresses of the tracked traders (pick_whales), re-picked every whale_list_refresh_h hours. The leaderboard
+        is a ~40 MB download, so a failed refresh keeps the previous list and retries in 10 minutes."""
+        dd = P.deep_dive
+        now = time.time()
+        hit = self._cache.get("whale_list")
+        if hit and now - hit[0] < (dd.whale_list_refresh_h * 3600 if hit[1] else 600):
+            return hit[1]
+        try:
+            rows = self._http.get(LEADERBOARD_URL, timeout=90).json()["leaderboardRows"]
+            addrs = pick_whales(rows, dd)
+            del rows
+            gc.collect()  # ~170 MB of parsed JSON; hand it back before the next scan
+        except Exception as e:  # noqa: BLE001
+            quiet("leaderboard", "whale leaderboard unavailable: %s", short(e))
+            addrs = []
+        if not addrs and hit and hit[1]:
+            self._cache["whale_list"] = (now - dd.whale_list_refresh_h * 3600 + 600, hit[1])
+            return hit[1]
+        if addrs:
+            log.info("whale list: %d profitable active traders tracked", len(addrs))
+        self._cache["whale_list"] = (now, addrs)
+        return addrs
+
     def whales(self) -> dict[str, dict]:
-        """Aggregate live positions of the largest leaderboard accounts -> per-coin long/short notional."""
+        """Aggregate live positions of the tracked traders -> per-coin long/short notional. {} = unavailable."""
 
         def load():
-            try:
-                rows = self._http.get(LEADERBOARD_URL, timeout=30).json()["leaderboardRows"]
-            except Exception as e:  # noqa: BLE001
-                quiet("leaderboard", "whale leaderboard unavailable: %s", short(e))
+            addrs = self.whale_list()
+            if not addrs:
                 return {}
-            rows = sorted(rows, key=lambda r: float(r.get("accountValue") or 0), reverse=True)
-            addrs = [r["ethAddress"] for r in rows[: P.deep_dive.whale_accounts]]
-
             def fetch(a):
                 try:
                     return self.info.user_state(a).get("assetPositions", [])
                 except Exception:  # noqa: BLE001
-                    return []
+                    return None
 
             agg: dict[str, dict] = defaultdict(lambda: {"long_usd": 0.0, "short_usd": 0.0, "longs": 0, "shorts": 0})
-            with ThreadPoolExecutor(max_workers=6) as ex:
+            active = fails = 0
+            with ThreadPoolExecutor(max_workers=4) as ex:  # ~400 request weight per refresh; the limit is 1200/min
                 for aps in ex.map(fetch, addrs):
+                    if aps is None:
+                        fails += 1
+                        continue
+                    active += bool(aps)
                     for ap in aps:
                         p = ap["position"]
                         szi = float(p["szi"])
@@ -436,10 +540,14 @@ class Market:
                         elif szi < 0:
                             a["short_usd"] += val
                             a["shorts"] += 1
+            if fails > len(addrs) // 4:  # a partial picture would skew the ratios: treat as missing data
+                quiet("whales", "whale positions unavailable: %d of %d accounts failed", fails, len(addrs))
+                return {}
             out = {}
             for coin, a in agg.items():
                 ls = a["long_usd"] / a["short_usd"] if a["short_usd"] > 0 else (99.0 if a["long_usd"] > 0 else None)
-                out[coin] = {**a, "ratio": ls, "holders": a["longs"] + a["shorts"], "accounts_scanned": len(addrs)}
+                out[coin] = {**a, "ratio": ls, "holders": a["longs"] + a["shorts"], "accounts_scanned": len(addrs),
+                             "accounts_active": active}
             return out
 
         return self._cached("whales", self.cfg.whale_cache_min * 60, load)

@@ -40,6 +40,7 @@ log = logging.getLogger(__name__)
 
 H = 3600
 DAY = 86400
+WHALE_LIST = "v3.3 profitable active traders"  # bump when the whale definition changes (resets whale L/S history)
 MS = {"5m": 300_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 EXIT_TYPES = ("tp", "sl", "time", "discretion", "early", "override", "friday", "mismatch", "liquidated")
 NEWS_RULE = ("M3", "news")
@@ -128,6 +129,7 @@ class Engine:
         self._last_pump_alert = 0.0
         self._started = time.time()
         self._last_scan = 0.0
+        self._last_detail: dict | None = None  # the last scan, coin by coin, for /why
         self._scans: dict = {"day": None, "n": 0, "last": None, "blockers": Counter(), "funnel": ""}
         self._strategy_now = "-"
         self._auto_run = False
@@ -212,17 +214,29 @@ class Engine:
         use("volume", d["volume_usd"], cts, "24h notional")
         flow = mkt.buy_sell(coin)
         use("buy_sell", flow and flow["ratio"], flow and flow["ts"], "taker trades")
+        # whale L/S (v3.3): positions of the tracked top traders; if fewer than whale_min_holders of them hold the
+        # coin (or their positions can't be read), big taker orders from the trade stream stand in.
+        dd = P.deep_dive
         allw = mkt.whales()
         wh = allw.get(coin)
-        x["whale_absent"] = False
-        if allw and not (wh and wh.get("holders", 0) >= P.deep_dive.whale_min_holders):
-            # the leaderboard loaded; this coin just isn't held by enough of the top accounts. A fact about the
-            # market, so it's not an "na" (missing data) entry.
-            x["whale_absent"] = True
-            x["whale_ls"] = None
+        x["whale_absent"], x["whale_src"], x["whale_big"] = False, None, None
+        if wh and wh.get("holders", 0) >= dd.whale_min_holders:
+            use("whale_ls", wh["ratio"], mkt.stamp("whales"), "top traders' positions")
+            x["whale_src"] = f"{wh['holders']} top traders"
         else:
-            use("whale_ls", wh["ratio"] if wh else None, mkt.stamp("whales"), "top leaderboard positions")
-        x["whale_24h"] = self.mkt.store.whale_at(coin, DAY)
+            big = mkt.big_orders(coin, d.get("volume_usd"))
+            if big and big["orders"] >= dd.big_trade_min_orders:
+                use("whale_ls", big["ratio"], big["ts"], "big taker orders")
+                x["whale_src"], x["whale_big"] = f"{big['orders']} big orders", big
+            elif allw:
+                # the positions loaded; this coin just isn't held by enough of the tracked traders and has too few
+                # big orders. A fact about the market, so it's not an "na" (missing data) entry.
+                x["whale_absent"] = True
+                x["whale_ls"] = None
+            else:
+                use("whale_ls", None, None, "top traders' positions")
+        # the 24h-ago reading is only comparable when both come from the tracked traders' positions
+        x["whale_24h"] = self.mkt.store.whale_at(coin, DAY) if x["whale_src"] and "top traders" in x["whale_src"] else None
         oi_then = self.mkt.store.oi_at(coin, DAY)
         use("oi_24h", mx.pct_change(d["oi_usd"], oi_then and oi_then["oi_usd"]), cts, "own hourly OI snapshots",
             zero=False)
@@ -374,8 +388,9 @@ class Engine:
         self.store.set("strategy", name)
         return f"Strategy set to {name}: {opts[name]}. Applies from the next scan."
 
-    def _note_scan(self, funnel: str, blockers) -> None:
-        """Why a scan placed nothing. Counted for the daily report and written to the logs."""
+    def _note_scan(self, funnel: str, blockers, lines: list[str] | None = None) -> None:
+        """Why a scan placed nothing. Counted for the daily report, written to the logs, kept for /why."""
+        self._last_detail = {"at": time.time(), "mode": self._strategy_now, "funnel": funnel, "lines": lines or []}
         self._scans.setdefault("blockers", Counter()).update(blockers)
         self._scans["funnel"] = funnel
         top = ", ".join(f"{k} x{v}" for k, v in Counter(blockers).most_common(3))
@@ -577,7 +592,8 @@ class Engine:
         num = lambda v, f: "N/A" if v is None else format(v, f)  # noqa: E731
         info.append(f"{x['coin']} {num(x['day_change'], '+.2f')}% today | ADR {num(x['adr'], '.2f')}% | "
                     f"4H ATR {num(x['atr_4h_pct'], '.2f')}% | 1H ATR {num(x['atr_1h_pct'], '.2f')}%")
-        info.append(f"buy/sell {num(x['buy_sell'], '.2f')}x | whale L/S {num(x['whale_ls'], '.2f')} | "
+        wsrc = f" ({x['whale_src']})" if x.get("whale_src") else ""
+        info.append(f"buy/sell {num(x['buy_sell'], '.2f')}x | whale L/S {num(x['whale_ls'], '.2f')}{wsrc} | "
                     f"OI 24h {num(x['oi_24h'], '+.1f')}% | OI 30d {num(x['oi_30d'], '+.1f')}%")
         info.append(f"funding {num(x['funding_8h'], '+.4f')}%/8h | vol {x['vol_label']} ({x['vol_src']})"
                     + (f" | news {news.bullish} bullish / {news.bearish} bearish of {news.total}" if news else ""))
@@ -623,11 +639,11 @@ class Engine:
             return run
         hard = self._hard_blocks(run)
         if hard:
-            self._note_scan("blocked before screening", Counter({hard[0][:70]: 1}))
+            self._note_scan("blocked before screening", Counter({hard[0][:70]: 1}), hard)
             return "\n".join(run.lines + ["", "No trade today:"] + hard)
         cands, notes = self._screen(run, exclude)
         if not cands:
-            self._note_scan("screener: no candidates", Counter({"screener": 1}))
+            self._note_scan("screener: no candidates", Counter({"screener": 1}), notes[:12])
             return "\n".join(run.lines + ["", "Screener: no coin passes the sweeps and automatic skips."] + notes[:10])
         evals = self._deep_dive(cands, run, notes)
         self.session["shown"].update(c for c, _ in cands)
@@ -646,7 +662,7 @@ class Engine:
                 reasons[f"{f.module} {f.rule}" if f else "no complete setup"] += 1
         if not ok:
             self._note_scan(f"{len(cands)} screened, {len(evals)} checked, none passed",
-                            reasons or Counter({"no candidate": 1}))
+                            reasons or Counter({"no candidate": 1}), _why_lines(evals) + notes[:6])
             soft = sorted((e for e in evals if e.plan and only_soft_failures(e.checks)), key=lambda e: (e.score, e.net_rr),
                           reverse=True)
             self.session["blocked"] = soft
@@ -664,6 +680,9 @@ class Engine:
                        f" ({P.commands.max_resweeps - self.session['resweeps']} left)")
             return "\n".join(out)
         best = ok[0]
+        self._last_detail = {"at": now, "mode": run.strategy, "funnel": f"{len(cands)} screened, {len(ok)} passed",
+                             "lines": [f"{e.coin} {e.side}: passed every rule (score {e.score}/6, net 1:{e.net_rr:.2f})"
+                                       for e in ok[:3]] + _why_lines([e for e in evals if not e.ok])}
         plans = [best.plan]
         twin = next((e for e in ok if e.coin == best.coin and e.side != best.side), None)
         if twin:
@@ -1109,6 +1128,9 @@ class Engine:
         self.mkt.record_oi()
         P = self.P
         wh = self.mkt.whales()
+        if wh and self.mkt.store.get("whale_list") != WHALE_LIST:  # v3.3 new trader list: old ratios aren't comparable
+            self.mkt.store.clear_whales()
+            self.mkt.store.set("whale_list", WHALE_LIST)
         self.mkt.store.add_whales([(c, w["ratio"]) for c, w in wh.items()
                                    if w.get("ratio") is not None and w.get("holders", 0) >= P.deep_dive.whale_min_holders])
         self.mkt.flow.ensure([c for c, d in self.mkt.ctxs().items() if d["volume_usd"] > P.screener.sweep1_min_volume_usd])
@@ -1439,6 +1461,29 @@ class Engine:
         lines.append(f"Next scan: {time.strftime('%a %d %b %H:%M', time.gmtime(nxt))} UTC ({why})")
         return lines
 
+    def why(self) -> str:
+        """/why: the last scan coin by coin - the first rule that blocked each candidate - and when the next one is."""
+        now = time.time()
+        d = self._last_detail
+        if not d:
+            out = ["No scan since HEVI last started."]
+        else:
+            ago = (now - d["at"]) / 60
+            out = [f"Last scan {time.strftime('%a %H:%M', time.gmtime(d['at']))} UTC ({ago:.0f} min ago) "
+                   f"[{d['mode']}]: {d['funnel']}"]
+            out += ["- " + ln for ln in d["lines"][:14]] or ["- (no detail)"]
+        out.append("")
+        out += self._schedule_lines(now)[1:]
+        return "\n".join(out)
+
+    def backtest(self, top: int = 15) -> str:
+        """/backtest: replay price history through the current swing and day brackets (hlbot/backtest.py)."""
+        from . import backtest as bt
+
+        variants = bt.current_variants()
+        rep = bt.run(self.mkt.info, self.mkt.ctxs(), top=top, variants=variants)
+        return bt.summarize(rep, variants)
+
     def journal(self, n: int = 10) -> str:
         rows = [t for t in self.store.trades(limit=50) if t["status"] in ("closed", "open", "pending")][:n]
         if not rows:
@@ -1467,6 +1512,16 @@ def _pick(plans: list[Plan]) -> int:
     """Two setups on one coin (reversal signals): the higher score, then net R/R; long is the default on a tie."""
     best = max(range(len(plans)), key=lambda i: (plans[i].score, plans[i].sizing.net_rr, plans[i].side == "long"))
     return best + 1
+
+
+def _why_lines(evals: list[Eval]) -> list[str]:
+    """One line per checked candidate: the first rule that blocked it (and the next one, if any)."""
+    out = []
+    for e in evals:
+        bad = failed(e.checks)
+        out.append(f"{e.coin} {e.side}: " + ("; ".join(f"{c.module} {c.rule} ({c.detail})" for c in bad[:2])
+                                            if bad else "no complete setup"))
+    return out
 
 
 def _first_reason(text: str) -> str:

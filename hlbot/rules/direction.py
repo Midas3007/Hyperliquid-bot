@@ -2,7 +2,7 @@
 
 swing (protocol): long needs 4 of 5 triggers; a trigger with no data counts as a miss.
 day: long needs 3 of the measurable triggers, and at least 4 of 5 must be measurable. A trigger with no data for the
-coin (for example, no top-60 whale holds it) is left out instead of counted as a miss.
+coin (for example, no tracked top trader holds it) is left out instead of counted as a miss.
 Reversal shorts keep the protocol's 2+ and only use measurable triggers in day mode.
 """
 

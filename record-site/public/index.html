@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HEVI Track Record</title>
+<meta name="description" content="Public track record of HEVI, an autonomous Hyperliquid perpetuals trading bot: every trade in R, straight from its journal.">
+<link rel="icon" href="hevi-avatar.webp">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5d6673; --line: #e3e6eb;
+  --accent: #3b5bdb; --win: #1f8a4c; --loss: #c92a2a; --flat: #8a94a3; --chip: #eef1f6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1116; --panel: #161a21; --ink: #e8ebf0; --muted: #98a1ae; --line: #262c36;
+    --accent: #7b93ff; --win: #43c37a; --loss: #ff6b6b; --flat: #6f7a89; --chip: #1f2530;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1116; --panel: #161a21; --ink: #e8ebf0; --muted: #98a1ae; --line: #262c36;
+  --accent: #7b93ff; --win: #43c37a; --loss: #ff6b6b; --flat: #6f7a89; --chip: #1f2530;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; gap: 16px; align-items: center; margin-bottom: 20px; }
+header img { width: 64px; height: 64px; border-radius: 14px; object-fit: cover; flex: none; }
+h1 { font-size: 26px; line-height: 1.1; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.sub { color: var(--muted); margin: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 13px; color: var(--muted); }
+.chip.mode { color: var(--ink); font-weight: 600; }
+.chip.live { background: var(--win); color: #fff; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.status { color: var(--muted); font-size: 14px; }
+.status b { color: var(--ink); font-weight: 600; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .k { color: var(--muted); font-size: 13px; }
+.pos { color: var(--win); } .neg { color: var(--loss); }
+svg { display: block; width: 100%; height: auto; }
+.empty { color: var(--muted); padding: 24px 0; text-align: center; }
+.tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+td.num, th.num { text-align: right; }
+.side { font-weight: 600; } .side.long { color: var(--win); } .side.short { color: var(--loss); }
+.tabs { display: inline-flex; gap: 4px; background: var(--chip); padding: 4px; border-radius: 10px; margin-bottom: 16px; }
+.tabs button { border: 0; background: transparent; color: var(--muted); padding: 6px 12px; border-radius: 8px; font: inherit; cursor: pointer; }
+.tabs button[aria-pressed="true"] { background: var(--panel); color: var(--ink); font-weight: 600; }
+.rules { margin: 0; padding-left: 18px; color: var(--muted); }
+.rules li { margin: 4px 0; }
+footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
+.open-row { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.open-row:last-child { border-bottom: 0; }
+@media (max-width: 720px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } h1 { font-size: 22px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="hevi-avatar.webp" alt="">
+    <div>
+      <h1>HEVI track record</h1>
+      <p class="sub">An autonomous Hyperliquid perpetuals bot. Every trade below comes straight from its journal.</p>
+    </div>
+  </header>
+
+  <div id="tabs" class="tabs" hidden></div>
+  <div id="chips" class="chips"></div>
+  <div id="status" class="panel status">Loading the record...</div>
+
+  <section class="kpis" id="kpis" aria-label="Summary"></section>
+
+  <section class="panel" style="margin-top:16px">
+    <h2>Cumulative result in R</h2>
+    <div id="chart"></div>
+  </section>
+
+  <section class="panel" id="openPanel" hidden>
+    <h2>Open now</h2>
+    <div id="open"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Closed trades</h2>
+    <div id="trades"></div>
+  </section>
+
+  <section class="panel">
+    <h2>How HEVI trades</h2>
+    <ul class="rules">
+      <li><b>1R</b> is the planned loss at the stop: 10% of equity, never more than 15%. Results are shown in R so they compare across account sizes.</li>
+      <li>A trade needs a reward of at least 3R after fees, slippage and funding, with the target at a real 4H level.</li>
+      <li>Stop-loss and take-profit sit on the exchange from the moment the order fills. Isolated margin, one position at a time.</li>
+      <li>Entries Monday to Thursday (UTC), 48-hour maximum hold, flat by Friday 20:00 UTC.</li>
+      <li>Losing streaks trigger breakers: done for the day after a stop, half risk after two, a 48-hour pause after three.</li>
+      <li>HEVI paper-trades on live prices until its record shows an edge (10+ trades, +0.10R per trade, profit factor 1.2+), then trades real money.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Paper trades are simulated fills on live Hyperliquid prices; live trades are real. Past results don't predict future ones. Not financial advice.
+  </footer>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const fmtR = (r) => (r >= 0 ? "+" : "−") + Math.abs(r).toFixed(2) + "R";
+  const fmtUsd = (v) => (v >= 0 ? "+$" : "−$") + Math.abs(v).toFixed(2);
+  const fmtPx = (p) => p == null ? "–" : (p >= 1000 ? p.toLocaleString("en-US", { maximumFractionDigits: 1 }) : p >= 1 ? +p.toFixed(4) + "" : +p.toPrecision(5) + "");
+  const day = (s) => new Date(s * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
+  const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 2880 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " days ago"; };
+  const EXIT = { tp: "Take-profit", sl: "Stop-loss", time: "Time stop", friday: "Friday close", manual: "Manual", discretionary: "Manual", liquidation: "Liquidation", early: "Early exit" };
+
+  function stats(closed) {
+    const rs = closed.map((t) => t.result_r);
+    const n = rs.length;
+    if (!n) return null;
+    const wins = rs.filter((r) => r > 0), losses = rs.filter((r) => r <= 0);
+    const gw = wins.reduce((a, b) => a + b, 0), gl = -losses.reduce((a, b) => a + b, 0);
+    let eq = 0, peak = 0, dd = 0;
+    for (const r of rs) { eq += r; peak = Math.max(peak, eq); dd = Math.max(dd, peak - eq); }
+    return { n, win: wins.length / n, exp: eq / n, total: eq, pf: gl > 0 ? gw / gl : Infinity, dd,
+             pnl: closed.reduce((a, t) => a + (t.pnl || 0), 0) };
+  }
+
+  function kpi(k, v, cls) { const d = el("div", "kpi"); d.append(el("div", "v " + (cls || ""), v), el("div", "k", k)); return d; }
+
+  function chart(closed) {
+    const box = $("chart"); box.replaceChildren();
+    if (closed.length < 1) { box.append(el("div", "empty", "The curve starts with the first closed trade.")); return; }
+    const pts = [0]; for (const t of closed) pts.push(pts[pts.length - 1] + t.result_r);
+    const W = 900, H = 260, P = 28, L = 44;  // L: left gutter for the 0R label
+    const lo = Math.min(0, ...pts), hi = Math.max(0, ...pts), span = (hi - lo) || 1;
+    const x = (i) => L + (W - L - P) * (pts.length === 1 ? 0 : i / (pts.length - 1));
+    const y = (v) => P + (H - 2 * P) * (1 - (v - lo) / span);
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `Cumulative result: ${fmtR(pts[pts.length - 1])} over ${closed.length} trades`);
+    const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.append(e); return e; };
+    mk("line", { x1: L, x2: W - P, y1: y(0), y2: y(0), stroke: "var(--line)", "stroke-width": 1.5 });
+    const zl = mk("text", { x: L - 8, y: y(0) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 12 }); zl.textContent = "0R";
+    mk("polyline", { points: pts.map((v, i) => `${x(i)},${y(v)}`).join(" "), fill: "none", stroke: "var(--accent)",
+                     "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    closed.forEach((t, i) => {
+      const c = mk("circle", { cx: x(i + 1), cy: y(pts[i + 1]), r: 4.5, fill: t.result_r > 0 ? "var(--win)" : "var(--loss)",
+                               stroke: "var(--panel)", "stroke-width": 1.5 });
+      const tip = document.createElementNS(NS, "title");
+      tip.textContent = `${t.coin} ${t.side} ${day(t.closed_at)}: ${fmtR(t.result_r)} (cumulative ${fmtR(pts[i + 1])})`;
+      c.append(tip);
+    });
+    const end = mk("text", { x: W - P, y: y(pts[pts.length - 1]) - 10, "text-anchor": "end", "font-size": 13, "font-weight": 600,
+                             fill: pts[pts.length - 1] >= 0 ? "var(--win)" : "var(--loss)" });
+    end.textContent = fmtR(pts[pts.length - 1]);
+    box.append(svg);
+  }
+
+  function render(acc) {
+    const s = acc.status || {};
+    const trades = acc.trades.map((t) => ({ ...t, result_r: t.result_r == null ? null : Number(t.result_r) }));
+    const closed = trades.filter((t) => t.status === "closed" && t.result_r != null).sort((a, b) => a.closed_at - b.closed_at);
+    const open = trades.filter((t) => t.status === "open" || t.status === "pending");
+
+    const chips = $("chips"); chips.replaceChildren();
+    const live = acc.account === "live";
+    chips.append(el("span", "chip mode" + (live ? " live" : ""), live ? "LIVE - real money" : "PAPER - simulated fills on live prices"));
+    if (s.protocol) chips.append(el("span", "chip", "Protocol v" + s.protocol));
+    if (s.strategy) chips.append(el("span", "chip", "Mode: " + s.strategy));
+    chips.append(el("span", "chip", "Updated " + ago(acc.updated_at)));
+
+    const st = $("status"); st.replaceChildren();
+    const line = (label, value) => { const p = el("div"); p.append(el("b", null, label + ": "), document.createTextNode(value)); st.append(p); };
+    if (s.go_live) line(s.live ? "Status" : "Go-live gate", String(s.go_live).replace(/^go-live gate:\s*/i, ""));
+    if (s.reset_at) line("Counting from", new Date(s.reset_at * 1000).toUTCString().replace(" GMT", " UTC"));
+    if (s.paused) line("Autopilot", "paused by the owner");
+    if (!st.childNodes.length) st.textContent = "Trading autonomously.";
+
+    const k = $("kpis"); k.replaceChildren();
+    const m = stats(closed);
+    if (m) {
+      k.append(kpi("closed trades", String(m.n)), kpi("win rate", Math.round(m.win * 100) + "%"),
+               kpi("average per trade", fmtR(m.exp), m.exp >= 0 ? "pos" : "neg"),
+               kpi("profit factor", m.pf === Infinity ? "∞" : m.pf.toFixed(2)),
+               kpi("total", fmtR(m.total), m.total >= 0 ? "pos" : "neg"), kpi("net P&L", fmtUsd(m.pnl), m.pnl >= 0 ? "pos" : "neg"),
+               kpi("max drawdown", m.dd.toFixed(2) + "R"), kpi("equity", s.equity != null ? "$" + Number(s.equity).toFixed(2) : "–"));
+    } else {
+      k.append(kpi("closed trades", "0"), kpi("equity", s.equity != null ? "$" + Number(s.equity).toFixed(2) : "–"),
+               kpi("open now", String(open.length)), kpi("protocol", s.protocol ? "v" + s.protocol : "–"));
+    }
+
+    chart(closed);
+
+    $("openPanel").hidden = !open.length;
+    const ob = $("open"); ob.replaceChildren();
+    for (const t of open) {
+      const r = el("div", "open-row");
+      r.append(el("span", "side " + t.side, `${t.coin} ${t.side.toUpperCase()}`),
+               el("span", null, (t.status === "pending" ? "limit at " : "entry ") + fmtPx(t.fill_px || t.entry)),
+               el("span", null, "SL " + fmtPx(t.sl)), el("span", null, "TP " + fmtPx(t.tp)),
+               el("span", "status", t.strategy ? "[" + t.strategy + "]" : ""));
+      ob.append(r);
+    }
+
+    const tb = $("trades"); tb.replaceChildren();
+    if (!closed.length) { tb.append(el("div", "empty", "No closed trades yet. HEVI only trades when every rule passes, so this can take a while.")); return; }
+    const wrap = el("div", "tablewrap"), table = el("table"), thead = el("thead"), hr = el("tr");
+    [["Closed", ""], ["Coin", ""], ["Side", ""], ["Mode", ""], ["Entry", "num"], ["Exit", "num"], ["How", ""], ["Result", "num"], ["P&L", "num"]]
+      .forEach(([h, c]) => hr.append(el("th", c, h)));
+    thead.append(hr); table.append(thead);
+    const body = el("tbody");
+    for (const t of closed.slice().reverse()) {
+      const tr = el("tr");
+      tr.append(el("td", null, day(t.closed_at)), el("td", null, t.coin), el("td", "side " + t.side, t.side),
+                el("td", null, t.strategy || "–"), el("td", "num", fmtPx(t.fill_px || t.entry)), el("td", "num", fmtPx(t.exit_px)),
+                el("td", null, EXIT[t.exit_type] || t.exit_type || "–"),
+                el("td", "num " + (t.result_r > 0 ? "pos" : "neg"), fmtR(t.result_r)),
+                el("td", "num " + ((t.pnl || 0) >= 0 ? "pos" : "neg"), t.pnl == null ? "–" : fmtUsd(t.pnl)));
+      body.append(tr);
+    }
+    table.append(body); wrap.append(table); tb.append(wrap);
+  }
+
+  fetch("/api/record").then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((data) => {
+    const accs = data.accounts || [];
+    if (!accs.length) { $("status").textContent = "HEVI hasn't published its record yet. It does within a few minutes of starting."; return; }
+    accs.sort((a, b) => (a.account === "live" ? -1 : 1) - (b.account === "live" ? -1 : 1));
+    if (accs.length > 1) {
+      const tabs = $("tabs"); tabs.hidden = false;
+      accs.forEach((a, i) => {
+        const b = el("button", null, a.account === "live" ? "Live" : "Paper");
+        b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+        b.onclick = () => { tabs.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false")); render(a); };
+        tabs.append(b);
+      });
+    }
+    render(accs[0]);
+  }).catch((e) => { $("status").textContent = "Couldn't load the record (" + e.message + "). Try again in a minute."; });
+})();
+</script>
+</body>
+</html>

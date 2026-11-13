@@ -1,6 +1,6 @@
 <p align="center"><img src="assets/hevi.webp" alt="HEVI" width="520"></p>
 
-# HEVI — autonomous Hyperliquid trading bot (Protocol v3.1)
+# HEVI — autonomous Hyperliquid trading bot (Protocol v3.3)
 
 HEVI trades Hyperliquid perpetual futures **on its own** and reports to you on Telegram. It follows your Futures
 Challenge Protocol to the letter:
@@ -22,7 +22,7 @@ Challenge Protocol to the letter:
 The full spec, changelog, Hyperliquid mapping and decisions are in **[PROTOCOL.md](PROTOCOL.md)**.
 
 ```
-HEVI:  # HEVI - Open Limit Order - Protocol v3.1 (Hyperliquid) ... SOL long, $99.61 post-only,
+HEVI:  # HEVI - Open Limit Order - Protocol v3.3 (Hyperliquid) [swing] ... SOL long, $99.61 post-only,
        SL $98.115 (-1.50%), TP $105.78, 16x isolated, risk ~$10.00 (10%), net R/R 1:3.74
        HEVI autopilot: every rule passed - placing it now.  Placed #1 ...
 HEVI:  #1 SOL entry filled at ~99.61.
@@ -34,7 +34,10 @@ HEVI:  HEVI daily report - Tue 10 Nov (UTC) | Mode: PROVING ... | go-live gate: 
 - **HEVI will lose some trades.** The protocol caps each loss (10% of equity at the SL) and pauses after losing
   streaks. It can't make losses impossible, and nothing here guarantees a profit.
 - **It trades rarely.** Most scans end in "no trade": a setup has to pass every filter, net 1:3 R/R and the
-  time windows. That's by design.
+  time windows. That's by design. `/why` shows the rule that blocked each coin in the last scan.
+- **Price alone isn't the edge.** A backtest of the stop/target rules on 30 weeks of Hyperliquid prices (no entry
+  filters) came out slightly negative: about -0.1R per trade. Any edge has to come from the entry filters, which
+  is exactly what the paper record measures before real money is used. Details: [PROTOCOL.md, v3.3](PROTOCOL.md#changelog).
 - **Warm-up:**
   - Hyperliquid has no open-interest history, so HEVI records its own. **No coin passes for the first 24 hours
     after the first deploy.**
@@ -95,6 +98,8 @@ stops, Friday closes and new trades wait until the phone is back online. To prev
   (`termux-run.sh` takes it). Don't swipe Termux away from recent apps.
 - **Last resort:** if it still drops out every night, the phone's maker is too aggressive for a 24/7 bot. Use
   Railway below.
+- **Data use:** HEVI downloads Hyperliquid's leaderboard (~40 MB) every 6 hours to pick its whale list, about
+  160 MB a day. Use Wi-Fi if your mobile data is limited.
 
 ## Run it on Railway (24/7, about $5/month)
 1. Sign in to railway.app with GitHub → **New Project → Deploy from GitHub repo** → pick this repo.
@@ -103,6 +108,16 @@ stops, Friday closes and new trades wait until the phone is back online. To prev
 3. **Settings → Volumes → Add volume**, mount path `/data`. This keeps the journal and market history across
    restarts.
 4. Deploy, message the bot, add the `TELEGRAM_CHAT_ID` it replies with, and redeploy.
+
+## Public track record (optional)
+HEVI can publish every trade to a public page: **https://hevi-record.netlify.app** (Netlify site + Neon database,
+code in `record-site/`). It sends trade facts only: coin, side, prices, R and P&L. No wallet address, no keys.
+
+1. In Railway → your service → **Variables**, add `RECORD_URL` = `https://hevi-record.netlify.app` and
+   `RECORD_TOKEN` = the upload token you were given (the site stores only its SHA-256 fingerprint).
+2. Redeploy. Within a few minutes the page shows HEVI's mode, go-live progress, equity curve and trades.
+
+Without the two variables HEVI simply doesn't publish.
 
 ## Hyperliquid setup (needed for real money)
 1. Deposit USDC to Hyperliquid (minimum 5 USDC, via Arbitrum). If it lands in **Spot**: Portfolio → Transfer →
@@ -120,6 +135,8 @@ You don't need any of these; HEVI runs by itself.
 | Command | What it does |
 |---|---|
 | `/status` | Mode, equity, peak, drawdown, breakers, positions, autopilot state |
+| `/why` | The last scan coin by coin: the rule that blocked each candidate, and when the next scan runs |
+| `/backtest` | Replay ~200 days of Hyperliquid prices through the stop/target rules (about 4 minutes) |
 | `/pause` · `/resume` | Stop / restart opening new trades. Open positions stay protected and managed |
 | `how is it going` | Live price, uPnL in $ and R, distance to TP/SL, funding, time left |
 | `review` (`/review`) | Track record in R: hit rate, expectancy, drawdown, exit types, risk recalibration |
@@ -144,6 +161,7 @@ You don't need any of these; HEVI runs by itself.
 | BTC gate | ≤ −4% no trades · −4 to −2% half risk · ≥ +3% post-pump check, never a size-up |
 | Window | Entries Mon–Thu UTC, flat by Fri 20:00 UTC, 48h time stop, unfilled entries cancel after 4h |
 | Breakers | SL → done for the day · 2 SLs → half risk · 3 SLs → 48h pause + review · −30% from peak → half risk · −50% → 7-day stop (needs you) |
+| Whales | Positions of the 200 most profitable active traders on Hyperliquid (market makers excluded); big taker orders when fewer than 5 of them hold a coin |
 | Data | Missing or stale (> 15 min) data = no trade. News: crypto RSS + Google News. Macro calendar: ForexFactory feed + `calendar.toml` |
 
 ## Development
@@ -151,6 +169,7 @@ You don't need any of these; HEVI runs by itself.
 python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt pytest
 python -m pytest -q   # offline: rules engine, worked examples, paper fills, autopilot, full start -> close flows
+python scripts/backtest.py --sweep   # online: replay Hyperliquid history through the exit rules
 cp .env.example .env && python main.py
 ```
 Change thresholds in `protocol.toml`. The loader rejects unknown or missing keys, so a typo fails at startup

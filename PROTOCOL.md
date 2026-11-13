@@ -1,4 +1,4 @@
-# HEVI — Futures Challenge Protocol v3.2 — Hyperliquid
+# HEVI — Futures Challenge Protocol v3.3 — Hyperliquid
 
 2026-11-06 · @Midas · adapted from Bybit v2.0 (canonical) and Bitget v2.1 ($1 micro phase)
 
@@ -63,9 +63,14 @@ through maximum long-run compounded growth without ruin.
   challenge firewall.
 - **Volatility source**, labelled on every card: BTC and ETH use Deribit DVOL percentile (**IV**). Everything else
   uses the 30-day realized-volatility percentile (**RV**). A 0 reading = missing data.
-- **Whale L/S** = live positions of the 60 largest Hyperliquid leaderboard accounts (by account value), weighted
-  by notional. With fewer than 5 of them holding the coin, it's N/A. Hyperliquid has no all-accounts
-  ratio, so Crowd L/S is always N/A and its rules never apply.
+- **Whale L/S** (v3.3) = live positions of the 200 most profitable active traders on Hyperliquid's leaderboard,
+  weighted by notional. "Active and profitable" means: account of $100k or more, in profit this month and all-time,
+  and a month's volume between 0.5x and 100x the account. Below that range the account isn't trading perps; above
+  it, it's a market maker whose positions are inventory, not bets. The list is re-picked every 6h; positions
+  refresh every 10 min. If fewer than 5 of the 200 hold the coin, **big taker orders** stand in: buy vs sell
+  notional of orders of at least max($10k, 0.02% of the coin's 24h volume) over the last 4h, from the trade stream,
+  with fills of one order added together, and at least 5 such orders. Neither available = no whale reading.
+  Hyperliquid has no all-accounts ratio, so Crowd L/S is always N/A and its rules never apply.
 - **Fees** come from your account's `userFees` rates (maker = `userAddRate`, taker = `userCrossRate`). The
   fallback is the base tier: 0.015% maker / 0.045% taker.
 - **API key:** an API (agent) wallet can trade but cannot withdraw. Your main wallet's key never goes into the
@@ -149,7 +154,7 @@ Every input carries a source and a timestamp.
 | 14-day ADR | 14 completed UTC daily candles, mean (high − low) / open |
 | 4H and 1H ATR(14), % of price | completed 4H / 1H candles |
 | Buy/sell ratio | taker buy vs sell notional from the websocket trade stream, 60-min window. N/A until 30 min of trades |
-| Whale L/S | top-60 leaderboard positions (Module 0) |
+| Whale L/S | positions of the 200 most profitable active traders; big taker orders as fallback (Module 0) |
 | OI 24h delta, 30d growth | current OI from asset contexts vs the bot's own hourly snapshots |
 | Funding (8h) + trend | asset contexts × 8; `fundingHistory` for "rising" |
 | Volatility | IV (DVOL) or RV percentile, labelled |
@@ -442,6 +447,7 @@ The flow (`start ($X)` runs the same, manually):
 | `risk X%` | Set risk within the 15% ceiling |
 | `override: [reason]` | Closest soft-blocked candidate (Module 8) |
 | `/status` `/journal` `/close COIN [reason]` `/cancel` `/lessons` `/approve N` `/reject N` `/pump` `/paperreset N` | Utilities |
+| `/why` · `/backtest` | The last scan coin by coin · replay ~200 days of prices through the exit rules (v3.3) |
 
 v1's `start ($X) margin $Y` is retired, because trades are sized by Module 7 only.
 
@@ -540,7 +546,7 @@ HEVI autopilot: every rule passed - placing it now.
 |---|---|---|---|
 | 1 | Unlock auto-skip (M2) | no free unlock feed | **dropped** by your decision (`unlock_check = false`) |
 | 2 | TP/SL attached at entry (M6/M13) | Hyperliquid activates `normalTpsl` only after a full fill | fill-stream websocket → position TP/SL within about a second; 20s sync as backstop |
-| 3 | Whale L/S (M3/M5) | no native top-trader ratio | top-60 leaderboard positions, notional-weighted, N/A under 5 holders (kept) |
+| 3 | Whale L/S (M3/M5) | no native top-trader ratio | v3.3: the 200 most profitable active leaderboard traders' positions, notional-weighted; big taker orders when under 5 of them hold the coin |
 | 4 | Crowd L/S (v2.1 chunk 9) | no all-accounts ratio | dropped; whale data used |
 | 5 | Buy/sell ratio | no ratio endpoint | taker flow from the trade stream; 30-min warm-up after restarts (autopilot waits for it) |
 | 6 | OI 24h delta / 30d growth | no OI history endpoint | own hourly snapshots, shared by paper and live (`market.db`); no trades in the first 24h after the first deploy |
@@ -552,12 +558,37 @@ HEVI autopilot: every rule passed - placing it now.
 
 ## Changelog
 
+**v3.3 (data and tools) vs v3.2:**
+
+- **Smarter whale list.** v3.2 read the 60 largest accounts. On 13 Nov 2026 only 11 of them held any perp position,
+  and those were mostly market makers. Now: the 200 most profitable active traders (see Module 0). In the same
+  check, 151 of the 200 held positions, and the number of coins with 5+ whale holders went from 26 to 127. Whale
+  L/S history is reset once, because the old and new ratios aren't comparable.
+- **Big-order fallback.** When fewer than 5 tracked traders hold a coin, big taker orders from the trade stream give
+  the whale reading (same thresholds). This was "whale absent" in v3.2: swing failed the coin and day skipped the check.
+- **`/why`.** The last scan coin by coin, with the first rule that blocked each candidate and when the next scan runs.
+- **`/backtest`** and `scripts/backtest.py`: about 200 days of hourly Hyperliquid prices replayed through the live
+  stop, target, sizing and Friday rules (`hlbot/backtest.py`). It tests the exits only. Flow, whale, OI and news
+  have no history, so direction is "every setup" or "the side of the last 24h move".
+- **Public track record.** HEVI publishes its trades to a page on Netlify backed by Neon (`record-site/`,
+  `RECORD_URL` / `RECORD_TOKEN`). Only trade facts are sent: no wallet address, no keys.
+- **Backtest findings (13 Nov 2026, 8 coins, 30 weeks), and why nothing was loosened:**
+  - A valid bracket exists in about 0.5% of coin-hours per side. Of the rest, 67% fail net 1:3 at the first 4H level
+    and 23% have that level too close. This is why HEVI trades rarely. The two rules causing it are hard rules.
+  - On price alone, the exits lose a little: about -0.1R per trade with one position at a time, 20-25% winners.
+  - No ADR reach limit (0.8-1.5x) or hold time (24/48h) tried turns that positive.
+  - Counting only 4H swing points as targets looked better (day mode +0.32R/trade over 32 trades). But it was
+    negative in the most recent third of the data, and at that sample size the differences are within noise.
+    The definition of a real 4H level was a v3.1 decision (Q5), so it is unchanged.
+  - Conclusion: the edge has to come from the entry filters, which can't be backtested. The go-live gate (10+ paper
+    trades, +0.10R per trade, profit factor 1.2) is what keeps real money out until the paper record proves it.
+
 **v3.2 (modes) vs v3.1:**
 
 - **Modes** (`/mode swing|day|multi`, default `multi`). The hard rules are identical in every mode.
   - `swing`: the v3.1 protocol as written.
   - `day`: holds up to 24h, and the target must sit within one day's range (1.0x ADR). Long needs 3 of the
-    measurable triggers (not 4 of 5). Buy/sell threshold 2.5x. A coin no top-60 whale holds is not penalised.
+    measurable triggers (not 4 of 5). Buy/sell threshold 2.5x. A coin no tracked whale holds is not penalised.
     With fewer than 2 rated headlines there is no sentiment check, but a thesis-breaking catalyst still blocks.
   - `multi`: day when BTC has moved 2%+ since the UTC open or BTC volatility is HIGH/EXTREME, otherwise swing.
   - Scalping is not a mode. A 1.5% stop and a 1:3 net target need a 5%+ move, so a scalp would break the

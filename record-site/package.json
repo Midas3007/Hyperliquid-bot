@@ -1,0 +1,12 @@
+{
+  "name": "hevi-record",
+  "private": true,
+  "type": "module",
+  "description": "HEVI's public track record: a static page plus two Netlify Functions over a Neon Postgres database.",
+  "dependencies": {
+    "@neondatabase/serverless": "1.2.0"
+  },
+  "devDependencies": {
+    "@netlify/functions": "6.1.1"
+  }
+}

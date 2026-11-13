@@ -5,6 +5,7 @@ level +6% above (clean air), ADR 6%, whale L/S 1.8, buy/sell 3.5, funding 0.01%/
 """
 
 import dataclasses
+import json
 import time
 from datetime import datetime, timezone
 
@@ -60,7 +61,8 @@ class FakeMarket:
         self.fng = 62
         self.macro: list = []
         self.macro_cov = False
-        self.absent = set()   # coins no top-60 leaderboard account holds
+        self.absent = set()   # coins too few tracked top traders hold
+        self.big: dict = {}   # coin -> big_orders() reading (whale fallback)
         self.adr_rng = 6.0    # 1d candle range in %, i.e. the 14-day ADR
 
     def stamp(self, key):
@@ -77,6 +79,9 @@ class FakeMarket:
 
     def buy_sell(self, coin):
         return {"ratio": COINS[coin][1], "ts": time.time()}
+
+    def big_orders(self, coin, volume_usd):
+        return self.big.get(coin)
 
     def whales(self):
         return {c: {"ratio": w, "holders": 12, "accounts_scanned": 60} for c, (_, _, _, w) in COINS.items() if c not in self.absent}
@@ -184,7 +189,7 @@ def test_full_flow_start_card_confirm_fill_tp(eng, clock):
     p = res.plans[0]
     assert p.coin == "SOL" and p.side == "long"
     text = res.text
-    for s in ("HEVI", "Protocol v3.2", "PAPER", "post-only (ALO)", "5m confluence BB+FIB+VP+VWAP", "Isolated",
+    for s in ("HEVI", "Protocol v3.3", "PAPER", "post-only (ALO)", "5m confluence BB+FIB+VP+VWAP", "Isolated",
               "mark-price trigger", "Type \"y\" to confirm", "BTC gate: +1.01%"):
         assert s in text, s
     z = p.sizing
@@ -195,7 +200,7 @@ def test_full_flow_start_card_confirm_fill_tp(eng, clock):
     msg = eng.confirm(None)
     assert isinstance(msg, str) and msg.startswith("[PAPER] Placed #1"), msg
     t = eng.store.trades("pending")[0]
-    assert t["version"] == "3.2" and t["score"] == p.score and t["btc_band"] == "normal"
+    assert t["version"] == "3.3" and t["score"] == p.score and t["btc_band"] == "normal"
 
     # a second start while an entry rests: max 1 position
     assert "already open" in eng.start(100.0)
@@ -426,7 +431,7 @@ def test_status_says_when_the_next_scan_is(eng, clock):
 
 
 def test_absent_whale_blocks_swing_but_day_trades_it(eng, clock):
-    eng.mkt.absent = {"SOL"}   # no top-60 leaderboard account holds SOL
+    eng.mkt.absent = {"SOL"}   # too few tracked top traders hold SOL
     eng.mkt.adr_rng = 7.0      # day wants the target inside one day's range (1.0 x ADR)
     eng.store.set("strategy", "swing")
     res = eng.start(None)
@@ -436,7 +441,7 @@ def test_absent_whale_blocks_swing_but_day_trades_it(eng, clock):
     assert isinstance(res, Proposal), res
     p = res.plans[0]
     assert p.coin == "SOL" and p.strategy == "day" and p.hold_h == 24
-    assert "[day]" in res.text and "Protocol v3.2" in res.text
+    assert "[day]" in res.text and "Protocol v3.3" in res.text
 
 
 def test_multi_uses_day_only_when_btc_is_fast_or_volatile(eng):
@@ -455,3 +460,69 @@ def test_scan_report_names_the_blocker(eng, clock):
     assert eng._scans["blockers"]["M3 whale L/S"] >= 1
     assert "candidates" in eng._scans["funnel"] or "screened" in eng._scans["funnel"]
     assert "Why no trade" in eng.daily_report() and "Strategy: swing" in eng.daily_report()
+
+
+def test_big_orders_stand_in_when_too_few_top_traders_hold_the_coin(eng):
+    eng.mkt.absent = {"SOL"}
+    eng.store.set("strategy", "swing")
+    # big sellers -> the whale check fails, same threshold as positions
+    eng.mkt.big = {"SOL": {"orders": 9, "ratio": 0.5, "buy_usd": 0.5e6, "sell_usd": 1e6, "ts": time.time()}}
+    res = eng.start(None)
+    assert isinstance(res, str) and "M3 whale L/S" in res and "too few top traders" not in res
+    # too few big orders -> absent again (swing blocks)
+    eng.mkt.big = {"SOL": {"orders": 3, "ratio": 3.0, "buy_usd": 3e6, "sell_usd": 1e6, "ts": time.time()}}
+    res = eng.start(None)
+    assert isinstance(res, str) and "too few top traders hold it" in res
+    # big buyers -> passes on the big-order reading
+    eng.mkt.big = {"SOL": {"orders": 9, "ratio": 2.4, "buy_usd": 2.4e6, "sell_usd": 1e6, "ts": time.time()}}
+    res = eng.start(None)
+    assert isinstance(res, Proposal), res
+    assert "whale L/S 2.40 (9 big orders)" in res.text
+
+
+def test_why_shows_the_last_scan_coin_by_coin(eng):
+    assert eng.why().startswith("No scan since HEVI last started.")
+    eng.mkt.absent = {"SOL"}
+    eng.store.set("strategy", "swing")
+    eng.start(None)
+    text = eng.why()
+    assert text.startswith("Last scan ") and "[swing]" in text and "none passed" in text
+    assert "- SOL long: M3 whale L/S" in text
+    eng.mkt.absent = set()
+    eng.start(None)
+    assert "SOL long: passed every rule" in eng.why()
+
+
+def test_track_record_payload_and_publisher(eng, clock):
+    from hlbot.record import Publisher, build
+
+    eng.start(None)
+    eng.confirm(None)  # a pending paper trade
+    eng.store.record_equity(100.0)
+    body = build(eng)
+    assert body["account"] == "paper" and body["status"]["protocol"] == "3.3"
+    assert [t["coin"] for t in body["trades"]] == ["SOL"] and body["trades"][0]["status"] == "pending"
+    assert set(body["trades"][0]) == set(__import__("hlbot.record", fromlist=["FIELDS"]).FIELDS)
+    text = json.dumps(body)
+    assert "address" not in text and "key" not in text.lower()  # trade facts only
+
+    sent = []
+
+    class Resp:
+        status_code, text = 200, "ok"
+
+    class Http:
+        def post(self, url, json, timeout, headers):
+            sent.append((url, json, headers))
+            return Resp()
+
+    pub = Publisher("https://x.example/", "t" * 40)
+    pub._http = Http()
+    assert pub.maybe_push(eng, now=1000.0) and sent[0][0] == "https://x.example/api/ingest"
+    assert sent[0][2]["Authorization"] == "Bearer " + "t" * 40
+    assert not pub.maybe_push(eng, now=1100.0)          # nothing changed
+    assert pub.maybe_push(eng, now=1000.0 + 1801)       # heartbeat
+    eng.store.record_equity(101.0)
+    clock[0] += 7200
+    assert pub.maybe_push(eng, now=4000.0)              # changed
+    assert not Publisher("", "x").enabled and not Publisher("https://x", "").maybe_push(eng)

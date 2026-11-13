@@ -403,7 +403,7 @@ def plan(**kw):
 def test_card_and_final_check():
     p = plan()
     text = render(p, P, TUE, paper=True)
-    for s in ("HEVI", "Protocol v3.2", "PAPER", "post-only (ALO)", "Isolated", "Leverage:    22x", "Net R/R:     1:3.06",
+    for s in ("HEVI", "Protocol v3.3", "PAPER", "post-only (ALO)", "Isolated", "Leverage:    22x", "Net R/R:     1:3.06",
               "mark-price trigger", "Risk mode:   Normal 10%", "TP slippage ~$0.08"):
         assert s in text, s
     assert final_check(p, P, now=TUE + 60, open_positions=0, pending_entries=0, breakers_blocked=[],

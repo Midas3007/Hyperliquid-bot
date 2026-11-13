@@ -51,6 +51,8 @@ class Config:
     telegram_chat_id: str = field(default_factory=lambda: os.getenv("TELEGRAM_CHAT_ID", ""))
     hl_account_address: str = field(default_factory=lambda: os.getenv("HL_ACCOUNT_ADDRESS", ""))
     hl_api_private_key: str = field(default_factory=lambda: os.getenv("HL_API_PRIVATE_KEY", ""))
+    record_token: str = field(default_factory=lambda: os.getenv("RECORD_TOKEN", "").strip())  # public track record
+    record_url: str = field(default_factory=lambda: os.getenv("RECORD_URL", "").strip())
     network: str = field(default_factory=lambda: os.getenv("HL_NETWORK", "mainnet").lower())
     anthropic_model: str = field(default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5"))
     anthropic_effort: str = field(default_factory=lambda: os.getenv("ANTHROPIC_EFFORT", "high"))
