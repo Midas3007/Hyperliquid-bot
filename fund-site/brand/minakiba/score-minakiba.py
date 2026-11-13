@@ -1,5 +1,5 @@
 # Minakiba teaser score: an original amapiano groove meets a Japanese koto. 112 BPM, 30 s.
-# Log drum, soft kick, shaker and rim, warm pads (Am9 | Fmaj7 | Dm9 | E7sus), and a koto melody in the Japanese In scale
+# Warm fingered bass, congas, shekere, a soft kick and rim, warm pads (Am9 | Fmaj7 | Dm9 | E7sus), and a koto melody in the Japanese In scale
 # (A Bb D E F) that plucks once for each blade of the fan. Timed to teaser.html.
 #   python3 score-minakiba.py out.wav
 import sys, wave
@@ -27,11 +27,19 @@ def koto(m, dur=1.6):  # bright Karplus-Strong pluck with a little pitch bend at
     t = np.arange(n) / SR
     return (out - onepole(out, 0.97)) * (1 + 0.6 * np.exp(-t * 30))
 
-def logdrum(m, dur):  # the amapiano log drum: a sine that slides down, rounded with a little drive
-    t = np.arange(int(SR * (dur + 0.3))) / SR; f = hz(m)
-    ph = 2 * np.pi * np.cumsum(f * (1 + 0.5 * np.exp(-t * 28))) / SR
-    s = np.sin(ph) * (1 - np.exp(-t / 0.003)) * np.exp(-t * 3.2) * np.clip((dur + 0.2 - t) / 0.2, 0, 1)
-    return np.tanh(s * 2.2) / np.tanh(2.2)
+def fbass(m, dur, vel=1.0):  # a warm fingered bass: soft pluck, round body, a little string noise on the attack
+    t = np.arange(int(SR * (dur + 0.25))) / SR; f = hz(m)
+    body = sum(a * np.sin(2 * np.pi * f * k * t) * np.exp(-t * (1.8 + 2.5 * k)) for k, a in ((1, 1), (2, .5), (3, .18), (4, .07)))
+    pluck = onepole(rng.normal(0, 1, len(t)), 0.6) * np.exp(-t * 90) * 0.08
+    s = (body + pluck) * (1 - np.exp(-t / 0.004)) * np.clip((dur + 0.15 - t) / 0.15, 0, 1) * vel
+    return onepole(s, 0.25)
+
+def conga(m, kind='open', vel=1.0):  # hand drum: a skin tone that drops slightly in pitch; a slap adds a bright crack
+    t = np.arange(int(SR * 0.6)) / SR; f = hz(m)
+    ph = 2 * np.pi * np.cumsum(f * (1 + 0.12 * np.exp(-t * 40))) / SR
+    tone = (np.sin(ph) + 0.25 * np.sin(2.3 * ph)) * np.exp(-t * (9 if kind == 'open' else 30))
+    hit = onepole(rng.normal(0, 1, len(t)), 0.3) * np.exp(-t * (60 if kind == 'slap' else 140)) * (0.9 if kind == 'slap' else 0.25)
+    return (tone + hit) * vel
 
 def kick(vel=1.0):
     t = np.arange(int(SR * 0.3)) / SR
@@ -66,11 +74,14 @@ for bar in range(NB):
     if 2 <= bar < 12:  # shaker and soft kick from the fan
         for k in range(16): add(shaker(1.0 if k % 4 == 2 else 0.5), at(bar, k * .25), pan=0.3, gain=0.05)
         for b in range(4): add(kick(0.9), at(bar, b), gain=0.16 if bar >= 5 else 0.08)
-    if 5 <= bar < 12:  # the log drum enters with the name
+    if 5 <= bar < 12:  # bass and congas enter with the name
         r = ROOT[ci] + 12
-        for b, m, d in ((0, r, .7), (1.5, r, .4), (2.25, r + 7, .4), (3, r + 12, .3), (3.5, r + 10, .4)):
-            add(logdrum(m, d * BEAT * 2), at(bar, b), gain=0.30)
-        for b in (1, 3): add(rim(1.0), at(bar, b), pan=-0.25, gain=0.07)
+        for b, m, d in ((0, r, 1.2), (1.5, r + 7, .45), (2, r + 12, .8), (3, r + 7, .45), (3.5, r + 10, .45)):
+            add(fbass(m, d * BEAT, 0.9), at(bar, b), gain=0.42)
+        for b, m, kind, v in ((0.5, 62, 'open', .6), (1, 67, 'slap', .8), (1.75, 62, 'mute', .5), (2, 59, 'open', .8),
+                              (2.5, 62, 'open', .6), (3, 67, 'slap', .8), (3.5, 64, 'open', .7), (3.75, 62, 'mute', .4)):
+            add(conga(m - 12, kind, v), at(bar, b) + rng.normal(0, .006), pan=0.35 if m > 62 else -0.2, gain=0.15)
+        for b in (1, 3): add(rim(1.0), at(bar, b), pan=-0.25, gain=0.05)
 # the koto: the In-scale motif in the intro, one pluck per fan blade, then the melody over the groove
 IN = [57, 58, 62, 64, 65, 69, 70, 74, 76, 77]
 for b, n in ((0.5, 69), (1, 70), (1.5, 74), (2.5, 69), (3, 65), (4.5, 64), (5, 65), (5.5, 69), (6.5, 64)): add(koto(n, 1.8), at(0, b) + 0.6, pan=0.2, gain=0.11)

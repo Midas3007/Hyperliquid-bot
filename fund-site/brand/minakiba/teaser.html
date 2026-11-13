@@ -30,7 +30,7 @@ const BLADE_T = [0, 1, 2, 3, 4].map((i) => at(2, 1 + i))
 function mark(cx, cy, size, k) {
   g.save(); g.translate(cx, cy); g.scale(size / 100, size / 100); g.translate(-50, -50)
   if (k.glow > 0) { const r = g.createRadialGradient(50, 50, 10, 50, 50, 110); r.addColorStop(0, `rgba(0,82,255,${.45 * k.glow})`); r.addColorStop(1, 'rgba(0,82,255,0)'); g.fillStyle = r; g.fillRect(-80, -80, 260, 260) }
-  if (k.coin > 0) { g.fillStyle = BLUE; g.beginPath(); g.arc(50, 50, 48 * back(k.coin), 0, Math.PI * 2); g.fill() }
+  if (k.coin > 0) { const s = back(k.coin); g.save(); g.translate(50, 50); g.rotate((1 - smooth(k.coin)) * Math.PI / 4); g.fillStyle = BLUE; g.beginPath(); g.roundRect(-48 * s, -48 * s, 96 * s, 96 * s, 8 * s); g.fill(); g.restore() }
   const cx0 = 50, cy0 = 60, R = 34, r0 = 5, gap = 3.2
   g.fillStyle = GOLD
   for (let i = 0; i < 5; i++) {
@@ -88,8 +88,8 @@ function market(t) {
     g.stroke()
   }
   const hi = Math.floor(head)
-  txt('cNGN · MARKET A', X(hi) + 22, Y(MA[hi]) + 26, 18, '#7FA6FF', 1, { font: MONO, align: 'left', weight: 400 })
-  txt('cNGN · MARKET B', X(hi) + 22, Y(MB[hi]) - 26, 18, '#B9CCFF', 1, { font: MONO, align: 'left', weight: 400 })
+  txt('cNGN · UNISWAP', X(hi) + 22, Y(MA[hi]) + 26, 18, '#7FA6FF', 1, { font: MONO, align: 'left', weight: 400 })
+  txt('cNGN · TEXTILE', X(hi) + 22, Y(MB[hi]) - 26, 18, '#B9CCFF', 1, { font: MONO, align: 'left', weight: 400 })
   let n = 0
   for (const i of TRADES) {
     if (i > head) break; n++
@@ -98,13 +98,17 @@ function market(t) {
     g.beginPath(); g.moveTo(x, Y(MA[i])); g.lineTo(x, Y(MB[i])); g.stroke()
     g.fillStyle = GOLD; g.beginPath(); g.arc(x, Y(MB[i]), 6, 0, 7); g.fill()
     g.globalAlpha = 1
-    txt('+$' + (0.2 + (MB[i] - MA[i] - 9) * .09).toFixed(2), x, Y(MB[i]) - 34 - age * 50, 24, GREEN, a * clamp(1 - age), { font: MONO, weight: 500 })
+    const pr = 0.2 + (MB[i] - MA[i] - 9) * .09
+    txt('+$' + pr.toFixed(2), x, Y(MB[i]) - 52 - age * 50, 24, GREEN, a * clamp(1 - age), { font: MONO, weight: 500 })
+    txt('₦' + Math.round(pr * 1600.25).toLocaleString('en-US'), x, Y(MB[i]) - 26 - age * 50, 18, '#9FB0D6', a * clamp(1 - age), { font: MONO, weight: 400 })
   }
   g.restore()
   txt('TRADES', 1720, 200, 16, MUTE, a, { font: MONO, align: 'right', spacing: 4, weight: 400 })
   txt(String(Math.round(lerp(0, 4816, smooth(head / (N - 1))))).replace(/\B(?=(\d{3})+(?!\d))/g, ','), 1720, 242, 44, TEXT, a, { font: MONO, align: 'right' })
+  txt('FUND NAIRA RATE  ₦1,600.25 / $1', 1720, 292, 16, '#9FB0D6', a, { font: MONO, align: 'right', spacing: 2, weight: 400 })
   txt('Kiyoshi trades the naira.', 200, 214, 52, TEXT, inout(t, C0 + .3, at(10) - .2), { align: 'left', weight: 600 })
   txt('Every gap, golden.', 200, 214, 52, GOLD, inout(t, at(10), C1 - .4), { align: 'left', weight: 600 })
+  txt('Uniswap ↔ Textile, on Base', 200, 272, 26, MUTE, inout(t, C0 + .8, C1 - .4), { align: 'left', weight: 500 })
   txt('ILLUSTRATION', 200, 900, 14, '#55607e', a, { font: MONO, align: 'left', spacing: 3, weight: 400 })
 }
 

@@ -7,6 +7,9 @@ const path = require('path')
   const p = await b.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2 })
   await p.goto('file://' + path.join(__dirname, 'design.html'))
   await p.evaluate(() => document.fonts.ready)
+  require('fs').writeFileSync(path.join(out, 'minakiba-logo.svg'), await p.evaluate(() => window.logo(1024)))
+  await p.locator('#logoOnly').screenshot({ path: path.join(out, 'minakiba-logo.png'), omitBackground: true })
+  await p.locator('#logoSheet').screenshot({ path: path.join(out, 'minakiba-logo-wordmark.png') })
   for (const [id, name] of [['brand', '1-brand'], ['landing', '2-site'], ['dash', '3-dashboard'], ['account', '4-account'], ['phone', '5-phone']]) {
     await p.locator('#' + id).screenshot({ path: path.join(out, `minakiba-${name}.png`) })
   }
