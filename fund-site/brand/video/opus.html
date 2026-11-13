@@ -1,0 +1,219 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// "Opus": the Midas x Kiyoshi story told by one cloud of gold that never cuts. A heartbeat of light becomes a thread,
+// a woven cloth, Kiyoshi's fan, a sphere with a 24-hour ring, a galaxy of trades, two rivers of price with gold in the
+// gap, the real season-one share price, the fan again and finally the name. 93.3 s, timed to score-opus.py (72 BPM).
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const BAR = 60 / 72 * 4, DUR = BAR * 28
+const SERIF = 'Caladea, "Liberation Serif", serif', MONO = '"JetBrains Mono", monospace'
+const GOLD2 = '#F3D77A', WHITE = '#F7F1E3', SOFT = '#cfc5ad', GREEN = '#7BE0AE'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x)), lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const backOut = (x) => { x = clamp(x); const s = 1.4; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2) }
+const inout = (t, a, b, f = .8) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+const PI = Math.PI
+
+// ---------- particles ----------
+const N = 7000
+let seed = 20251029; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+const R = []; for (let i = 0; i < N; i++) R.push([rnd(), rnd(), rnd(), rnd(), rnd(), rnd(), rnd(), rnd()])
+const gauss = (a, b) => Math.sqrt(-2 * Math.log(a + 1e-9)) * Math.cos(2 * PI * b)
+const COL = R.map((r) => (r[5] < .55 ? 0 : r[5] < .88 ? 1 : 2))
+const SIZE = R.map((r) => 1.3 + Math.pow(r[6], 3) * 3.4)
+function sprite(rgb) {
+  const s = document.createElement('canvas'); s.width = s.height = 64; const x = s.getContext('2d')
+  const gr = x.createRadialGradient(32, 32, 0, 32, 32, 32)
+  gr.addColorStop(0, 'rgba(255,252,240,1)'); gr.addColorStop(.18, `rgba(${rgb},.9)`); gr.addColorStop(.5, `rgba(${rgb},.22)`); gr.addColorStop(1, `rgba(${rgb},0)`)
+  x.fillStyle = gr; x.fillRect(0, 0, 64, 64); return s
+}
+const SPR = [sprite('212,175,55'), sprite('243,215,122'), sprite('255,240,205')]
+
+// the share price, season one (daily closes from the chain, 29 Oct to 13 Nov)
+const CLOSES = [1.002, 1.212, 1.246, 1.2996, 1.4235, 1.4606, 1.5072, 1.5962, 1.7117, 1.7468, 1.7561, 1.8187, 2.158, 2.383, 2.4289, 2.4461]
+const PX0 = -760, PX1 = 700, priceY = (p) => 300 - (p - 1) / 1.5 * 600
+function curve(u) { // smooth through the closes, u in 0..1
+  const f = u * (CLOSES.length - 1), i = Math.min(CLOSES.length - 2, Math.floor(f)), k = f - i
+  const p0 = CLOSES[Math.max(0, i - 1)], p1 = CLOSES[i], p2 = CLOSES[i + 1], p3 = CLOSES[Math.min(CLOSES.length - 1, i + 2)]
+  const p = .5 * ((2 * p1) + (-p0 + p2) * k + (2 * p0 - 5 * p1 + 4 * p2 - p3) * k * k + (-p0 + 3 * p1 - 3 * p2 + p3) * k * k * k)
+  return [lerp(PX0, PX1, u), priceY(p), p]
+}
+
+// the name, sampled from the same type the end card uses
+const TITLE = { font: `700 132px ${SERIF}`, spacing: 16, y: 190 }
+let TXT = null
+function textPoints() {
+  const cv = document.createElement('canvas'); cv.width = 1920; cv.height = 400; const x = cv.getContext('2d')
+  x.font = TITLE.font; x.letterSpacing = TITLE.spacing + 'px'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#fff'
+  x.fillText('MIDAS × KIYOSHI', 960 + TITLE.spacing / 2, 200)
+  const d = x.getImageData(0, 0, 1920, 400).data, pts = []
+  for (let y = 0; y < 400; y += 2) for (let xx = 0; xx < 1920; xx += 2) if (d[(y * 1920 + xx) * 4 + 3] > 140) pts.push([xx - 960, y - 200 + TITLE.y])
+  return pts
+}
+
+const BLADES = 13, BW = 140 / BLADES
+function fanPt(r, px, py, R0, R1, open, o) {
+  const b = Math.floor(r[0] * BLADES), center = 200 + BW * (b + .5)
+  const ang = 270 + (center - 270) * open, a = (ang + (r[1] - .5) * (BW - 1.9)) * PI / 180
+  const rad = r[3] < .16 ? R1 - r[2] * 4 : Math.sqrt(r[2] * (R1 * R1 - R0 * R0) + R0 * R0)
+  o[0] = px + Math.cos(a) * rad; o[1] = py + Math.sin(a) * rad; o[2] = (r[4] - .5) * 18
+}
+const rotX = (o, a) => { const y = o[1], z = o[2], c = Math.cos(a), s = Math.sin(a); o[1] = y * c - z * s; o[2] = y * s + z * c }
+const rotY = (o, a) => { const x = o[0], z = o[2], c = Math.cos(a), s = Math.sin(a); o[0] = x * c + z * s; o[2] = -x * s + z * c }
+const beat = (t) => { const k = t % BAR; return Math.exp(-k * 7) + (k > .3 ? .6 * Math.exp(-(k - .3) * 7) : 0) }
+
+const T = { line: BAR * 3, cloth: BAR * 5, fan: BAR * 8, sphere: BAR * 11, galaxy: BAR * 14, rivers: BAR * 17, price: BAR * 20, emblem: BAR * 23, final: BAR * 25 }
+const SH = {
+  point(i, t, o) { const r = R[i], s = 7 * (1 + .45 * beat(t)); o[0] = gauss(r[0], r[1]) * s; o[1] = gauss(r[2], r[3]) * s; o[2] = gauss(r[1], r[4]) * s },
+  line(i, t, o) { const r = R[i], x = (r[0] * 2 - 1) * 840; o[0] = x; o[1] = gauss(r[2], r[3]) * 1.8 + Math.sin(x / 150 + t * 1.3) * 7; o[2] = gauss(r[1], r[4]) * 16 },
+  cloth(i, t, o) {
+    const r = R[i]
+    if (r[0] < .5) { o[1] = -330 + Math.floor(r[1] * 23) * 30; o[0] = (r[2] * 2 - 1) * 540 } else { o[0] = -540 + Math.floor(r[1] * 37) * 30; o[1] = (r[2] * 2 - 1) * 330 }
+    o[0] += gauss(r[3], r[4]) * 1.2; o[2] = Math.sin(o[0] / 130 + t * .9) * 34 + Math.cos(o[1] / 95 + t * .6) * 22
+    rotX(o, .55); rotY(o, Math.sin(t * .15) * .35)
+  },
+  fan(i, t, o) { const r = R[i], b = Math.floor(r[0] * BLADES); fanPt(r, 0, 250, 70, 440, backOut((t - T.fan - Math.abs(b - 6) * .07) / 1.9), o); rotY(o, Math.sin(t * .25) * .18) },
+  sphere(i, t, o) {
+    const r = R[i]
+    if (r[0] < .76) { const k = (i + .5) / N, ph = Math.acos(1 - 2 * k), th = i * 2.399963; o[0] = 290 * Math.sin(ph) * Math.cos(th); o[1] = 290 * Math.cos(ph); o[2] = 290 * Math.sin(ph) * Math.sin(th); rotY(o, t * .35) }
+    else { let a = r[1] * 2 * PI; if (r[2] < .35) a = Math.round(a / (2 * PI / 24)) * (2 * PI / 24) + gauss(r[3], r[4]) * .012; a += t * .12; const rad = 430 + (r[2] < .35 ? 0 : (r[3] - .5) * 46); o[0] = Math.cos(a) * rad; o[1] = gauss(r[4], r[6]) * 2; o[2] = Math.sin(a) * rad }
+    rotX(o, .42); rotY(o, .2)
+  },
+  galaxy(i, t, o) {
+    const r = R[i], rr = 22 + 500 * Math.pow(r[0], .85), arm = i % 3
+    const a = arm * 2 * PI / 3 + rr * .011 + gauss(r[1], r[2]) * .22 * (1 - rr / 600) + t * .1
+    o[0] = Math.cos(a) * rr; o[2] = Math.sin(a) * rr; o[1] = gauss(r[3], r[4]) * 12 * (1 - rr / 600)
+    rotX(o, 1.12); o[1] -= 50
+  },
+  rivers(i, t, o) {
+    const r = R[i], u = (r[1] + t * .045) % 1, x = -980 + u * 1960, env = 26 + 150 * Math.pow(Math.cos(u * PI * 1.6 + .5), 2)
+    if (r[0] < .12) { // sparks bridging the gap
+      const q = ((Math.floor(r[3] * 14) + .5) / 14 + t * .045) % 1, xs = -980 + q * 1960, e = 26 + 150 * Math.pow(Math.cos(q * PI * 1.6 + .5), 2)
+      o[0] = xs + gauss(r[4], r[6]) * 2; o[1] = lerp(-e, e, r[2]) + Math.sin(q * 7 + t) * 30; o[2] = 0
+    } else { const s = r[0] < .56 ? -1 : 1; o[0] = x; o[1] = s * env + Math.sin(u * 7 + t) * 30 + gauss(r[2], r[4]) * 9; o[2] = gauss(r[3], r[6]) * 40 }
+    rotX(o, .25)
+  },
+  price(i, t, o) {
+    const r = R[i], head = smooth((t - T.price) / 6.2)
+    if (r[0] < .66) { const u = r[1] * head, p = curve(u); o[0] = p[0]; o[1] = p[1] + gauss(r[2], r[3]) * 2.6; o[2] = gauss(r[3], r[4]) * 10; if (r[1] > .985) { o[0] += gauss(r[4], r[6]) * 9; o[1] += gauss(r[2], r[6]) * 9 } }
+    else { const u = r[1] * head, p = curve(u); o[0] = p[0]; o[1] = lerp(p[1], 330, Math.pow(r[2], 1.7)); o[2] = (r[3] - .5) * 60 }
+  },
+  emblem(i, t, o) { fanPt(R[i], 0, 240, 64, 420, 1, o); rotY(o, Math.sin((t - T.emblem) * .35) * .12) },
+  final(i, t, o) {
+    const r = R[i]
+    if (!TXT) TXT = textPoints()
+    if (r[7] < .64) { const p = TXT[Math.floor(r[6] * TXT.length)]; o[0] = p[0] + (r[3] - .5) * 1.4; o[1] = p[1] + (r[4] - .5) * 1.4; o[2] = 0 }
+    else fanPt(r, 0, 20, 30, 230, 1, o)
+  },
+}
+const KEYS = [['point', 0, 0], ['line', T.line, 2.6], ['cloth', T.cloth, 3.2], ['fan', T.fan, 3.2], ['sphere', T.sphere, 3.2], ['galaxy', T.galaxy, 2.8], ['rivers', T.rivers, 3.2], ['price', T.price, 3.0], ['emblem', T.emblem, 2.4], ['final', T.final, 3.2]]
+const DENS = { point: .07, line: .2, cloth: .42, fan: .5, sphere: .5, galaxy: .62, rivers: .55, price: .62, emblem: .55, final: .62 }
+
+const A = [0, 0, 0], B = [0, 0, 0]
+const sm = document.createElement('canvas'), sm2 = document.createElement('canvas')
+sm.width = Math.round(W / 4); sm.height = Math.round(H / 4); sm2.width = Math.round(W / 10); sm2.height = Math.round(H / 10)
+const smg = sm.getContext('2d'), smg2 = sm2.getContext('2d')
+const STARS = Array.from({ length: 260 }, () => [rnd() * 1920, rnd() * 1080, rnd()])
+
+function project(o, cam) { // camera: slow drift around the scene, gentle breathing zoom
+  rotY(o, cam.y); rotX(o, cam.x)
+  const F = 1600, z = o[2] + cam.z, s = F / (F + z)
+  return [960 + o[0] * s * cam.zoom, 540 + o[1] * s * cam.zoom, s]
+}
+function txt(s, x, y, size, color, a = 1, o = {}) { if (a <= .003) return; g.save(); g.globalAlpha = a; g.fillStyle = color; g.font = `${o.italic ? 'italic ' : ''}${o.weight || 400} ${size}px ${o.font || SERIF}`; g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'; g.shadowColor = 'rgba(0,0,0,.9)'; g.shadowBlur = 24; g.fillText(s, x, y); g.restore() }
+
+function draw(t) {
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  const bg = g.createRadialGradient(960, 520, 30, 960, 540, 1150); bg.addColorStop(0, '#120d06'); bg.addColorStop(.55, '#07060a'); bg.addColorStop(1, '#020203')
+  g.fillStyle = bg; g.fillRect(0, 0, 1920, 1080)
+  const starA = smooth((t - 2) / 6) * (1 - smooth((t - T.final) / 4) * .6)
+  for (const [x, y, k] of STARS) { g.globalAlpha = starA * (.15 + .35 * k) * (.7 + .3 * Math.sin(t * (1 + k * 2) + k * 40)); g.fillStyle = '#e9dcc0'; g.fillRect(x, y, 1.6, 1.6) }
+  g.globalAlpha = 1
+
+  // which shapes, how far through the morph
+  let ja = 0, jb = 0, u = 1
+  for (let j = 1; j < KEYS.length; j++) {
+    const [, tk, md] = KEYS[j]
+    if (t >= tk) { ja = jb = j; u = 1 } else if (t >= tk - md) { ja = j - 1; jb = j; u = (t - (tk - md)) / md; break } else break
+  }
+  const na = KEYS[ja][0], nb = KEYS[jb][0], fa = SH[na], fb = SH[nb]
+  const dens = lerp(DENS[na], DENS[nb], smooth(u))
+  const cam = { y: .09 * Math.sin(t * .06) + (t > T.final ? -.09 * Math.sin(T.final * .06) * smooth((t - T.final) / 3) : 0), x: .04 * Math.sin(t * .045 + 1), z: 0, zoom: 1 + .035 * Math.sin(t * .11) }
+  if (t > T.final) { cam.y *= 1 - smooth((t - T.final + 1) / 3); cam.x *= 1 - smooth((t - T.final + 1) / 3); cam.zoom = lerp(cam.zoom, 1, smooth((t - T.final + 1) / 3)) }
+  const intro = smooth(t / 2.5)
+
+  g.globalCompositeOperation = 'lighter'
+  for (let i = 0; i < N; i++) {
+    const r = R[i]
+    fa(i, t, A)
+    let x = A[0], y = A[1], z = A[2]
+    if (ja !== jb) {
+      fb(i, t, B)
+      const k = smooth((u - r[7] * .4) / .6), s = Math.sin(PI * k)
+      x = lerp(A[0], B[0], k); y = lerp(A[1], B[1], k); z = lerp(A[2], B[2], k)
+      const a = s * 1.3 * (r[6] - .5) * 2, cx = Math.cos(a), sx = Math.sin(a), x2 = x * cx + z * sx
+      z = -x * sx + z * cx + s * (r[4] - .5) * 520; x = x2; y += s * (r[3] - .5) * 140
+    }
+    const o = [x, y, z], p = project(o, cam)
+    if (p[2] <= .05) continue
+    const sz = SIZE[i] * p[2] * 2.2
+    g.globalAlpha = clamp(dens * (.35 + .65 * Math.min(1.4, p[2])) * intro)
+    g.drawImage(SPR[COL[i]], p[0] - sz, p[1] - sz, sz * 2, sz * 2)
+  }
+  // the heartbeat at the very start: one hot core
+  const coreA = (1 - smooth((t - T.line + 2.6) / 1.5)) * intro
+  if (coreA > 0) { const s = 60 + 40 * beat(t); g.globalAlpha = coreA * (.55 + .45 * beat(t)); g.drawImage(SPR[2], 960 - s, 540 - s, s * 2, s * 2) }
+
+  // bloom: the frame, shrunk and blown back up over itself
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1
+  smg.globalCompositeOperation = 'copy'; smg.drawImage(c, 0, 0, sm.width, sm.height)
+  smg2.globalCompositeOperation = 'copy'; smg2.drawImage(sm, 0, 0, sm2.width, sm2.height)
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'
+  g.globalAlpha = .55; g.drawImage(sm, 0, 0, W, H); g.globalAlpha = .45; g.drawImage(sm2, 0, 0, W, H)
+  g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+
+  // the thunderclap when the fan returns
+  if (t > T.emblem && t < T.emblem + 2) { g.globalAlpha = .42 * Math.exp(-(t - T.emblem) * 3.2); g.fillStyle = '#fff3d6'; g.fillRect(0, 0, 1920, 1080); g.globalAlpha = 1 }
+
+  // the share price: labels ride the drawing head
+  const pa = inout(t, T.price - .8, T.emblem - 2.0, .7)
+  if (pa > 0) {
+    const head = smooth((t - T.price) / 6.2), hp = curve(head), q = project([hp[0], hp[1], 0], cam), q0 = project([PX0, priceY(1.002), 0], cam)
+    txt('SHARE PRICE · SEASON ONE', 960, 140, 20, SOFT, pa * .85, { font: MONO, spacing: 8 })
+    txt('$1.00', q0[0], q0[1] + 48, 28, SOFT, pa, { font: MONO })
+    txt('$' + hp[2].toFixed(2), q[0] + 18, q[1] - 46, 40, GOLD2, pa, { font: MONO, weight: 600, align: 'left' })
+    txt('+' + Math.round((2.4461 / 1.002 - 1) * 100) + '%', 600, 330, 120, GREEN, pa * smooth((t - T.price - 6.4) / 1), { weight: 700 })
+    txt('in fifteen days', 600, 420, 34, SOFT, pa * smooth((t - T.price - 6.8) / 1), { italic: true })
+  }
+  // words
+  const cap = (s, a, b, col = WHITE) => txt(s, 960, 960, 50, col, inout(t, a, b), { italic: true })
+  cap('In the beginning, there was a gap.', 1.4, T.line - 2.4)
+  cap('Every trade, a thread.', T.line + .3, T.cloth - 2.6)
+  cap('Thread by thread, patience is woven.', T.cloth + .5, T.fan - 3)
+  cap('A fan that never closes.', T.fan + 1.2, T.sphere - 3)
+  cap('Around the clock. Around the world.', T.sphere + .5, T.galaxy - 2.6)
+  cap('3,397 trades. Each one, a star.', T.galaxy + .4, T.rivers - 3)
+  cap('Two markets. One gap. Gold in between.', T.rivers + .5, T.price - 3)
+  cap('One dollar became two forty-five.', T.price + 1, T.emblem - 2.2, GOLD2)
+  cap('And this is only the beginning.', T.emblem + 1, T.final - 2.8)
+  // the end card: crisp type settles over the particles
+  const e = smooth((t - T.final - .8) / 1.6)
+  if (e > 0) {
+    g.save(); g.globalAlpha = e * .92; g.fillStyle = '#FFF6DC'; g.font = TITLE.font; g.letterSpacing = TITLE.spacing + 'px'; g.textAlign = 'center'; g.textBaseline = 'middle'
+    g.shadowColor = 'rgba(243,215,122,.55)'; g.shadowBlur = 30; g.fillText('MIDAS × KIYOSHI', 960 + TITLE.spacing / 2, 540 + TITLE.y); g.restore()
+    txt('Patience, turned to gold.', 960, 540 + TITLE.y + 110, 46, GOLD2, smooth((t - T.final - 2.4) / 1.4), { italic: true })
+    txt('Not financial advice · past results do not promise future returns · you can lose money', 960, 1040, 16, SOFT, smooth((t - T.final - 3.4) / 1.2) * .6, { font: MONO })
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .32, W / 2, H / 2, Math.max(W, H) * .78); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.62)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / 1.2) + clamp((t - (DUR - 1.8)) / 1.8); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready
+</script></body></html>
