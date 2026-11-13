@@ -1,0 +1,160 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script>
+// Minakiba teaser, 30 s, timed to score-minakiba.py (112 BPM: a beat is 0.5357 s, a bar 2.143 s).
+// The naira's two bars draw in, the base line, Kiyoshi's fan opens blade by blade, the blue coin rises behind it,
+// the name breaks into MI NA KI BA, two naira markets race and the gaps turn gold, then the end card.
+const P = new URLSearchParams(location.search)
+const W = +(P.get('w') || 1920), H = +(P.get('h') || 1080)
+const c = document.getElementById('c'); c.width = W; c.height = H
+const g = c.getContext('2d')
+const DUR = 30, BEAT = 60 / 112, BAR = 4 * BEAT, at = (bar, beat = 0) => bar * BAR + beat * BEAT
+const GOLD = '#E9C766', BLUE = '#0052FF', NIGHT = '#070B18', TEXT = '#EEF1F8', MUTE = '#8C98B8', GREEN = '#3DDC97'
+const DISP = '"Inter Display", Inter, sans-serif', MONO = '"JetBrains Mono", monospace'
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x)), lerp = (a, b, k) => a + (b - a) * k
+const smooth = (x) => { x = clamp(x); return x * x * x * (x * (x * 6 - 15) + 10) }
+const back = (x) => { x = clamp(x); const s = 1.6; return 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2) }
+const inout = (t, a, b, f = .5) => smooth((t - a) / f) * (1 - smooth((t - b) / f))
+
+function txt(s, x, y, size, color, a = 1, o = {}) {
+  if (a <= .003) return
+  g.save(); g.globalAlpha = a; g.fillStyle = color; g.font = `${o.weight || 500} ${size}px ${o.font || DISP}`
+  g.textAlign = o.align || 'center'; g.textBaseline = 'middle'; if (o.spacing) g.letterSpacing = o.spacing + 'px'
+  g.fillText(s, x, y); g.restore()
+}
+
+// the mark, in its 100-unit box; k = { bars, base, blades[5], coin, glow }
+const BLADE_T = [0, 1, 2, 3, 4].map((i) => at(2, 1 + i))
+function mark(cx, cy, size, k) {
+  g.save(); g.translate(cx, cy); g.scale(size / 100, size / 100); g.translate(-50, -50)
+  if (k.glow > 0) { const r = g.createRadialGradient(50, 50, 10, 50, 50, 110); r.addColorStop(0, `rgba(0,82,255,${.45 * k.glow})`); r.addColorStop(1, 'rgba(0,82,255,0)'); g.fillStyle = r; g.fillRect(-80, -80, 260, 260) }
+  if (k.coin > 0) { g.fillStyle = BLUE; g.beginPath(); g.arc(50, 50, 48 * back(k.coin), 0, Math.PI * 2); g.fill() }
+  const cx0 = 50, cy0 = 60, R = 34, r0 = 5, gap = 3.2
+  g.fillStyle = GOLD
+  for (let i = 0; i < 5; i++) {
+    const o = k.blades[i]; if (o <= 0) continue
+    // each blade swings up from the base line to its place, like a fan opening from the left
+    const a0f = (180 + i * 36 + gap / 2), a1f = (180 + (i + 1) * 36 - gap / 2)
+    const sw = (1 - back(o)) * (a0f - 180) * -1
+    const a0 = (a0f + sw) * Math.PI / 180, a1 = (a1f + sw) * Math.PI / 180
+    g.globalAlpha = clamp(o * 3)
+    g.beginPath(); g.moveTo(cx0 + r0 * Math.cos(a0), cy0 + r0 * Math.sin(a0)); g.lineTo(cx0 + R * Math.cos(a0), cy0 + R * Math.sin(a0))
+    g.arc(cx0, cy0, R, a0, a1); g.lineTo(cx0 + r0 * Math.cos(a1), cy0 + r0 * Math.sin(a1)); g.closePath(); g.fill()
+  }
+  g.globalAlpha = 1
+  // the naira's two bars: gold lines while they draw in alone, then cuts through the fan in the coin's blue
+  if (k.bars > 0) {
+    const w = 76 * smooth(k.bars), cut = k.cut || 0
+    g.fillStyle = cut > .5 ? (k.coin > 0 ? BLUE : '#0A1330') : GOLD
+    if (cut > .5) { g.save(); g.beginPath(); g.arc(cx0, cy0, R + .6, 0, Math.PI * 2); g.clip(); g.fillRect(12, 40.2, 76, 2.6); g.fillRect(12, 47.6, 76, 2.6); g.restore() }
+    else { g.fillRect(12, 40.2, w, 2.6); g.fillRect(88 - w, 47.6, w, 2.6) }
+  }
+  if (k.base > 0) { g.fillStyle = GOLD; const w = 70 * smooth(k.base); g.beginPath(); g.roundRect(50 - w / 2, 61.2, w, 3, 1.5); g.fill() }
+  g.restore()
+}
+function markState(t) {
+  return { bars: smooth((t - 1.2) / 2.2), cut: t > BLADE_T[0] ? 1 : 0, base: smooth((t - at(2) + .3) / .6), blades: BLADE_T.map((b) => clamp((t - b) / .45)), coin: clamp((t - at(4, 2)) / .7), glow: smooth((t - at(4, 2)) / 1.2) }
+}
+const FULL = { bars: 1, cut: 1, base: 1, blades: [1, 1, 1, 1, 1], coin: 1, glow: 1 }
+
+// two naira markets racing; where they drift apart the gap turns gold and a trade fires
+const N = 160, MA = [], MB = []
+{ let s = 17, x = 0, v = 0; const rnd = () => (s = (s * 9301 + 49297) % 233280) / 233280
+  for (let i = 0; i < N; i++) { v = v * .82 + (rnd() - .5) * 1.4; x = x * .97 + v; const gap = 13 * Math.max(0, Math.sin(i / 7) * Math.sin(i / 17 + 1)) + 1.5; MA.push(x * 1.6 + 4 * Math.sin(i / 20)); MB.push(MA[i] + gap) } }
+const TRADES = []; for (let i = 6; i < N; i++) if (MB[i] - MA[i] > 9 && (!TRADES.length || i - TRADES[TRADES.length - 1] > 9)) TRADES.push(i)
+const C0 = at(8), C1 = at(12)
+
+function market(t) {
+  const a = inout(t, C0, C1 - .35, .5); if (a <= 0) return
+  const x0 = 200, x1 = 1720, y0 = 600, sc = 12
+  const head = clamp((t - C0 - .2) / (C1 - C0 - 1.6)) * (N - 1)
+  const X = (i) => x0 + i / (N - 1) * (x1 - x0), Y = (v) => y0 - v * sc
+  g.save(); g.globalAlpha = a
+  g.strokeStyle = 'rgba(140,152,184,.12)'; g.lineWidth = 1
+  for (let k = -2; k <= 2; k++) { g.beginPath(); g.moveTo(x0, y0 + k * 110); g.lineTo(x1, y0 + k * 110); g.stroke() }
+  // gold where the gap pays
+  g.fillStyle = 'rgba(233,199,102,.38)'
+  for (let i = 0; i <= head; i++) {
+    if (MB[i] - MA[i] <= 9) continue
+    let j = i; while (j + 1 <= head && MB[j + 1] - MA[j + 1] > 9) j++
+    g.beginPath(); for (let k = i; k <= j; k++) k === i ? g.moveTo(X(k), Y(MB[k])) : g.lineTo(X(k), Y(MB[k]))
+    for (let k = j; k >= i; k--) g.lineTo(X(k), Y(MA[k])); g.closePath(); g.fill(); i = j
+  }
+  for (const [arr, col] of [[MA, BLUE], [MB, '#4D86FF']]) {
+    g.strokeStyle = col; g.lineWidth = 3.5; g.lineJoin = 'round'; g.beginPath()
+    for (let i = 0; i <= head; i++) i ? g.lineTo(X(i), Y(arr[i])) : g.moveTo(X(i), Y(arr[i]))
+    g.stroke()
+  }
+  const hi = Math.floor(head)
+  txt('cNGN · MARKET A', X(hi) + 22, Y(MA[hi]) + 26, 18, '#7FA6FF', 1, { font: MONO, align: 'left', weight: 400 })
+  txt('cNGN · MARKET B', X(hi) + 22, Y(MB[hi]) - 26, 18, '#B9CCFF', 1, { font: MONO, align: 'left', weight: 400 })
+  let n = 0
+  for (const i of TRADES) {
+    if (i > head) break; n++
+    const age = (head - i) / 40, x = X(i)
+    g.strokeStyle = GOLD; g.lineWidth = 3; g.globalAlpha = a * clamp(1 - age * .6)
+    g.beginPath(); g.moveTo(x, Y(MA[i])); g.lineTo(x, Y(MB[i])); g.stroke()
+    g.fillStyle = GOLD; g.beginPath(); g.arc(x, Y(MB[i]), 6, 0, 7); g.fill()
+    g.globalAlpha = 1
+    txt('+$' + (0.2 + (MB[i] - MA[i] - 9) * .09).toFixed(2), x, Y(MB[i]) - 34 - age * 50, 24, GREEN, a * clamp(1 - age), { font: MONO, weight: 500 })
+  }
+  g.restore()
+  txt('TRADES', 1720, 200, 16, MUTE, a, { font: MONO, align: 'right', spacing: 4, weight: 400 })
+  txt(String(Math.round(lerp(0, 4816, smooth(head / (N - 1))))).replace(/\B(?=(\d{3})+(?!\d))/g, ','), 1720, 242, 44, TEXT, a, { font: MONO, align: 'right' })
+  txt('Kiyoshi trades the naira.', 200, 214, 52, TEXT, inout(t, C0 + .3, at(10) - .2), { align: 'left', weight: 600 })
+  txt('Every gap, golden.', 200, 214, 52, GOLD, inout(t, at(10), C1 - .4), { align: 'left', weight: 600 })
+  txt('ILLUSTRATION', 200, 900, 14, '#55607e', a, { font: MONO, align: 'left', spacing: 3, weight: 400 })
+}
+
+function draw(t) {
+  g.setTransform(W / 1920, 0, 0, H / 1080, 0, 0)
+  g.fillStyle = NIGHT; g.fillRect(0, 0, 1920, 1080)
+  const bg = g.createRadialGradient(960, 480, 40, 960, 540, 1100); bg.addColorStop(0, '#0C1638'); bg.addColorStop(1, NIGHT); g.fillStyle = bg; g.fillRect(0, 0, 1920, 1080)
+
+  // A: the mark builds in the centre, B: it moves left for the name
+  const W5 = at(5), aOut = 1 - smooth((t - C0 + .5) / .5)
+  if (t < C0) {
+    const m = smooth((t - W5) / 1.1)
+    const cx = lerp(960, 560, m), cy = lerp(500, 500, m), size = lerp(460, 330, m)
+    g.globalAlpha = aOut; mark(cx, cy, size, markState(t)); g.globalAlpha = 1
+    txt('Same engine.', 960, 880, 46, TEXT, inout(t, 1.4, at(2) - .2), { weight: 500 })
+    txt('A new market.', 960, 880, 46, TEXT, inout(t, at(2) + .2, at(4, 2) - .1), { weight: 500 })
+    txt('On Base.', 960, 880, 46, '#7FA6FF', inout(t, at(4, 2) + .1, W5 - .1), { weight: 500 })
+    // B: the name, letters in on the beat, then the four roots under it
+    const word = 'MINAKIBA', wx = 790, wy = 460
+    g.save(); g.font = `600 112px ${DISP}`; g.letterSpacing = '22px'; let x = wx
+    for (let i = 0; i < word.length; i++) {
+      const a = smooth((t - W5 - .5 - i * BEAT / 2) / .35) * aOut
+      g.globalAlpha = a; g.fillStyle = TEXT; g.textBaseline = 'middle'; g.fillText(word[i], x, wy + (1 - a) * 24)
+      x += g.measureText(word[i]).width + 22
+    }
+    g.restore()
+    const roots = [['MI', 'Midas', GOLD], ['NA', 'Naira', TEXT], ['KI', 'Kiyoshi', TEXT], ['BA', 'Base', '#7FA6FF']]
+    g.save(); g.font = `600 112px ${DISP}`; g.letterSpacing = '22px'; const pairW = g.measureText('MI').width + 44; g.restore()
+    roots.forEach(([s, name, col], i) => {
+      const a = inout(t, at(6, 2) + i * BEAT, C0 - .6, .35) * aOut, x = wx + i * pairW * .98 + pairW / 2 - 22
+      g.fillStyle = col; g.globalAlpha = a; g.fillRect(x - pairW / 2 + 16, wy + 70, pairW - 40, 3); g.globalAlpha = 1
+      txt(name, x, wy + 112, 30, col, a, { weight: 500 })
+    })
+    txt('A MIDAS × KIYOSHI FUND ON BASE', 790, 680, 22, MUTE, smooth((t - at(7, 2)) / .6) * aOut, { font: MONO, align: 'left', spacing: 6, weight: 400 })
+  }
+
+  market(t)
+
+  // D: end card
+  const e = smooth((t - C1) / .7)
+  if (e > 0) {
+    mark(960, 420, lerp(200, 300, back(e)), FULL)
+    txt('MINAKIBA', 960 + 11, 650, 92, TEXT, smooth((t - C1 - .3) / .6), { weight: 600, spacing: 22 })
+    txt('A MIDAS × KIYOSHI FUND ON BASE', 960, 735, 22, MUTE, smooth((t - C1 - .8) / .6), { font: MONO, spacing: 6, weight: 400 })
+    txt('Coming soon', 960, 830, 40, GOLD, smooth((t - at(12, 2)) / .7), { weight: 500 })
+    txt('Not financial advice · you can lose money', 960, 1020, 16, '#55607e', smooth((t - at(13)) / .7), { font: MONO, weight: 400 })
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0)
+  const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * .35, W / 2, H / 2, Math.max(W, H) * .75); vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.55)'); g.fillStyle = vg; g.fillRect(0, 0, W, H)
+  g.globalAlpha = clamp(1 - t / .8) + clamp((t - (DUR - 1.2)) / 1.2); g.fillStyle = '#000'; g.fillRect(0, 0, W, H); g.globalAlpha = 1
+}
+window.draw = draw; window.DUR = DUR; window.READY = document.fonts.ready
+</script></body></html>
