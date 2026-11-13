@@ -342,7 +342,7 @@ function vAdmin() {
   </div>
   <div class="section-title">Holders</div>
   <div class="table-wrap"><table><thead><tr><th>Wallet</th><th class="num">Shares</th><th class="num">% of fund</th><th class="num">Value</th><th class="num">Put in</th><th class="num">Waiting</th><th>Approved</th><th></th></tr></thead><tbody>
-  ${holders === undefined ? '<tr><td colspan="8" class="muted">Reading…</td></tr>' : holders.length ? holders.map((h) => `<tr><td>${vLink('address/' + h.a, esc(vMask(h.a)))}${same(h.a, d.feeRecipient) ? ' <span class="pill gold">you</span>' : ''}</td>
+  ${holders === undefined ? '<tr><td colspan="8" class="muted">Reading…</td></tr>' : holders.length ? holders.filter((h) => h.allowed || h.shares + h.escrowed > 0n || h.queued > 0n).map((h) => `<tr><td>${vLink('address/' + h.a, esc(vMask(h.a)))}${same(h.a, d.feeRecipient) ? ' <span class="pill gold">you</span>' : ''}</td>
     <td class="num">${vShares(h.shares + h.escrowed)}</td><td class="num">${vPct(h.shares + h.escrowed)}</td><td class="num">${money(vUsd(h.value))}</td><td class="num">${money(vUsd(h.cost))}</td>
     <td class="num">${h.queued ? money(vUsd(h.queued)) + ' in' : ''}${h.escrowed ? ` ${vShares(h.escrowed)} out` : ''}</td><td>${h.allowed ? 'yes' : 'no'}</td>
     <td class="num"><button class="btn plain small" data-vault="${h.allowed ? 'remove' : 'approve'}" data-who="${h.a}">${h.allowed ? 'Remove' : 'Approve'}</button></td></tr>`).join('') : '<tr><td colspan="8" class="muted">No wallets yet</td></tr>'}

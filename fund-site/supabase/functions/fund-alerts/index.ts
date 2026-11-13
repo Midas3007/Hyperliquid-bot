@@ -19,6 +19,8 @@ const REMIND_MS = 6 * 3_600_000
 const SILENT_MS = 20 * 60_000
 const PRICE_DROP = 0.05 // share price 5% below its 24-hour high
 const MIN_KEEPER_CELO = 0.1
+const KEEPER_CELO_PER_DAY = 6.8 / 30 // the keeper burns about 6.8 CELO a month (Midas, 13 Nov)
+const KEEPER_WARN_DAYS = 10 // remind when it has fewer than this many days left
 const MIN_BOT_CELO = 1 // below 0.5 the bot buys CELO with $0.50 of USDT by itself
 const MIN_CHECK_GAP_MS = 2 * 60_000
 const LAGOS_MS = 3_600_000 // UTC+1, for "today"
@@ -265,7 +267,7 @@ Deno.serve(async (req) => {
     const bal = k && isAddress(k) ? Number(formatEther(await pub.getBalance({ address: k as `0x${string}` }))) : null
     const op = vault ? await readV('operator') : null
     return [
-      `Keeper ${k ? `${k.slice(0, 6)}…${k.slice(-4)}` : 'not created'}${bal != null ? ` · ${bal.toFixed(3)} CELO${bal < MIN_KEEPER_CELO ? ' (top it up: send ~0.5 CELO)' : ''}` : ''}`,
+      `Keeper ${k ? `${k.slice(0, 6)}…${k.slice(-4)}` : 'not created'}${bal != null ? ` · ${bal.toFixed(3)} CELO${` · about ${(bal / KEEPER_CELO_PER_DAY).toFixed(0)} days left`}${bal / KEEPER_CELO_PER_DAY < KEEPER_WARN_DAYS ? ' (top it up: send ~7 CELO)' : ''}` : ''}`,
       op && k ? (op.toLowerCase() === k.toLowerCase() ? 'Is the vault operator: yes' : `Is the vault operator: NO (operator is ${op})`) : '',
       `Last run ${ago(vc?.last_run_at)}: ${vc?.last_result ?? ''}`,
       `Last daily settlement: ${vc?.last_settle_day ?? 'none yet'} · runs hourly at :07, settles at 20:07 UTC`,
@@ -309,7 +311,8 @@ Deno.serve(async (req) => {
       found.paused = (await readV('paused')) ? 'The fund is paused: deposits, redemptions and settlements are stopped.' : null
       if (vc.keeper_address && isAddress(vc.keeper_address)) {
         const bal = Number(formatEther(await pub.getBalance({ address: vc.keeper_address as `0x${string}` })))
-        found.keeper_gas = bal < MIN_KEEPER_CELO ? `The keeper wallet has ${bal.toFixed(3)} CELO left. Send it about 0.5 CELO: ${vc.keeper_address}` : null
+        const days = bal / KEEPER_CELO_PER_DAY
+        found.keeper_gas = days < KEEPER_WARN_DAYS ? `${days < 3 ? 'Urgent: ' : ''}the keeper wallet has ${bal.toFixed(2)} CELO, about ${Math.max(0, days).toFixed(1)} days at 6.8 CELO a month. Send it about 7 CELO (a month): ${vc.keeper_address}` : null
       }
     } catch { /* chain unreachable this time; keep the previous state */ }
   }
