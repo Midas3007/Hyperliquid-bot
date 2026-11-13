@@ -77,6 +77,7 @@ const DISCLAIMER = `
     <li><b>Not a regulated product.</b> This pool is a private arrangement. It is not registered with or approved by any securities regulator, is not a bank deposit, and is not insured or protected by any compensation scheme. Nothing on this site is financial, investment, legal or tax advice.</li>
     <li><b>Figures shown.</b> The fund value is reported to the fund contract every hour from the pool wallet's on-chain balance, with any local-currency tokens priced at live Uniswap rates. It can move with those rates while trades are open. The contract limits how far it can move in a day.</li>
     <li><b>Fees.</b> The manager takes a performance fee (currently 10%, never more than 20%) of profit above what you put in, charged when you redeem and shown on your dashboard as it accrues. The fee stays in the fund as the manager's shares. No fee is charged on losses. A fee change only takes effect 48 hours after it is announced on the site.</li>
+    <li><b>Running costs.</b> Once a day, 10% of the pool's trading profit is moved into a separate running-costs pot that pays for the bot's gas and the hosting. It is shown on the Dashboard and is not part of the share price. If the pot is empty or short, costs fall on the fund's value as they did before.</li>
     <li><b>Redemptions</b> settle once a day at that day's share price and are paid in USDT to the wallet that holds the shares. They may wait for the next settlement while funds are in open trades.</li>
     <li><b>Limitation of liability.</b> To the fullest extent permitted by law, the manager and anyone operating this site are not liable for any loss, including loss of capital or profit, arising from your participation, except where caused by their fraud or wilful misconduct.</li>
     <li><b>Your responsibility.</b> Only contribute money you can afford to lose entirely. You are responsible for any taxes on your gains, and for making sure participation is legal where you live.</li>
@@ -92,6 +93,7 @@ async function rpc(name, args) {
 }
 async function loadPublic() {
   try { state.pub = await rpc('public_overview') } catch { state.pub = state.pub || { error: true } }
+  await window.loadTreasury?.() // the running-costs pot (treasury.js); stays hidden until it is switched on
 }
 
 // The admin's off-chain data, when signed in. Members no longer sign in here: they connect a wallet.
@@ -107,6 +109,7 @@ async function loadAdmin() {
     }
     state.fund = fund; state.me = me
     state.admin = await rpc('admin_overview')
+    await window.loadTreasuryAdmin?.()
   } catch (e) {
     if (/not a fund member/i.test(errText(e))) await sb.auth.signOut()
     state.flash = { text: errText(e), ok: false }
@@ -180,6 +183,7 @@ function render() {
   </main>`
   state.flash = null
   window.mountVault?.()
+  window.treasuryMount?.()
   if (tab === 'dashboard' && !state.wallet) loadWallet()
 }
 // The vault's data arrives after the page is drawn: show the Admin tab once the manager wallet is recognised.
@@ -279,6 +283,8 @@ function dashboardView() {
   <div id="trade-stats">${tradeStatsView()}</div>
   <div class="card" style="margin-top:12px">${walletCard()}</div>
 
+  ${window.treasuryDashboard?.(state.treasury) ?? ''}
+
   <div class="section-title">Leaderboard · Season ${P.season}</div>
   <div class="card"><div data-vx="board"></div>
     <p class="note" style="margin-bottom:0">Return after fees on what each member put in. Wallets are shortened; the manager is not ranked.</p></div>
@@ -342,6 +348,8 @@ function offchainAdmin() {
       <p class="note" style="margin:0">Paste what <span class="mono">npm run deploy</span> printed. The site and the keeper switch to it straight away.</p></form>
   </div>
 
+
+  ${window.treasuryAdmin?.() ?? ''}
 
   <div class="section-title">Settings</div>
   <div class="card">

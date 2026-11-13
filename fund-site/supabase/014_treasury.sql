@@ -640,3 +640,30 @@ grant execute on function public.admin_treasury_start(), public.admin_treasury_s
 -- Every 5 minutes: carve finished days, record gas top-ups and confirm Render withdrawals, even when nobody is looking.
 do $$ begin perform cron.unschedule('treasury-sync'); exception when others then null; end $$;
 select cron.schedule('treasury-sync', '*/5 * * * *', $cron$ select public.treasury_sync() $cron$);
+
+-- ---------- Instant withdrawal from the admin dashboard (Midas, 12 Nov) ----------
+-- Midas asks on the site; the bot (which holds the wallet's key) pays it on its next cycle. Limits, enforced here
+-- AND again inside the bot (kiyoshi/src/payout.ts), so a break-in on either side cannot drain the pool:
+-- $5 to $10 per withdrawal, one withdrawal per 30 days, never more than the pot holds.
+create or replace function public.admin_treasury_withdraw(p_amount numeric, p_dest text, p_note text default null) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare v_amount numeric := round(p_amount, 2);
+begin
+  if not public.is_admin() then raise exception 'Admins only'; end if;
+  if v_amount is null or v_amount < 5 or v_amount > 10 then raise exception 'A withdrawal is between $5 and $10'; end if;
+  if exists (select 1 from public.treasury_entries where kind = 'render' and status in ('pending', 'done') and at > now() - interval '30 days') then
+    raise exception 'One withdrawal per 30 days';
+  end if;
+  return public.admin_treasury_record_render(v_amount, (now() at time zone 'utc')::date, p_note, p_dest, null, false);
+end $$;
+
+-- What the bot reads: the one withdrawal waiting to be paid, if any. Public information (it is in the log too).
+create or replace function public.treasury_payout() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('id', id, 'amount', amount, 'dest', dest)
+  from public.treasury_entries where kind = 'render' and status = 'pending' and tx is null and at > now() - interval '2 days'
+  order by id limit 1
+$$;
+revoke all on function public.admin_treasury_withdraw(numeric, text, text), public.treasury_payout() from public, anon, authenticated;
+grant execute on function public.admin_treasury_withdraw(numeric, text, text) to authenticated, service_role;
+grant execute on function public.treasury_payout() to anon, authenticated, service_role;

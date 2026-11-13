@@ -15,6 +15,7 @@ import { gasState, gasTopUp } from './gas.js'
 import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from './skip-reserved.js'
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { botSettings } from './settings.js'
+import { payout } from './payout.js'
 import { describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
 import { byEdge, candidateSizes, edgeUsd, freeForTextile, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip, type TextileHold } from './strategy.js'
 
@@ -347,6 +348,8 @@ while (true) {
     status.lastError = { at: new Date().toISOString(), message: msg }
     log({ event: 'error', message: msg })
   }
+  // a treasury withdrawal asked for on the admin page (limits in payout.ts); never while holding leftovers
+  if (LIVE && !holdingInventory) { try { const line = await payout(); if (line) { console.log('  ' + line); log({ event: 'payout', line }) } } catch (e: any) { console.error('  payout error:', e.shortMessage ?? e.message) } }
   await heartbeat(status)
   inCycle = false
   if (stopping) { console.log('  shutdown requested; exiting cleanly between cycles'); process.exit(0) }

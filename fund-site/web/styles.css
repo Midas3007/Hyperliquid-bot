@@ -171,3 +171,37 @@ footer { border-top: 1px solid var(--line); margin-top: 40px; padding-top: 20px;
 /* chart paging arrows */
 .seg.pager button { padding: 5px 9px; font-size: 13px; }
 .seg button:disabled { opacity: .3; cursor: default; }
+
+/* ---------- running costs: the pot and its log (treasury.js) ---------- */
+.card.treasury { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 22px; align-items: center; }
+.pot-wrap { display: grid; place-items: center; }
+.pot { width: 160px; height: auto; display: block; overflow: visible; }
+.pot-body { fill: rgba(255,255,255,.03); stroke: var(--grey); stroke-width: 2; }
+.pot-rim { fill: var(--panel-2); stroke: var(--grey); stroke-width: 2; }
+.pot-shine { stroke: rgba(255,255,255,.14); stroke-width: 3; stroke-linecap: round; fill: none; }
+.pot-liquid { transform: translateY(calc((1 - var(--lvl, 0)) * 120px)); transition: transform 1.8s cubic-bezier(.4, 0, .2, 1); }
+.pot-wave { animation: pot-wave 7s linear infinite; }
+.pot-wave.back { animation-duration: 11s; animation-direction: reverse; }
+@keyframes pot-wave { to { transform: translateX(-80px); } }
+@media (prefers-reduced-motion: reduce) { .pot-wave { animation: none; } .pot-liquid { transition: none; } }
+.pot-info .big { margin: 8px 0 4px; }
+.pot-info .sub + .sub { margin-top: 6px; line-height: 1.5; }
+.tlog { display: grid; }
+.trow { display: grid; grid-template-columns: 104px 92px minmax(0, 1fr) auto 62px; gap: 6px 12px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 12.5px; }
+.trow:last-child { border-bottom: 0; }
+.trow.pending { opacity: .7; }
+.trow .tinfo { min-width: 0; overflow-wrap: anywhere; color: var(--grey-2); }
+.trow .tamt { text-align: right; white-space: nowrap; font-weight: 500; }
+.trow .tlink { text-align: right; white-space: nowrap; }
+.trow .tlink a { font-size: 11px; letter-spacing: .06em; }
+@media (max-width: 560px) {
+  .card.treasury { grid-template-columns: 1fr; gap: 12px; justify-items: center; text-align: center; }
+  .pot { width: 140px; }
+  .trow { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "kind date amt" "info info info" "link link link"; gap: 4px 10px; padding: 12px 0; }
+  .trow .tdate { grid-area: date; text-align: right; }
+  .trow .tkind { grid-area: kind; }
+  .trow .tamt { grid-area: amt; }
+  .trow .tinfo { grid-area: info; }
+  .trow .tlink { grid-area: link; text-align: left; }
+  .trow .tlink:empty { display: none; }
+}
