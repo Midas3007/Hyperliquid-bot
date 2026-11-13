@@ -236,8 +236,8 @@ tbody tr:hover td { background: #082220; }
     </section>
 
     <section class="p s6">
-      <div class="ph"><span class="n">8</span><span class="t">Specimen · HEVI-01</span><span class="r">tube 01 · dancing</span></div>
-      <div class="pb"><canvas id="tube" aria-label="Animated ASCII HEVI dancing inside a glass tube" role="img" style="width:100%;display:block"></canvas>
+      <div class="ph"><span class="n">8</span><span class="t">Specimen · HEVI-01</span><span class="r">tube 01 · dancing</span><button id="tubeToggle" class="fkey" type="button" aria-expanded="true" aria-controls="tubeBody" style="margin-left:8px;padding:0 8px;font-size:11px">[–] HIDE</button></div>
+      <div class="pb" id="tubeBody"><canvas id="tube" aria-label="Animated ASCII HEVI dancing inside a glass tube" role="img" style="width:100%;display:block"></canvas>
         <div class="film-cap"><span>STATUS <b class="amb">PATIENT</b></span><span>BPM 120 · NOT FOR SALE</span></div></div>
     </section>
 
@@ -499,6 +499,15 @@ tbody tr:hover td { background: #082220; }
     if (!r.ok) { $("film").hidden = true; $("filmWait").hidden = false; document.querySelector(".film-cap a").hidden = true; }
   }).catch(() => {});
 
+
+  // ---------- collapsible panels (state remembered per browser)
+  (function () {
+    const btn = $("tubeToggle"), body = $("tubeBody"); if (!btn) return;
+    const set = (open) => { body.hidden = !open; btn.setAttribute("aria-expanded", String(open)); btn.textContent = open ? "[\u2013] HIDE" : "[+] SHOW";
+      try { localStorage.setItem("hevi.tube", open ? "1" : "0"); } catch (e) {} };
+    let open = true; try { open = localStorage.getItem("hevi.tube") !== "0"; } catch (e) {}
+    set(open); btn.onclick = () => set(body.hidden);
+  })();
 
   // ---------- specimen: the film's ASCII HEVI dancing in a tube (portrait grid exported from the film renderer)
   (function () {
