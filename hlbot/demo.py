@@ -45,7 +45,8 @@ def demo_protocol(P: Protocol) -> Protocol:
         entry=r(P.entry, min_methods=d.entry_min_methods),
         tp=r(P.tp, max_adr_mult=d.max_adr_mult),
         breakers=r(P.breakers, max_entries_per_day=d.max_entries, half_band_max_entries=d.max_entries),
-        autopilot=r(P.autopilot, scan_every_min=d.scan_every_min, report_hour_utc=99),  # no demo daily report
+        # no demo daily report; 5-min warm-up (the demo ignores the flow filters the normal 30-min warm-up waits for)
+        autopilot=r(P.autopilot, scan_every_min=d.scan_every_min, report_hour_utc=99, warmup_min=5),
         strategy=r(P.strategy, swing=r(P.strategy.swing, max_adr_mult=d.max_adr_mult),
                    day=r(P.strategy.day, max_adr_mult=d.max_adr_mult)),
     )
