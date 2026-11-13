@@ -651,7 +651,7 @@ declare v_amount numeric := round(p_amount, 2);
 begin
   if not public.is_admin() then raise exception 'Admins only'; end if;
   if v_amount is null or v_amount < 5 or v_amount > 10 then raise exception 'A withdrawal is between $5 and $10'; end if;
-  if exists (select 1 from public.treasury_entries where kind = 'render' and status in ('pending', 'done') and at > now() - interval '30 days') then
+  if exists (select 1 from public.treasury_entries where kind = 'render' and status in ('pending', 'done') and created_at > now() - interval '30 days') then
     raise exception 'One withdrawal per 30 days';
   end if;
   return public.admin_treasury_record_render(v_amount, (now() at time zone 'utc')::date, p_note, p_dest, null, false);
@@ -661,7 +661,7 @@ end $$;
 create or replace function public.treasury_payout() returns jsonb
 language sql stable security definer set search_path = '' as $$
   select jsonb_build_object('id', id, 'amount', amount, 'dest', dest)
-  from public.treasury_entries where kind = 'render' and status = 'pending' and tx is null and at > now() - interval '2 days'
+  from public.treasury_entries where kind = 'render' and status = 'pending' and tx is null and created_at > now() - interval '2 days'
   order by id limit 1
 $$;
 revoke all on function public.admin_treasury_withdraw(numeric, text, text), public.treasury_payout() from public, anon, authenticated;
