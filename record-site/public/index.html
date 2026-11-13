@@ -230,13 +230,19 @@ tbody tr:hover td { background: #082220; }
       <div class="pb" id="orders"></div>
     </section>
 
-    <section class="p s7">
+    <section class="p s6">
       <div class="ph"><span class="n">7</span><span class="t">Market · Hyperliquid top volume</span><span class="r" id="mkt-r">-</span></div>
       <div class="pb"><div class="tw scroll" id="market"></div></div>
     </section>
 
-    <section class="p s5">
-      <div class="ph"><span class="n">8</span><span class="t">Daemon log</span><span class="r"><span class="blink">●</span> live</span></div>
+    <section class="p s6">
+      <div class="ph"><span class="n">8</span><span class="t">Specimen · HEVI-01</span><span class="r">tube 01 · dancing</span></div>
+      <div class="pb"><canvas id="tube" aria-label="Animated ASCII HEVI dancing inside a glass tube" role="img" style="width:100%;display:block"></canvas>
+        <div class="film-cap"><span>STATUS <b class="amb">PATIENT</b></span><span>BPM 120 · NOT FOR SALE</span></div></div>
+    </section>
+
+    <section class="p s12">
+      <div class="ph"><span class="n">9</span><span class="t">Daemon log</span><span class="r"><span class="blink">●</span> live</span></div>
       <div class="pb"><div class="log" id="log" aria-live="polite"></div></div>
     </section>
   </main>
@@ -492,6 +498,84 @@ tbody tr:hover td { background: #082220; }
   fetch("film/hevi.mp4", { method: "HEAD" }).then((r) => {
     if (!r.ok) { $("film").hidden = true; $("filmWait").hidden = false; document.querySelector(".film-cap a").hidden = true; }
   }).catch(() => {});
+
+
+  // ---------- specimen: the film's ASCII HEVI dancing in a tube (portrait grid exported from the film renderer)
+  (function () {
+    const cv = $("tube"); if (!cv) return;
+    const COLS = 125, ROWS = 76, PX = 10, PY = 9, ctx = cv.getContext("2d");
+    const MINT = "#7dffd9", TEAL = "#2fd3b0", DEEP = "#168f7c";
+    let cw = 5, ch = 10, dpr = 1, P = null, off = null, G = [];
+    function size() {
+      dpr = Math.min(2, window.devicePixelRatio || 1); const w = cv.clientWidth || 600;
+      cw = w / COLS; ch = cw * 2; cv.width = Math.round(w * dpr); cv.height = Math.round(ch * ROWS * dpr); cv.style.height = ch * ROWS + "px";
+      if (P) bake();
+    }
+    function bake() {
+      off = {};
+      for (const k of ["open", "closed"]) {
+        const o = document.createElement("canvas"); o.width = Math.ceil(P.C * cw * dpr); o.height = Math.ceil(P.R * ch * dpr);
+        const c = o.getContext("2d"); c.scale(dpr, dpr); c.font = `700 ${ch * 0.84}px "IBM Plex Mono", ui-monospace, monospace`; c.textAlign = "center"; c.textBaseline = "middle";
+        const d = P[k];
+        for (let r = 0; r < P.R; r++) for (let x = 0; x < P.C; x++) {
+          const g = d.rows[r][x]; if (g === " ") continue;
+          c.fillStyle = d.pal[d.A.indexOf(d.cols[r][x])] || TEAL; c.fillText(g, (x + 0.5) * cw, (r + 0.5) * ch);
+        }
+        off[k] = o;
+      }
+    }
+    const put = (x, y, c, col, a) => { x = Math.round(x); y = Math.round(y); if (x >= 0 && x < COLS && y >= 0 && y < ROWS) G[y * COLS + x] = [c, col, a == null ? 1 : a]; };
+    function frame(t) {
+      if (!off) return;
+      const L = 3, R = COLS - 4, top = 5, bot = ROWS - 5, ph = t * Math.PI * 2, beat = Math.abs(Math.sin(ph));
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // tube interior glow
+      const g = ctx.createLinearGradient(0, 0, 0, ROWS * ch); g.addColorStop(0, "rgba(47,211,176,.02)"); g.addColorStop(1, "rgba(47,211,176,.14)");
+      ctx.fillStyle = g; ctx.fillRect((L + 1) * cw, (top + 1) * ch, (R - L - 1) * cw, (bot - top - 1) * ch);
+      // portrait: whole-cell row offsets = sway, bounce, underwater wobble
+      const blink = (t % 3.4) > 3.25 ? off.closed : off.open;
+      ctx.globalAlpha = 0.9 + 0.1 * beat;
+      for (let r = 0; r < P.R; r++) {
+        const up = 1 - r / P.R, lag = ph - up * 1.1;
+        let dx = Math.sin(lag) * (1.5 + 7 * Math.pow(up, 1.3)) - Math.sin(ph) * 2 * (1 - up) + Math.sin(t * 2.1 + r * 0.22) * 0.9;
+        const dy = -Math.round(beat * 2.2) + Math.round(Math.sin(t * 1.4) * 0.6);
+        dx = Math.max(L + 2 - PX, Math.min(R - 2 - PX - P.C, Math.round(dx)));
+        const yy = PY + r + dy; if (yy <= top || yy >= bot) continue;
+        ctx.drawImage(blink, 0, r * ch * dpr, blink.width, ch * dpr, (PX + dx) * cw, yy * ch, P.C * cw, ch);
+      }
+      ctx.globalAlpha = 1;
+      // beat flash on the headphone side + light sweep
+      const sw = ((t * 0.28) % 1.5) * ROWS;
+      const sg = ctx.createLinearGradient(0, (sw - 5) * ch, 0, (sw + 5) * ch); sg.addColorStop(0, "rgba(125,255,217,0)"); sg.addColorStop(.5, "rgba(125,255,217,.16)"); sg.addColorStop(1, "rgba(125,255,217,0)");
+      ctx.fillStyle = sg; ctx.fillRect((L + 1) * cw, (top + 1) * ch, (R - L - 1) * cw, (bot - top - 1) * ch);
+      // glyph layer: liquid specks, bubbles, surface, glass, caps, plumbing
+      G = [];
+      for (let y = top + 1; y < bot; y++) for (let x = L + 1; x < R; x++) if ((x * 7 + y * 13 + Math.floor(t * 3)) % 23 === 0) put(x, y, ".", TEAL, 0.3);
+      for (let i = 0; i < 18; i++) {
+        const bx = L + 3 + ((i * 53) % (R - L - 6)), by = bot - ((t * (3 + (i % 4) * 1.6) + i * 4.7) % (bot - top - 3));
+        put(bx + Math.sin(t * 2 + i) * 1.4, by, i % 3 ? "o" : "°", MINT, 0.6);
+      }
+      for (let x = L + 1; x < R; x++) put(x, top + 1 + Math.round(Math.sin(t * 3 + x * 0.5) * 0.7 + 0.7), "~", MINT, 0.55);
+      for (let y = top; y <= bot; y++) { put(L, y, "|", TEAL, 0.9); put(R, y, "|", TEAL, 0.9); put(L + 2, y, "¦", MINT, (y + Math.floor(t * 8)) % 9 === 0 ? 0.6 : 0.18); put(R - 2, y, "¦", MINT, 0.12); }
+      for (let x = L; x <= R; x++) { put(x, top - 1, "=", TEAL, 0.95); put(x, bot + 1, "=", TEAL, 0.95); }
+      for (let x = L - 3; x <= R + 3; x++) { put(x, top - 2, "#", DEEP, 1); put(x, top - 3, "%", DEEP, 0.8); put(x, bot + 2, "#", DEEP, 1); put(x, bot + 3, "%", DEEP, 0.9); put(x, bot + 4, "▀", DEEP, 0.7); }
+      put(L, top - 1, "(", MINT); put(R, top - 1, ")", MINT); put(L, bot + 1, "(", MINT); put(R, bot + 1, ")", MINT);
+      for (let y = 0; y < top - 3; y++) for (const o of [-9, -6, 6, 9]) put(COLS / 2 + o, y, o % 2 ? "|" : "║", DEEP, 0.9);
+      for (const o of [-18, -10, 10, 18]) put(COLS / 2 + o, bot + 3, "*", MINT, 0.5 + 0.5 * Math.sin(t * 4 + o));
+      ctx.font = `600 ${cw * 1.6}px "IBM Plex Mono", ui-monospace, monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      for (let i = 0; i < G.length; i++) { const q = G[i]; if (!q) continue; ctx.globalAlpha = q[2]; ctx.fillStyle = q[1]; ctx.fillText(q[0], ((i % COLS) + 0.5) * cw, (Math.floor(i / COLS) + 0.5) * ch); }
+      ctx.globalAlpha = 1;
+    }
+    size(); window.addEventListener("resize", () => { size(); frame(performance.now() / 1000); });
+    fetch("hevi-portrait.json").then((r) => r.json()).then((d) => {
+      P = d; bake(); frame(0.7);
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches; if (still) return;
+      let on = true, last = 0;
+      if ("IntersectionObserver" in window) new IntersectionObserver((e) => { on = e[0].isIntersecting; }).observe(cv);
+      (function loop(ts) { if (on && ts - last > 50) { last = ts; frame(ts / 1000); } requestAnimationFrame(loop); })(0);
+      window.__tubeFrame = frame;
+    }).catch(() => {});
+  })();
 
   // ---------- record
   function load(first) {
