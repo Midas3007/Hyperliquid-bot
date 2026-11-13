@@ -281,6 +281,7 @@ function dashboardView() {
 
   <div class="section-title">Trading activity</div>
   <div id="trade-stats">${tradeStatsView()}</div>
+  ${typeof execLogView === 'function' ? execLogView() : ''}
   <div class="card" style="margin-top:12px">${walletCard()}</div>
 
   ${window.treasuryDashboard?.(state.treasury) ?? ''}
@@ -715,7 +716,7 @@ sb.auth.onAuthStateChange((event, session) => {
 })
 
 // First paint, then keep the numbers fresh (without interrupting someone typing).
-loadPublic().then(() => { render(); loadTrades() })
+loadPublic().then(() => { render(); loadTrades(); if (typeof loadExecLog === 'function') loadExecLog() })
 setInterval(async () => {
   const a = document.activeElement
   if (document.querySelector('.modal') || (a && ['INPUT', 'SELECT', 'TEXTAREA'].includes(a.tagName))) return
