@@ -34,7 +34,7 @@ function sprite(rgb) {
 }
 const SPR = [sprite('212,175,55'), sprite('243,215,122'), sprite('255,240,205')]
 
-// the share price, season one (daily closes from the chain, 29 Oct to 13 Nov)
+// the share price, season two (daily closes from the chain, 29 Oct to 13 Nov)
 const CLOSES = [1.002, 1.212, 1.246, 1.2996, 1.4235, 1.4606, 1.5072, 1.5962, 1.7117, 1.7468, 1.7561, 1.8187, 2.158, 2.383, 2.4289, 2.4461]
 const PX0 = -760, PX1 = 700, priceY = (p) => 300 - (p - 1) / 1.5 * 600
 function curve(u) { // smooth through the closes, u in 0..1
@@ -186,7 +186,7 @@ function draw(t) {
   const pa = inout(t, T.price - .8, T.emblem - 2.0, .7)
   if (pa > 0) {
     const head = smooth((t - T.price) / 6.2), hp = curve(head), q = project([hp[0], hp[1], 0], cam), q0 = project([PX0, priceY(1.002), 0], cam)
-    txt('SHARE PRICE · SEASON ONE', 960, 140, 20, SOFT, pa * .85, { font: MONO, spacing: 8 })
+    txt('SHARE PRICE · SEASON TWO', 960, 140, 20, SOFT, pa * .85, { font: MONO, spacing: 8 })
     txt('$1.00', q0[0], q0[1] + 48, 28, SOFT, pa, { font: MONO })
     txt('$' + hp[2].toFixed(2), q[0] + 18, q[1] - 46, 40, GOLD2, pa, { font: MONO, weight: 600, align: 'left' })
     txt('+' + Math.round((2.4461 / 1.002 - 1) * 100) + '%', 600, 330, 120, GREEN, pa * smooth((t - T.price - 6.4) / 1), { weight: 700 })
