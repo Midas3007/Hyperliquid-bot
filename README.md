@@ -117,7 +117,9 @@ code in `record-site/`). It sends trade facts only: coin, side, prices, R and P&
    `RECORD_TOKEN` = the upload token you were given (the site stores only its SHA-256 fingerprint).
 2. Redeploy. Within a few minutes the page shows HEVI's mode, go-live progress, equity curve and trades.
 
-Without the two variables HEVI simply doesn't publish.
+Without the two variables HEVI simply doesn't publish. The page has tabs: **Paper** (or **Live**) is the real
+record; **Backtest** is past prices through the exit rules (`/backtest` refreshes it); **Demo (13 Nov)** was a
+one-day session with looser rules on a separate account, never counted toward going live.
 
 ## Hyperliquid setup (needed for real money)
 1. Deposit USDC to Hyperliquid (minimum 5 USDC, via Arbitrum). If it lands in **Spot**: Portfolio → Transfer →

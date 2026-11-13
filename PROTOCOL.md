@@ -571,7 +571,14 @@ HEVI autopilot: every rule passed - placing it now.
   stop, target, sizing and Friday rules (`hlbot/backtest.py`). It tests the exits only. Flow, whale, OI and news
   have no history, so direction is "every setup" or "the side of the last 24h move".
 - **Public track record.** HEVI publishes its trades to a page on Netlify backed by Neon (`record-site/`,
-  `RECORD_URL` / `RECORD_TOKEN`). Only trade facts are sent: no wallet address, no keys.
+  `RECORD_URL` / `RECORD_TOKEN`). Only trade facts are sent: no wallet address, no keys. Tabs: Live, Paper,
+  Demo, Backtest. The backtest tab shows the swing backtest's trades (one position at a time, trend side).
+- **One-day demo session (Fri 13 Nov 2026, owner's request; `protocol.toml [demo]`, `hlbot/demo.py`).** A separate
+  $100 paper account with looser entry rules, so the page isn't empty: whale/OI/24h/news/direction filters ignored,
+  net R/R >= 1:1.5, TP <= 2x ADR, 2-method entries, up to 4 entries, no breakers. Stops beyond 4H structure,
+  isolated sizing, the liquidation buffer, the BTC gate, EXTREME volatility and the Friday 20:00 UTC flatten still
+  apply. Entries until 17:00 UTC. Its trades never touch the real paper journal or the go-live gate, and the session
+  switches itself off after that Friday's flatten. Monday runs the normal protocol.
 - **Backtest findings (13 Nov 2026, 8 coins, 30 weeks), and why nothing was loosened:**
   - A valid bracket exists in about 0.5% of coin-hours per side. Of the rest, 67% fail net 1:3 at the first 4H level
     and 23% have that level too close. This is why HEVI trades rarely. The two rules causing it are hard rules.

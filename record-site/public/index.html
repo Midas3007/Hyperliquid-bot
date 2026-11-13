@@ -38,6 +38,8 @@ h2 { font-size: 15px; margin: 0 0 12px; color: var(--muted); font-weight: 600; t
 .chip { background: var(--chip); border-radius: 999px; padding: 3px 10px; font-size: 13px; color: var(--muted); }
 .chip.mode { color: var(--ink); font-weight: 600; }
 .chip.live { background: var(--win); color: #fff; }
+.chip.demo, .chip.backtest { background: #b8860b; color: #fff; }
+.note { margin-top: 6px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
 .status { color: var(--muted); font-size: 14px; }
 .status b { color: var(--ink); font-weight: 600; }
@@ -122,6 +124,9 @@ footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
   const fmtPx = (p) => p == null ? "–" : (p >= 1000 ? p.toLocaleString("en-US", { maximumFractionDigits: 1 }) : p >= 1 ? +p.toFixed(4) + "" : +p.toPrecision(5) + "");
   const day = (s) => new Date(s * 1000).toLocaleDateString("en-GB", { day: "2-digit", month: "short", timeZone: "UTC" });
   const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 2880 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " days ago"; };
+  const KIND = { live: "LIVE - real money", paper: "PAPER - simulated fills on live prices",
+                 demo: "DEMO - looser rules, separate paper account", backtest: "BACKTEST - past prices, exit rules only" };
+  const TAB = { live: "Live", paper: "Paper", demo: "Demo (13 Nov)", backtest: "Backtest" };
   const EXIT = { tp: "Take-profit", sl: "Stop-loss", time: "Time stop", friday: "Friday close", manual: "Manual", discretionary: "Manual", liquidation: "Liquidation", early: "Early exit" };
 
   function stats(closed) {
@@ -176,16 +181,17 @@ footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
     const open = trades.filter((t) => t.status === "open" || t.status === "pending");
 
     const chips = $("chips"); chips.replaceChildren();
-    const live = acc.account === "live";
-    chips.append(el("span", "chip mode" + (live ? " live" : ""), live ? "LIVE - real money" : "PAPER - simulated fills on live prices"));
+    chips.append(el("span", "chip mode " + acc.account, KIND[acc.account] || acc.account));
     if (s.protocol) chips.append(el("span", "chip", "Protocol v" + s.protocol));
     if (s.strategy) chips.append(el("span", "chip", "Mode: " + s.strategy));
     chips.append(el("span", "chip", "Updated " + ago(acc.updated_at)));
 
     const st = $("status"); st.replaceChildren();
     const line = (label, value) => { const p = el("div"); p.append(el("b", null, label + ": "), document.createTextNode(value)); st.append(p); };
-    if (s.go_live) line(s.live ? "Status" : "Go-live gate", String(s.go_live).replace(/^go-live gate:\s*/i, ""));
-    if (s.reset_at) line("Counting from", new Date(s.reset_at * 1000).toUTCString().replace(" GMT", " UTC"));
+    const real = acc.account === "paper" || acc.account === "live";
+    if (s.note) { const n = el("div", "note", s.note); st.append(n); }
+    if (real && s.go_live) line(s.live ? "Status" : "Go-live gate", String(s.go_live).replace(/^go-live gate:\s*/i, ""));
+    if (real && s.reset_at) line("Counting from", new Date(s.reset_at * 1000).toUTCString().replace(" GMT", " UTC"));
     if (s.paused) line("Autopilot", "paused by the owner");
     if (!st.childNodes.length) st.textContent = "Trading autonomously.";
 
@@ -237,17 +243,20 @@ footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
   fetch("/api/record").then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then((data) => {
     const accs = data.accounts || [];
     if (!accs.length) { $("status").textContent = "HEVI hasn't published its record yet. It does within a few minutes of starting."; return; }
-    accs.sort((a, b) => (a.account === "live" ? -1 : 1) - (b.account === "live" ? -1 : 1));
+    const ORDER = ["live", "paper", "demo", "backtest"];
+    accs.sort((a, b) => ORDER.indexOf(a.account) - ORDER.indexOf(b.account));
+    const hasClosed = (a) => a.trades.some((t) => t.status === "closed");
+    const first = Math.max(0, accs.findIndex(hasClosed));
     if (accs.length > 1) {
       const tabs = $("tabs"); tabs.hidden = false;
       accs.forEach((a, i) => {
-        const b = el("button", null, a.account === "live" ? "Live" : "Paper");
-        b.setAttribute("aria-pressed", i === 0 ? "true" : "false");
+        const b = el("button", null, TAB[a.account] || a.account);
+        b.setAttribute("aria-pressed", i === first ? "true" : "false");
         b.onclick = () => { tabs.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b ? "true" : "false")); render(a); };
         tabs.append(b);
       });
     }
-    render(accs[0]);
+    render(accs[first]);
   }).catch((e) => { $("status").textContent = "Couldn't load the record (" + e.message + "). Try again in a minute."; });
 })();
 </script>

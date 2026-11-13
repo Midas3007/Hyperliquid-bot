@@ -9,6 +9,7 @@ import { createHash, timingSafeEqual } from "node:crypto"
 const TEXT = ["coin", "strategy", "status", "exit_type", "version"] as const
 const NUM = ["entry", "fill_px", "exit_px", "sl", "tp", "result_r", "pnl", "risk_usd", "created_at", "filled_at", "closed_at"] as const
 const STATUS = new Set(["pending", "open", "closed"])
+// status.note can be a few sentences (demo / backtest explanations)
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest()
 const matches = (given: string, storedHex: string | undefined) =>
@@ -36,7 +37,7 @@ function cleanStatus(s: any) {
   if (!s || typeof s !== "object") return out
   for (const [k, v] of Object.entries(s).slice(0, 30)) {
     if (k.length > 30) continue
-    if (typeof v === "string") out[k] = v.slice(0, 200)
+    if (typeof v === "string") out[k] = v.slice(0, k === "note" ? 600 : 200)
     else if (typeof v === "boolean" || num(v) !== null) out[k] = v
     else if (v === null) out[k] = null
   }
@@ -58,7 +59,10 @@ export default async (req: Request) => {
     return bad("body must be JSON")
   }
   const account = body?.account
-  if (account !== "paper" && account !== "live") return bad("account must be paper or live")
+  if (!["paper", "live", "demo", "backtest"].includes(account)) return bad("account must be paper, live, demo or backtest")
+  // a backtest run replaces the previous one; the real accounts (paper, live) are only ever upserted
+  const replace = body.replace === true
+  if (replace && account !== "backtest") return bad("replace is only allowed for the backtest account")
   if (!Array.isArray(body.trades) || body.trades.length > 2000) return bad("trades must be a list (max 2000)")
   if (!Array.isArray(body.equity) || body.equity.length > 10000) return bad("equity must be a list (max 10000)")
   const trades = body.trades.map(cleanTrade)
@@ -68,7 +72,11 @@ export default async (req: Request) => {
     .map((p: number[]) => ({ ts: p[0], equity: p[1] }))
   const status = cleanStatus(body.status)
 
+  const wipe = replace
+    ? [sql`DELETE FROM trades WHERE account = 'backtest'`, sql`DELETE FROM equity WHERE account = 'backtest'`]
+    : []
   await sql.transaction([
+    ...wipe,
     sql`INSERT INTO accounts (account, updated_at, status) VALUES (${account}, now(), ${JSON.stringify(status)}::jsonb)
         ON CONFLICT (account) DO UPDATE SET updated_at = now(), status = EXCLUDED.status`,
     sql`INSERT INTO trades (account, id, coin, side, strategy, status, exit_type, entry, fill_px, exit_px, sl, tp,
