@@ -59,7 +59,7 @@ export default async (req: Request) => {
     return bad("body must be JSON")
   }
   const account = body?.account
-  if (!["paper", "live", "demo", "backtest"].includes(account)) return bad("account must be paper, live, demo or backtest")
+  if (!["paper", "live", "demo", "backtest", "scalp"].includes(account)) return bad("account must be paper, live, demo, backtest or scalp")
   // a backtest run replaces the previous one; the real accounts (paper, live) are only ever upserted
   const replace = body.replace === true
   if (replace && account !== "backtest") return bad("replace is only allowed for the backtest account")

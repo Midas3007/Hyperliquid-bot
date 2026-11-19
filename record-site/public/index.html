@@ -158,9 +158,9 @@ tbody tr:hover td { background: #082220; }
 
   <form class="cmd" id="cmdForm" autocomplete="off">
     <label for="cmd">HEVI&gt;</label>
-    <input id="cmd" name="cmd" placeholder="TYPE A FUNCTION: PAPER · DEMO · BT · LIVE · FILM · RISK · HELP" spellcheck="false" aria-label="Command">
+    <input id="cmd" name="cmd" placeholder="TYPE A FUNCTION: PAPER · SCALP · DEMO · BT · LIVE · FILM · HELP" spellcheck="false" aria-label="Command">
     <button class="go" type="submit">&lt;GO&gt;</button>
-    <span class="hint">F1–F5 · ESC CLEAR</span>
+    <span class="hint">F1–F6 · ESC CLEAR</span>
   </form>
 
   <nav class="fkeys" id="fkeys" aria-label="Views"></nav>
@@ -274,6 +274,7 @@ tbody tr:hover td { background: #082220; }
     { key: "demo", f: "F2", label: "Demo 13 Nov", cmd: ["DEMO", "D"] },
     { key: "backtest", f: "F3", label: "Backtest", cmd: ["BT", "BACKTEST", "B"] },
     { key: "live", f: "F4", label: "Live", cmd: ["LIVE", "L"] },
+    { key: "scalp", f: "F5", label: "Scalp BTC", cmd: ["SCALP", "S"] },
   ];
   const NOTES = {
     paper: "PAPER BOOK — the real record. Simulated fills on live prices until it proves an edge, then real money.",
@@ -295,7 +296,7 @@ tbody tr:hover td { background: #082220; }
     b.append(el("kbd", null, v.f), document.createTextNode(v.label));
     b.onclick = () => show(v.key); fk.append(b);
   }
-  const fb = el("button", "fkey"); fb.type = "button"; fb.append(el("kbd", null, "F5"), document.createTextNode("Film"));
+  const fb = el("button", "fkey"); fb.type = "button"; fb.append(el("kbd", null, "F6"), document.createTextNode("Film"));
   fb.onclick = () => film(); fk.append(fb);
 
   function film() { const p = $("filmPanel"); p.scrollIntoView({ behavior: "smooth", block: "center" }); const v = $("film"); try { v.play(); } catch (e) {} }
@@ -304,16 +305,16 @@ tbody tr:hover td { background: #082220; }
     if (!c) return;
     if (c === "FILM" || c === "F") return film();
     if (c === "RISK" || c === "R") return document.querySelector(".risk").scrollIntoView({ behavior: "smooth", block: "center" });
-    if (c === "HELP" || c === "H" || c === "?") return logLine("HELP", "FUNCTIONS: PAPER · DEMO · BT · LIVE · FILM · RISK  (or F1–F5)");
+    if (c === "HELP" || c === "H" || c === "?") return logLine("HELP", "FUNCTIONS: PAPER · DEMO · BT · LIVE · SCALP · FILM · RISK  (or F1–F6)");
     const v = VIEWS.find((x) => x.cmd.includes(c));
     if (v) return show(v.key);
     logLine("ERR", `UNKNOWN FUNCTION "${c}" — TYPE HELP <GO>`);
   }
   $("cmdForm").addEventListener("submit", (e) => { e.preventDefault(); run($("cmd").value); $("cmd").value = ""; });
   document.addEventListener("keydown", (e) => {
-    const map = { F1: 0, F2: 1, F3: 2, F4: 3 };
+    const map = { F1: 0, F2: 1, F3: 2, F4: 3, F5: 4 };
     if (e.key in map) { e.preventDefault(); show(VIEWS[map[e.key]].key); }
-    else if (e.key === "F5") { e.preventDefault(); film(); }
+    else if (e.key === "F6") { e.preventDefault(); film(); }
     else if (e.key === "Escape") { $("cmd").value = ""; $("cmd").blur(); }
     else if (e.key === "/" && document.activeElement !== $("cmd")) { e.preventDefault(); $("cmd").focus(); }
   });
@@ -406,10 +407,10 @@ tbody tr:hover td { background: #082220; }
     const g = $("gate"); g.replaceChildren();
     const gl = String(s.go_live || "");
     const mm = gl.match(/(\d+)\s*\/\s*(\d+)/);
-    if ((key === "paper") && mm) {
+    if ((key === "paper" || key === "scalp") && mm) {
       const have = +mm[1], need = +mm[2], cells = 20, fill = Math.min(cells, Math.round(cells * have / need));
       const b = el("div", "bar"); b.append(document.createTextNode("[" + "█".repeat(fill)), el("span", "off", "░".repeat(cells - fill)), document.createTextNode("]"));
-      g.append(el("div", null, `GO-LIVE GATE  ${have}/${need} PAPER TRADES`), b);
+      g.append(el("div", null, `${key === "scalp" ? "SCALP GATE" : "GO-LIVE GATE"}  ${have}/${need} PAPER TRADES`), b);
       $("sb-gate").textContent = `${have}/${need}`;
     } else if (key === "live") { g.append(el("div", "up", "LIVE — REAL MONEY")); $("sb-gate").textContent = "PASSED"; }
     else { g.append(el("div", "mut", key === "demo" ? "NOT COUNTED TOWARD GOING LIVE" : "SIMULATION — NOT COUNTED TOWARD GOING LIVE")); $("sb-gate").textContent = (accounts.paper && (String(accounts.paper.status.go_live || "").match(/\d+\s*\/\s*\d+/) || ["-"])[0]) || "-"; }
@@ -653,7 +654,7 @@ tbody tr:hover td { background: #082220; }
       for (const b of fk.querySelectorAll("[data-key]")) b.disabled = !accounts[b.dataset.key];
       if (!Object.keys(accounts).length) { logLine("WAIT", "NO BOOKS PUBLISHED YET"); return; }
       if (first || !accounts[current]) {
-        const order = ["live", "paper", "demo", "backtest"];
+        const order = ["live", "paper", "scalp", "demo", "backtest"];
         const has = (k) => accounts[k] && accounts[k].trades.some((t) => t.status === "closed");
         current = order.find(has) || order.find((k) => accounts[k]);
       }
