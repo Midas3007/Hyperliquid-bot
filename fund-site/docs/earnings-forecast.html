@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Earnings forecast and drivers</title>
+<style>
+@page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;background:#fff}
+:root{--ink:#16130c;--mute:#6b6454;--gold:#9a7a14;--line:#e3dccb;--green:#1c8a5c;--red:#b4452f;--bg:#faf7ef}
+.p{width:794px;height:1123px;padding:44px 48px;font-family:Inter,sans-serif;color:var(--ink);background:#fff;position:relative;overflow:hidden;page-break-after:always}
+h1{font-family:Caladea,"Liberation Serif",serif;font-size:34px;margin:0 0 4px;letter-spacing:-.5px}
+h2{font-family:Caladea,"Liberation Serif",serif;font-size:19px;margin:16px 0 6px;border-bottom:1px solid var(--line);padding-bottom:5px}
+p,li{font-size:11.5px;line-height:1.5;margin:4px 0}ul{margin:4px 0;padding-left:18px}
+.m{font-family:"JetBrains Mono",monospace}.lab{font-family:"JetBrains Mono",monospace;font-size:9.5px;letter-spacing:2.5px;color:var(--mute);text-transform:uppercase}
+table{border-collapse:collapse;width:100%;font-size:10.5px}th,td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}th{font-family:"JetBrains Mono",monospace;font-size:9.5px;letter-spacing:1.5px;color:var(--mute);font-weight:400}
+.card{font-size:12px;line-height:1.5;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.g{display:grid;gap:10px}.up{color:var(--green)}.dn{color:var(--red)}
+.foot{position:absolute;left:48px;right:48px;bottom:26px;font-size:9.5px;color:var(--mute);font-family:"JetBrains Mono",monospace;line-height:1.5}
+svg text{font-family:"JetBrains Mono",monospace;font-size:9px;fill:#6b6454}
+</style></head><body>
+
+<div class="p">
+  <div class="lab">Midas × Kiyoshi Fund · 19 November 2026</div>
+  <h1>What the fund will earn, and what moves it</h1>
+  <p style="color:var(--mute);margin-top:0">Built from every trade since 4 Nov (2,630 trades paired from the chain), a live scan of the Uniswap and Textile markets, and the vault's own figures today.</p>
+
+  <div class="g" style="grid-template-columns:repeat(4,1fr);margin-top:12px">
+    <div class="card"><div class="lab">Share price</div><div class="m" style="font-size:20px;margin-top:4px">$2.4972</div><div class="lab" style="margin-top:2px">+150% since 29 Oct</div></div>
+    <div class="card"><div class="lab">Fund value</div><div class="m" style="font-size:20px;margin-top:4px">$709.66</div><div class="lab" style="margin-top:2px">was $883.59 on 13 Nov</div></div>
+    <div class="card"><div class="lab">Last 7 days</div><div class="m" style="font-size:20px;margin-top:4px">+$23.22</div><div class="lab" style="margin-top:2px">before gas · 690 trades</div></div>
+    <div class="card"><div class="lab">Prior 7 days</div><div class="m" style="font-size:20px;margin-top:4px">+$202.32</div><div class="lab" style="margin-top:2px">before gas · 1,594 trades</div></div>
+  </div>
+
+  <h2>1. Daily trading profit, with the three scenarios</h2>
+  <svg id="daily" viewBox="0 0 700 250" style="width:100%;height:250px"></svg>
+  <p>Profit peaked on 10–11 Nov and has fallen since: the trend is about <b>−$1.4 a day, every day</b>. The last five days averaged <b>$3.0 a day</b>; the 15-day median is <b>$6.8</b>; the mean ($17.2) is pulled up by two spike days.</p>
+
+  <h2>2. Forecast (fund value $709.66; share price $2.4972)</h2>
+  <table>
+    <tr><th>Scenario (trading profit / day)</th><th>Pool keeps / day</th><th>7 days</th><th>30 days</th><th>Share price in 30 d</th><th>Per $100, 30 d*</th></tr>
+    <tr><td><b>Quiet</b> · $3 · what the last 5 days look like</td><td>$1.78</td><td>+$12 (+1.8%)</td><td>+$53 (+7.5%)</td><td>$2.68</td><td class="up">+$6.4</td></tr>
+    <tr><td><b>Typical</b> · $7 · the 15-day median</td><td>$5.78</td><td>+$40 (+5.7%)</td><td>+$173 (+24%)</td><td>$3.11</td><td class="up">+$21</td></tr>
+    <tr><td><b>Busy</b> · $17 · the 15-day average</td><td>$15.30</td><td>+$107 (+15%)</td><td>+$459 (+65%)</td><td>$4.11</td><td class="up">+$55</td></tr>
+    <tr><td><b>Spike week</b> · $40 · like 10–11 Nov</td><td>$36.00</td><td>+$252 (+36%)</td><td>+$1,080 (+152%)</td><td>$6.30</td><td class="up">+$129</td></tr>
+  </table>
+  <p style="font-size:10.5px;color:var(--mute)">* After the 15% performance fee on the gain. "Pool keeps" is profit minus the larger of the $1.22 daily running costs (gas $0.96 + hosting $0.26) or the 10% carve into the costs pot, since the pot is still empty. Dollar profit per day is held fixed, not scaled with the pool.</p>
+  <div class="card" style="margin-top:8px"><b>Reading it honestly.</b> The data supports the <b>Quiet</b> row as the most likely next week; Typical needs the market to wake up again; the last two rows need a spike like 10 Nov. I would plan around Quiet, and treat the rest as upside. Fifteen days is a small sample, so these are scenarios, not odds. A simulation that reshuffles the last 7 days gives 30 days of +$85 to +$140 on the fund; reshuffling all 15 days gives +$310 to +$600, but that assumes the old spike frequency returns.</div>
+  <div class="foot">Past results do not promise future returns. Estimates from short history; the fund can lose money. Not financial advice.</div>
+</div>
+
+<div class="p">
+  <h2 style="margin-top:0">3. What moves earnings (from our own trades, 15 days, Lagos time)</h2>
+  <div class="g" style="grid-template-columns:1fr 1fr">
+    <div><div class="lab">Margin by hour of day (bps of traded $)</div><svg id="hours" viewBox="0 0 340 170" style="width:100%;height:150px"></svg></div>
+    <div><div class="lab">Margin by trade size (bps)</div><svg id="sizes" viewBox="0 0 340 170" style="width:100%;height:150px"></svg></div>
+  </div>
+  <ul>
+    <li><b>Hour:</b> the best margins are <b>14:00–18:00</b> (peak 17:00 at 7.3 bps, 16:00 at 6.2) and <b>21:00–23:00</b> (21:00 at 5.9). The weakest is <b>11:00</b> (0.5 bps, 65% won). Overnight is steady but small.</li>
+    <li><b>Day:</b> Tuesday earned most (5.9 bps, 82% won); <b>Saturday is weakest</b> (0.9 bps, 69% won). Weekends have fewer trades and thinner gaps.</li>
+    <li><b>Size:</b> (the under-$100 bar is only 139 trades, so ignore it) trades of <b>$400–600 earned 5.7 bps</b> and made the most money ($115 of $258). Trades over <b>$600 earn 1.8 bps and win only 63%</b>: past that point each trade moves the price against itself. The Uniswap pool holds only about $35k of USDT, so size has a ceiling.</li>
+    <li><b>Costs:</b> fixed running costs of ~$1.22 a day equal <b>41% of a Quiet day's profit</b>. On 14 and 18 Nov profit ($0.08, $0.42) did not cover them.</li>
+    <li><b>Competition and tight rule (not separable yet):</b> margin per traded dollar fell from 4.2 to 1.1 bps week over week while win rate barely moved (76% → 74.5%). That fits calmer gaps and/or other arbitrageurs. The tight first-leg rule has been on throughout, so its effect cannot be isolated.</li>
+  </ul>
+
+  <h2>4. Live scan of the markets (19 Nov, 07:00 UTC)</h2>
+  <table>
+    <tr><th>Market</th><th>Uniswap v3 depth</th><th>Textile 24h volume</th><th>Price now</th><th>Read</th></tr>
+    <tr><td><b>cNGN / USDT</b></td><td>$34.8k USDT · 203M cNGN · 0.01% fee</td><td><b>$2.32M</b> (NGN)</td><td>₦1,462.33 vs ₦1,462.2 Textile</td><td>The fund's market. Gap ≈ 0 right now. Textile's 24h range ₦1,444–1,473 (1.9%).</td></tr>
+    <tr><td>wARS / USDT</td><td>$22.2k USDT · 140M wARS</td><td>$19.8k</td><td>~1,697 vs ask 1,715</td><td>Pool exists, volume tiny, Textile has no bid. Candidate to watch, not to trade yet.</td></tr>
+    <tr><td>USDC / USDT</td><td>$154.7k USDT · $33.8k USDC</td><td>$0.3k</td><td>0.9993</td><td>Deep but almost no Textile flow.</td></tr>
+    <tr><td>wBRL / USDT</td><td>$23 USDT</td><td>$0</td><td>n/a</td><td>Dead.</td></tr>
+    <tr><td>USDT / IDR</td><td>none on Uniswap Celo</td><td>$420k</td><td>18,306</td><td>Busy on Textile, no second venue to pair with.</td></tr>
+  </table>
+  <p>The fund's trades are about <b>$30k a day against $2.3M a day</b> on Textile's NGN market (1.3%), so Kiyoshi is far from running out of volume. The limit is how often Uniswap and Textile disagree by more than the fees, and how much Uniswap's thin pool can take.</p>
+
+  <h2>5. Predictors to watch</h2>
+  <ul>
+    <li><b>Naira volatility and Textile volume.</b> Gaps open when the naira moves fast and Uniswap lags Textile's quote. Textile's 24h range and volume are the leading signs. Today's range is 1.9% and the gap is ~0.</li>
+    <li><b>Hour and weekday.</b> Expect the best flow Mon–Fri 14:00–18:00 and 21:00–23:00 Lagos; weakest on Saturdays and around 11:00.</li>
+    <li><b>Our size vs the Uniswap pool.</b> Keep trades around $400–600; bigger loses margin. If the pool is topped up, the ceiling rises.</li>
+    <li><b>Running costs vs profit.</b> Below ~$12 a day of profit the 10% carve does not cover costs, so the pool pays the gap. A fall in margin with no change in win rate is also what new competition looks like.</li>
+  </ul>
+  <div class="card" style="margin-top:6px"><b>Next step that would sharpen this:</b> record Textile's ticker and Uniswap's price every few minutes into the database. In two weeks we can test directly whether volatility and volume predict profit, instead of inferring it.</div>
+  <div class="foot">Sources: pool wallet transactions (chain), Uniswap v3 factory and pool reads on Celo, Textile public ticker, vault contract. Profits are before gas unless noted.</div>
+</div>
+
+<script>
+const D = [['4',6.47],['5',25.83],['6',26.09],['7',6.83],['8',2.04],['9',17.51],['10',83.88],['11',54.07],['12',11.90],['13',7.90],['14',0.08],['15',6.71],['16',4.62],['17',2.98],['18',0.42]]
+{ const w = 700, h = 250, L = 34, B = 24, mx = 90, y = (v) => h - B - v / mx * (h - B - 14), bw = (w - L - 10) / D.length
+  let s = ''; for (const v of [0, 30, 60, 90]) s += `<line x1="${L}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="#e3dccb"/><text x="0" y="${y(v) + 3}">$${v}</text>`
+  D.forEach(([d, v], i) => { const x = L + i * bw + 5; s += `<rect x="${x}" y="${y(v)}" width="${bw - 10}" height="${h - B - y(v)}" fill="${i >= 8 ? '#9a7a14' : '#cdb571'}" rx="2"/><text x="${x + 2}" y="${h - 8}">${d}</text>` })
+  for (const [v, c, n] of [[3, '#b4452f', 'Quiet $3'], [7, '#1c8a5c', 'Typical $7'], [17, '#3b5bdb', 'Busy $17']]) s += `<line x1="${L}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="${c}" stroke-dasharray="5 4" stroke-width="1.5"/><text x="${w - 70}" y="${y(v) + (v === 3 ? 12 : -4)}" style="fill:${c}">${n}</text>`
+  s += `<text x="${L}" y="12">Nov, Lagos days · darker = last 7 days · gas not deducted</text>`
+  document.getElementById('daily').innerHTML = s }
+function bars(id, rows, max, hi, w = 340, h = 170) {
+  const L = 22, B = 30, bw = (w - L) / rows.length; let s = ''
+  for (const v of [0, 2, 4, 6]) s += `<line x1="${L}" x2="${w}" y1="${h - B - v / max * (h - B - 10)}" y2="${h - B - v / max * (h - B - 10)}" stroke="#e3dccb"/><text x="0" y="${h - B - v / max * (h - B - 10) + 3}">${v}</text>`
+  rows.forEach(([lab, v], i) => { const y = h - B - v / max * (h - B - 10), x = L + i * bw + 1; s += `<rect x="${x}" y="${y}" width="${bw - 2}" height="${h - B - y}" fill="${v >= hi ? '#1c8a5c' : v < 1.2 ? '#b4452f' : '#cdb571'}" rx="1.5"/><text x="${x}" y="${h - 16}" style="font-size:${rows.length > 12 ? 6.5 : 8}px">${lab}</text>` })
+  document.getElementById(id).innerHTML = s }
+const H = [[0,1.49],[1,2.22],[2,2.22],[3,2.23],[4,1.92],[5,2.62],[6,1.55],[7,3.78],[8,2.49],[9,2.03],[10,2.45],[11,.52],[12,2.56],[13,1.9],[14,2.88],[15,4.21],[16,6.21],[17,7.31],[18,3.36],[19,3.59],[20,2.57],[21,5.89],[22,4.75],[23,3.26]]
+bars('hours', H.map(([a, b]) => [String(a), b]), 8, 4.5)
+bars('sizes', [['<100', 4.59], ['100-250', 2.46], ['250-400', 2.59], ['400-600', 5.69], ['600+', 1.81]], 8, 4.5)
+</script></body></html>
