@@ -255,6 +255,48 @@ class Demo:
 
 
 @dataclass(frozen=True)
+class Scalp:
+    version: str
+    coin: str
+    enabled: bool
+    paper_balance: float
+    risk_pct: float
+    risk_cap_pct: float
+    max_leverage: int
+    margin_headroom: float
+    liq_buffer_mult: float
+    stop_min_pct: float
+    stop_max_pct: float
+    stop_atr_mult: float
+    tp1_r: float
+    tp2_r: float
+    min_net_rr: float
+    time_stop_min: float
+    time_stop_r: float
+    max_hold_min: float
+    entry_timeout_min: float
+    maker_pct: float
+    taker_pct: float
+    slippage_pct: float
+    sessions_utc: tuple
+    macro_buffer_min: float
+    atr_min_pct: float
+    atr_max_pct: float
+    trend_slope_pct: float
+    max_trades_day: int
+    daily_stop_r: float
+    daily_lock_r: float
+    loss_streak_cooldown: int
+    cooldown_min: float
+    max_losses_day: int
+    dd_half_pct: float
+    dd_pause_pct: float
+    gate_min_trades: int
+    gate_min_expectancy_r: float
+    gate_min_profit_factor: float
+
+
+@dataclass(frozen=True)
 class Protocol:
     version: str
     data: Data
@@ -277,6 +319,7 @@ class Protocol:
     autopilot: Autopilot
     strategy: Strategy
     demo: Demo
+    scalp: Scalp
 
 
 def _coerce(name: str, typ: Any, v: Any) -> Any:

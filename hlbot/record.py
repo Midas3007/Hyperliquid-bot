@@ -49,6 +49,9 @@ def build(engine, now: float | None = None, account: str | None = None) -> dict:
         "sent_at": round(now or time.time(), 1),
     }
     acct = account or ("live" if engine.live else "paper")
+    if acct == "scalp":
+        status["note"] = ("BTC scalper (protocol scalp-0.1): its own $100 paper ledger, 1% risk per trade, stops 0.2-0.6%, "
+                          "half off at 1R, rest at 3R. Separate from the swing record. Paper only.")
     if acct == "demo":
         status["note"] = ("One-day demo session (13 Nov 2026) on a separate paper account with looser entry rules, so "
                           "the page isn't empty. Not counted toward going live.")

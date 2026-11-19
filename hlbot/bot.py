@@ -31,6 +31,7 @@ from .config import CFG
 from .engine import Engine, Proposal
 from . import demo as demo_mod
 from .record import Publisher, backtest_body, post
+from .scalp import ScalpEngine
 
 log = logging.getLogger(__name__)
 
@@ -64,14 +65,16 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /lessons - rules and hypotheses; /approve N promotes one (needs 5+ supporting trades and 20 closed)
 /pump - BTC post-pump check now
 /paperreset 100 - paper mode: restart the simulated account
-/backtest - replay ~200 days of Hyperliquid prices through the stop/target rules (takes a few minutes)"""
+/backtest - replay ~200 days of Hyperliquid prices through the stop/target rules (takes a few minutes)
+/scalp - BTC scalper (paper, own $100 ledger and gate): /scalp halt · /scalp resume · /scalp flat"""
 
 COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
             ("mode", "Strategy: swing, day or multi"), ("review", "Track record in R"),
             ("journal", "Recent trades"), ("pause", "Stop opening new trades"), ("resume", "Resume autopilot"),
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
             ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"),
-            ("backtest", "Test the stop/target rules on past prices"), ("help", "How HEVI works")]
+            ("backtest", "Test the stop/target rules on past prices"), ("scalp", "BTC scalper: status · halt · resume · flat"),
+            ("help", "How HEVI works")]
 
 START_RE = re.compile(r"^\s*start\b(?:\s*\(?\s*\$?\s*([\d.]+)\s*\)?)?(.*)$", re.I)
 YES_RE = re.compile(r"^\s*y(?:es)?\s*([12])?\s*$", re.I)
@@ -131,6 +134,8 @@ class Bot:
         self.publisher = Publisher(CFG.record_url, CFG.record_token)
         self.demo = demo_mod.make(self.engine)  # one-day demo session (protocol.toml [demo]); None outside its window
         self.demo_pub = Publisher(CFG.record_url, CFG.record_token, account="demo")
+        self.scalp = ScalpEngine(CFG, self.engine.mkt, self.engine.P) if self.engine.P.scalp.enabled else None
+        self.scalp_pub = Publisher(CFG.record_url, CFG.record_token, account="scalp")
         self._demo_announced = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._app: Application | None = None
@@ -522,6 +527,30 @@ class Bot:
             await self._job(ctx, [d.manage, d.sync, d.autopilot_tick])
         await asyncio.to_thread(self.demo_pub.maybe_push, d)
 
+    async def job_scalp(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """BTC scalper (separate paper ledger): replay new 1m candles, manage, look for an entry, publish."""
+        if self.scalp is None or self._offline_since is not None:
+            return
+        try:
+            msgs = await asyncio.to_thread(self.scalp.tick)
+        except Exception as e:  # noqa: BLE001
+            log.warning("scalp tick failed: %s", str(e)[:160])
+            return
+        for m in msgs:
+            await self._push(ctx.application, "[SCALP] " + m)
+        await asyncio.to_thread(self.scalp_pub.maybe_push, self.scalp)
+
+    async def cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._guard(update):
+            return
+        if self.scalp is None:
+            await self._reply(update, "Scalp mode is off (protocol.toml [scalp] enabled = false).")
+            return
+        arg = (ctx.args[0].lower() if ctx.args else "")
+        fn = {"halt": lambda: self.scalp.halt(True), "resume": lambda: self.scalp.halt(False),
+              "flat": self.scalp.flatten}.get(arg, self.scalp.status)
+        await self._reply(update, await asyncio.to_thread(fn))
+
     async def job_autopilot(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._net_check(ctx.application):
             return
@@ -596,7 +625,7 @@ class Bot:
             "cancel": self.cmd_cancel, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
             "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode, "why": self.cmd_why,
-            "backtest": self.cmd_backtest,
+            "backtest": self.cmd_backtest, "scalp": self.cmd_scalp,
         }.items():
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text))
@@ -609,4 +638,6 @@ class Bot:
             jq.run_repeating(self.job_record, interval=300, first=90)
         if self.demo is not None:
             jq.run_repeating(self.job_demo, interval=60, first=60)
+        if self.scalp is not None:
+            jq.run_repeating(self.job_scalp, interval=20, first=40)
         app.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -1179,9 +1179,14 @@ class Engine:
             if not filled:
                 if k["t"] / 1000 > fill_deadline:
                     return "no fill"
-                filled = (k["l"] <= entry) if s == 1 else (k["h"] >= entry)
+                # v3.4 audit: a post-only limit fills only when price trades THROUGH it (a touch can sit in the queue)
+                filled = (k["l"] < entry) if s == 1 else (k["h"] > entry)
                 if not filled:
                     continue
+                # the fill candle may have printed its high before the dip that filled us: only the stop counts on it
+                if (k["l"] <= sl) if s == 1 else (k["h"] >= sl):
+                    return "sl"
+                continue
             hit_sl = k["l"] <= sl if s == 1 else k["h"] >= sl
             hit_tp = k["h"] >= tp if s == 1 else k["l"] <= tp
             if hit_sl:
