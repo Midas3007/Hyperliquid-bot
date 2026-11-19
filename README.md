@@ -110,10 +110,10 @@ stops, Friday closes and new trades wait until the phone is back online. To prev
 4. Deploy, message the bot, add the `TELEGRAM_CHAT_ID` it replies with, and redeploy.
 
 ## Public track record (optional)
-HEVI can publish every trade to a public page: **https://hevi-record.netlify.app** (Netlify site + Neon database,
+HEVI can publish every trade to a public page: **https://hevi-record-midart.vercel.app** (Vercel site + Neon database,
 code in `record-site/`). It sends trade facts only: coin, side, prices, R and P&L. No wallet address, no keys.
 
-1. In Railway → your service → **Variables**, add `RECORD_URL` = `https://hevi-record.netlify.app` and
+1. In Railway → your service → **Variables**, add `RECORD_URL` = `https://hevi-record-midart.vercel.app` and
    `RECORD_TOKEN` = the upload token you were given (the site stores only its SHA-256 fingerprint).
 2. Redeploy. Within a few minutes the page shows HEVI's mode, go-live progress, equity curve and trades.
 
