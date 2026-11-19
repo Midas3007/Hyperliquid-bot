@@ -305,6 +305,30 @@ function vGoal() {
 }
 
 // Admin, on-chain: what the manager (personal wallet) and the owner (bot wallet) can do from the site.
+// The manager's fee records: every settled redemption that carried a performance fee, newest first, read from the vault's
+// own Redeemed events. Each fee is paid to the fee recipient wallet as shares at that day's share price.
+function vFeeRecords() {
+  if (!VS.logs) return '<div class="card"><p class="note" style="margin:0">Reading the fee records…</p></div>'
+  const d = VS.d, day = 86400000, now = Date.now()
+  const rows = VS.logs.filter((l) => l.eventName === 'Redeemed' && l.args?.fee > 0n)
+    .map((l) => ({ t: vTime(l.blockNumber), tx: l.transactionHash, member: l.args.member, gross: l.args.gross, fee: l.args.fee, paid: l.args.paid })).reverse()
+  const total = (since) => rows.filter((r) => r.t >= since).reduce((s, r) => s + r.fee, 0n)
+  const building = VS.holders ? VS.holders.filter((h) => !same(h.a, d.feeRecipient)).reduce((s, h) => s + h.fee, 0n) : null
+  const csv = ['date_utc,member,redeemed_usd,fee_usd,paid_usd,tx', ...rows.map((r) => [new Date(r.t).toISOString(), r.member, vUsd(r.gross).toFixed(2), vUsd(r.fee).toFixed(2), vUsd(r.paid).toFixed(2), r.tx].join(','))].join('\n')
+  return `<div class="grid">
+    ${stat('Fees earned · all time', money(vUsd(total(0))), `${rows.length} redemption${rows.length === 1 ? '' : 's'} with a fee`, 'pos', true)}
+    ${stat('Last 30 days', money(vUsd(total(now - 30 * day))), 'realized')}
+    ${stat('Last 7 days', money(vUsd(total(now - 7 * day))), 'realized')}
+    ${stat('Building up', building === null ? '…' : money(vUsd(building)), 'in members\' profits, not yet realized')}
+  </div>
+  <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>When</th><th>Member</th><th class="num">Redeemed</th><th class="num">Fee</th><th class="num">Member received</th><th></th></tr></thead><tbody>
+  ${rows.length ? rows.slice(0, 50).map((r) => `<tr><td>${stamp(r.t)}</td><td>${vLink('address/' + r.member, esc(vMask(r.member)))}</td><td class="num">${money(vUsd(r.gross))}</td><td class="num pos">${money(vUsd(r.fee), true)}</td><td class="num">${money(vUsd(r.paid))}</td><td class="num">${vLink('tx/' + r.tx, 'View ↗')}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="muted">No fee has been realized yet. A fee is taken when a member redeems shares worth more than they put in.</td></tr>'}
+  </tbody></table></div>
+  <p class="note">Each fee is paid to the fee recipient wallet ${esc(vMask(d.feeRecipient))} as shares, at that day's share price, so it keeps growing or shrinking with the fund. ${rows.length > 50 ? `Showing the latest 50 of ${rows.length}; ` : ''}the button copies all ${rows.length} for a spreadsheet.
+    ${rows.length ? `<button class="btn plain small" data-action="copy" data-value="${esc(csv)}">Copy all as CSV</button>` : ''}</p>`
+}
+
 function vAdmin() {
   const g = vGate('your personal (manager) wallet to pause, approve wallets and change limits')
   if (g) return g
@@ -354,6 +378,8 @@ function vAdmin() {
         : '<p class="note">None. Role changes are queued from the bot wallet in Termux (npm run vault -- set-manager …).</p>'}
     </div>
   </div>
+  <div class="section-title">Fees earned</div>
+  ${vFeeRecords()}
   <div class="section-title">Holders</div>
   <div class="table-wrap"><table><thead><tr><th>Wallet</th><th class="num">Shares</th><th class="num">% of fund</th><th class="num">Value</th><th class="num">Put in</th><th class="num">Waiting</th><th>Approved</th><th></th></tr></thead><tbody>
   ${holders === undefined ? '<tr><td colspan="8" class="muted">Reading…</td></tr>' : holders.length ? holders.filter((h) => h.allowed || h.shares + h.escrowed > 0n || h.queued > 0n).map((h) => `<tr><td>${vLink('address/' + h.a, esc(vMask(h.a)))}${same(h.a, d.feeRecipient) ? ' <span class="pill gold">you</span>' : ''}</td>
