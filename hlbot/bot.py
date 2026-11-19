@@ -32,6 +32,7 @@ from .engine import Engine, Proposal
 from . import demo as demo_mod
 from .record import Publisher, backtest_body, post
 from . import arms as arms_mod
+from .trend import TrendEngine
 from .scalp import ScalpEngine
 from .summary import daily_summary
 
@@ -71,7 +72,8 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /paperreset 100 - paper mode: restart the simulated account
 /backtest [swing|day|multi] - replay ~200 days of prices through the swing/day exit rules (a few minutes)
 /backtest scalp [days] | arms [days] - replay the scalper (or all its versions) on BTC 1m candles (default 7 / 14 days, max 90)
-/scalp - BTC scalper (paper, own $100 ledger and gate): /scalp halt · /scalp resume · /scalp flat"""
+/scalp - BTC scalper (paper, own $100 ledger and gate): /scalp halt · /scalp resume · /scalp flat
+/trend - 4h EMA trend arm on BTC/ETH/SOL (paper, own $100 ledger) · /trend backtest"""
 
 COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
             ("mode", "Strategy: swing, day or multi"), ("review", "Track record in R"),
@@ -79,7 +81,7 @@ COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, draw
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
             ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"),
             ("backtest", "Backtest: swing · day · multi · scalp · arms"), ("scalp", "BTC scalper: status · halt · resume · flat"),
-            ("arms", "Scalp variants leaderboard"), ("today", "Today's summary (Lagos time)"),
+            ("arms", "Scalp variants leaderboard"), ("today", "Today's summary (Lagos time)"), ("trend", "4h trend arm: status · backtest"),
             ("help", "How HEVI works")]
 
 START_RE = re.compile(r"^\s*start\b(?:\s*\(?\s*\$?\s*([\d.]+)\s*\)?)?(.*)$", re.I)
@@ -143,6 +145,7 @@ class Bot:
         veto = self.engine.analyst.scalp_review
         self.scalp = ScalpEngine(CFG, self.engine.mkt, self.engine.P, veto=veto) if self.engine.P.scalp.enabled else None
         self.arms = arms_mod.build(CFG, self.engine.mkt, self.engine.P, veto=veto) if self.scalp else {}
+        self.trend = TrendEngine(CFG, self.engine.mkt)
         self.scalp_pub = Publisher(CFG.record_url, CFG.record_token, account="scalp")
         self._demo_announced = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -357,7 +360,7 @@ class Bot:
             [B("▶ Resume swing" if swing_paused else "⏸ Pause swing", callback_data="p:swing_resume" if swing_paused else "p:swing_pause"),
              B("📒 Journal", callback_data="p:journal"), B("🔎 Funnel", callback_data="p:funnel")],
             [B("Mode: swing", callback_data="p:mode_swing"), B("day", callback_data="p:mode_day"), B("multi", callback_data="p:mode_multi")],
-            [B("🏁 Arms", callback_data="p:arms"), B("📅 Today", callback_data="p:today")],
+            [B("🏁 Arms", callback_data="p:arms"), B("📈 Trend", callback_data="p:trend"), B("📅 Today", callback_data="p:today")],
             [B("🧪 Backtest swing/day", callback_data="p:backtest"), B("🧪 Backtest scalp", callback_data="p:backtest_scalp")],
             [B("🔄 Refresh panel", callback_data="p:panel")],
         ]
@@ -409,7 +412,8 @@ class Bot:
             "swing_pause": lambda: e.set_paused(True), "swing_resume": lambda: e.set_paused(False),
             "mode_swing": lambda: e.set_strategy("swing"), "mode_day": lambda: e.set_strategy("day"),
             "mode_multi": lambda: e.set_strategy("multi"),
-            "arms": lambda: arms_mod.leaderboard(self.scalp, self.arms), "today": lambda: daily_summary(e, sc, True),
+            "arms": lambda: arms_mod.leaderboard(self.scalp, self.arms), "today": lambda: daily_summary(e, sc, True, trend=self.trend),
+            "trend": self.trend.status,
         }
         if sc:
             fns.update({"scalp": sc.status, "scalp_halt": lambda: sc.halt(True), "scalp_resume": lambda: sc.halt(False),
@@ -655,7 +659,7 @@ class Bot:
 
     async def job_daily_summary(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """00:00 Lagos time: yesterday's trades for the swing book and the scalper, in the owner's format."""
-        text = await asyncio.to_thread(daily_summary, self.engine, self.scalp)
+        text = await asyncio.to_thread(daily_summary, self.engine, self.scalp, False, None, self.trend)
         await self._push(ctx.application, text)
 
     async def cmd_arms(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -664,7 +668,26 @@ class Bot:
 
     async def cmd_today(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
-            await self._reply(update, await asyncio.to_thread(daily_summary, self.engine, self.scalp, True))
+            await self._reply(update, await asyncio.to_thread(daily_summary, self.engine, self.scalp, True, None, self.trend))
+
+    async def job_trend(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """4h EMA trend arm (paper): acts only when a 4h bar has completed."""
+        if self._offline_since is not None:
+            return
+        try:
+            msgs = await asyncio.to_thread(self.trend.tick)
+        except Exception as e:  # noqa: BLE001
+            log.warning("trend tick failed: %s", str(e)[:160])
+            return
+        for m in msgs:
+            await self._push(ctx.application, "[TREND] " + m)
+
+    async def cmd_trend(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._guard(update):
+            return
+        arg = (ctx.args[0].lower() if ctx.args else "")
+        fn = self.trend.backtest_report if arg == "backtest" else self.trend.status
+        await self._reply(update, await asyncio.to_thread(fn))
 
     async def cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update):
@@ -751,7 +774,7 @@ class Bot:
             "cancel": self.cmd_cancel, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
             "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode, "why": self.cmd_why,
-            "backtest": self.cmd_backtest, "scalp": self.cmd_scalp, "panel": self.cmd_panel, "funnel": self.cmd_funnel,
+            "backtest": self.cmd_backtest, "scalp": self.cmd_scalp, "trend": self.cmd_trend, "panel": self.cmd_panel, "funnel": self.cmd_funnel,
             "arms": self.cmd_arms, "today": self.cmd_today,
         }.items():
             app.add_handler(CommandHandler(name, fn))
@@ -769,5 +792,6 @@ class Bot:
         if self.scalp is not None:
             jq.run_repeating(self.job_scalp, interval=20, first=40)
         import datetime as _dt
+        jq.run_repeating(self.job_trend, interval=300, first=75)
         jq.run_daily(self.job_daily_summary, time=_dt.time(23, 0, tzinfo=_dt.timezone.utc))   # 00:00 in Lagos (UTC+1)
         app.run_polling(allowed_updates=Update.ALL_TYPES)

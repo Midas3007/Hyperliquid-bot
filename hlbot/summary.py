@@ -28,11 +28,13 @@ def block(trades: list[dict]) -> str:
             f"Last trade {time.strftime('%H:%M', time.gmtime(last + LAGOS))}")
 
 
-def daily_summary(engine, scalp=None, today: bool = False, now: float | None = None) -> str:
+def daily_summary(engine, scalp=None, today: bool = False, now: float | None = None, trend=None) -> str:
     start, end, label = lagos_day(now or time.time(), today)
     pick = lambda store, since: [t for t in store.closed(since) if start <= t["closed_at"] < end]  # noqa: E731
     out = [f"HEVI {'so far today' if today else 'daily summary'} - {label} (Lagos time)", "",
            f"Normal trades ({'LIVE' if engine.live else 'paper'}):", block(pick(engine.store, engine._since()))]
     if scalp is not None:
         out += ["", "Scalp BTC (paper):", block(pick(scalp.store, scalp._since())), f"Scalp gate: {scalp.gate()[1]}"]
+    if trend is not None:
+        out += ["", "Trend 4h BTC/ETH/SOL (paper):", block(pick(trend.store, trend._since()))]
     return "\n".join(out)

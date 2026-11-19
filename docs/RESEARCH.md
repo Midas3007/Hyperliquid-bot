@@ -22,3 +22,10 @@ Conclusions
   third). Not proven; worth running forward on paper, not with money.
 - Reproduce: `python scripts/research_scalp.py --days 90`, `python scripts/research_trend.py`,
   `/backtest arms 30` in Telegram.
+
+## Forward test (from 19 Nov 2026)
+
+The 4h EMA 10/200 system now runs forward on paper as the TREND arm (`hlbot/trend.py`, own $100 ledger in
+DATA_DIR/trend, 1% risk, 3x notional cap). Rules are frozen as above. `/trend` shows the record, `/trend backtest`
+reruns the history. It is not part of any go-live gate; real money needs 30+ forward trades with the low end of the
+interval above zero, and the owner's explicit go-ahead.
