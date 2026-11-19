@@ -23,9 +23,9 @@ import re
 import socket
 import time
 
-from telegram import BotCommand, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import BadRequest, Conflict, Forbidden, NetworkError, RetryAfter, TelegramError
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .config import CFG
 from .engine import Engine, Proposal
@@ -41,7 +41,9 @@ HELP = """HEVI - Hyperliquid trading bot, protocol v{v}
 Autopilot scans every {scan:g} min (Mon-Thu UTC) and places any setup that passes every rule. You don't need to
 do anything; you'll get a message for every trade and a daily report at {report}:00 UTC.
 
+/panel - control panel: every action as a button
 /status - mode, equity, peak, drawdown, breakers, positions
+/funnel - which rule blocks the most setups (single-blocker table, deduplicated)
 /why - the last scan coin by coin: the rule that blocked each one
 /pause - stop opening new trades (open positions stay protected) | /resume
 how is it going - live price, uPnL in $ and R, distance to TP/SL, funding, time left
@@ -68,7 +70,7 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /backtest - replay ~200 days of Hyperliquid prices through the stop/target rules (takes a few minutes)
 /scalp - BTC scalper (paper, own $100 ledger and gate): /scalp halt · /scalp resume · /scalp flat"""
 
-COMMANDS = [("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
+COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
             ("mode", "Strategy: swing, day or multi"), ("review", "Track record in R"),
             ("journal", "Recent trades"), ("pause", "Stop opening new trades"), ("resume", "Resume autopilot"),
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
@@ -283,6 +285,10 @@ class Bot:
         if await self._guard(update):
             await self._run(update, self.engine.status)
 
+    async def cmd_funnel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._run(update, self.engine.funnel)
+
     async def cmd_why(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
             await self._reply(update, await asyncio.to_thread(self.engine.why))
@@ -313,6 +319,82 @@ class Bot:
             await self._reply(update, text)
 
         ctx.application.create_task(job())
+
+    # ------------------------------------------------------------ control panel (inline buttons)
+    def _panel_markup(self) -> InlineKeyboardMarkup:
+        B = InlineKeyboardButton
+        sc = self.scalp
+        scalp_row = ([B("⚡ Scalp", callback_data="p:scalp"),
+                      B("▶ Resume scalp" if sc.paused else "⏸ Halt scalp", callback_data="p:scalp_resume" if sc.paused else "p:scalp_halt"),
+                      B("🛑 Flat scalp", callback_data="p:scalp_flat?")] if sc else [])
+        swing_paused = self.engine.paused
+        rows = [
+            [B("📊 Status", callback_data="p:status"), B("❓ Why no trade", callback_data="p:why"), B("📈 Review", callback_data="p:review")],
+            scalp_row,
+            [B("▶ Resume swing" if swing_paused else "⏸ Pause swing", callback_data="p:swing_resume" if swing_paused else "p:swing_pause"),
+             B("📒 Journal", callback_data="p:journal"), B("🔎 Funnel", callback_data="p:funnel")],
+            [B("Mode: swing", callback_data="p:mode_swing"), B("day", callback_data="p:mode_day"), B("multi", callback_data="p:mode_multi")],
+            [B("🧪 Backtest", callback_data="p:backtest"), B("🔄 Refresh panel", callback_data="p:panel")],
+        ]
+        if CFG.record_url:
+            rows.append([B("🌐 Public record", url=CFG.record_url)])
+        return InlineKeyboardMarkup([r for r in rows if r])
+
+    def _panel_text(self) -> str:
+        e = self.engine
+        lines = [f"HEVI control panel - {e.label()}", f"Swing: {'PAUSED' if e.paused else 'autopilot on'} · mode {e.strategy_label()} · "
+                 f"{e.go_live_status()}"]
+        if self.scalp:
+            lines.append(f"Scalp: {'HALTED' if self.scalp.paused else 'on'} · {self.scalp.go_live_status()} · "
+                         f"equity ${self.scalp.equity():.2f}")
+        return "\n".join(lines)
+
+    async def cmd_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            text = await asyncio.to_thread(self._panel_text)
+            await update.effective_chat.send_message(text, reply_markup=self._panel_markup())
+
+    async def on_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        q = update.callback_query
+        if not self._authorized(update):
+            await q.answer("Not authorized", show_alert=True)
+            return
+        act = (q.data or "")[2:]
+        await q.answer()
+        e, sc = self.engine, self.scalp
+        if act == "panel":
+            try:
+                await q.edit_message_text(await asyncio.to_thread(self._panel_text), reply_markup=self._panel_markup())
+            except BadRequest:
+                pass  # nothing changed
+            return
+        if act == "scalp_flat?":
+            await update.effective_chat.send_message("Close every scalp order and position at market and halt the scalper?",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Yes, flatten scalp", callback_data="p:scalp_flat"),
+                                                    InlineKeyboardButton("Cancel", callback_data="p:noop")]]))
+            return
+        if act == "noop":
+            await q.edit_message_text("Cancelled.")
+            return
+        if act == "backtest":
+            await self.cmd_backtest(update, ctx)
+            return
+        fns = {
+            "status": e.status, "why": e.why, "review": e.review, "journal": e.journal, "funnel": e.funnel,
+            "swing_pause": lambda: e.set_paused(True), "swing_resume": lambda: e.set_paused(False),
+            "mode_swing": lambda: e.set_strategy("swing"), "mode_day": lambda: e.set_strategy("day"),
+            "mode_multi": lambda: e.set_strategy("multi"),
+        }
+        if sc:
+            fns.update({"scalp": sc.status, "scalp_halt": lambda: sc.halt(True), "scalp_resume": lambda: sc.halt(False),
+                        "scalp_flat": sc.flatten})
+        fn = fns.get(act)
+        if fn is None:
+            await self._reply(update, "That button is out of date - send /panel for a fresh one.")
+            return
+        await self._run(update, fn)
+        if act in ("swing_pause", "swing_resume", "scalp_halt", "scalp_resume", "scalp_flat") or act.startswith("mode_"):
+            await self.cmd_panel(update, ctx)   # fresh panel with the new state on its buttons
 
     async def cmd_journal(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._guard(update):
@@ -625,9 +707,10 @@ class Bot:
             "cancel": self.cmd_cancel, "lessons": self.cmd_lessons, "approve": self.cmd_approve,
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
             "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode, "why": self.cmd_why,
-            "backtest": self.cmd_backtest, "scalp": self.cmd_scalp,
+            "backtest": self.cmd_backtest, "scalp": self.cmd_scalp, "panel": self.cmd_panel, "funnel": self.cmd_funnel,
         }.items():
             app.add_handler(CommandHandler(name, fn))
+        app.add_handler(CallbackQueryHandler(self.on_panel, pattern=r"^p:"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_text))
         jq = app.job_queue
         jq.run_repeating(self.job_sync, interval=20, first=20)   # partial fills get TP/SL within ~20s

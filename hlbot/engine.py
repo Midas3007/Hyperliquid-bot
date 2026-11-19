@@ -1487,6 +1487,37 @@ class Engine:
         lines.append(f"Next scan: {time.strftime('%a %d %b %H:%M', time.gmtime(nxt))} UTC ({why})")
         return lines
 
+    def funnel(self, days: int = 14) -> str:
+        """/funnel: which rule blocks the most setups. Skips are deduplicated to one per (coin, side, rule, UTC day), so a
+        setup re-flagged every 30 minutes counts once. 'Only blocker' = it failed that rule and nothing else."""
+        since = time.time() - days * DAY
+        seen: dict = {}
+        for r in self.store.skips(limit=20000):
+            if r["ts"] < since:
+                continue
+            key = (r["coin"], r["side"], r["rule"], int(r["ts"] // DAY))
+            if key not in seen or (r["outcome"] and r["outcome"] != "n/a" and not seen[key]["outcome"]):
+                seen[key] = r
+        if not seen:
+            return f"Funnel: no skipped setups logged in the last {days} days."
+        agg: dict = {}
+        for r in seen.values():
+            a = agg.setdefault(r["rule"], {"n": 0, "only": 0, "tp": 0, "sl": 0, "nofill": 0, "open": 0})
+            a["n"] += 1
+            if (r["detail"] or "").count("FAIL") <= 1:
+                a["only"] += 1
+            o = r["outcome"] or ""
+            a["tp" if o == "tp" else "sl" if o == "sl" else "nofill" if o == "no fill" else "open"] += 1
+        out = [f"Funnel - last {days} days, {len(seen)} distinct skipped setups (deduplicated per coin/side/rule/day)",
+               "rule that blocked first: setups | only blocker | 48h later: TP first / SL first / never filled / pending"]
+        for rule, a in sorted(agg.items(), key=lambda kv: -kv[1]["n"])[:12]:
+            out.append(f"- {rule}: {a['n']} | {a['only']} | {a['tp']} / {a['sl']} / {a['nofill']} / {a['open']}")
+        out.append("")
+        out.append("Outcomes logged before 19 Nov used the old touch-fill check (optimistic); newer ones need a trade-through.")
+        if self._scans.get("funnel"):
+            out.append(f"Last scan funnel: {self._scans['funnel']}")
+        return "\n".join(out)
+
     def why(self) -> str:
         """/why: the last scan coin by coin - the first rule that blocked each candidate - and when the next one is."""
         now = time.time()

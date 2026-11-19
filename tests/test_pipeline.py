@@ -575,3 +575,12 @@ def test_record_publishes_cancelled_entries_so_the_page_drops_them(eng, clock):
     eng.store.update_trade(t["id"], status="cancelled", closed_at=clock[0], close_reason="test")
     rows = build(eng)["trades"]
     assert [(r["id"], r["status"]) for r in rows] == [(t["id"], "cancelled")]
+
+
+def test_funnel_dedupes_and_finds_single_blockers(eng, clock):
+    for _ in range(3):  # the same setup on three scans = one event
+        eng.store.add_skip("3.3", "SOL", "long", "M7 net R/R >= 1:3", "M7 net R/R >= 1:3 FAIL (hard): 1:2.1", 1, 0.9, 1.3)
+    eng.store.add_skip("3.3", "ETH", "short", "M3 whale L/S", "M3 whale L/S FAIL: x; M3 OI 24h FAIL: y", 1, 1.1, 0.7)
+    text = eng.funnel()
+    assert "2 distinct skipped setups" in text
+    assert "- M7 net R/R >= 1:3: 1 | 1 |" in text and "- M3 whale L/S: 1 | 0 |" in text
