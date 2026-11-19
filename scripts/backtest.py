@@ -35,7 +35,7 @@ def main() -> None:
     if a.publish:
         from hlbot.record import backtest_body, post
 
-        url = os.getenv("RECORD_URL", "https://hevi-record.netlify.app")
+        url = os.getenv("RECORD_URL", "https://hevi-record-midart.vercel.app")
         token = open(a.token_file).read().strip() if a.token_file else os.getenv("RECORD_TOKEN", "")
         body = backtest_body(rep, "swing")
         post(url, token, body)

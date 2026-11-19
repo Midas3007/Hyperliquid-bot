@@ -1,6 +1,6 @@
 """Public track record (v3.3): HEVI pushes its journal to a Netlify site backed by Neon (see record-site/).
 
-Set RECORD_URL (e.g. https://hevi-record.netlify.app) and RECORD_TOKEN. Every few minutes HEVI sends the trades and
+Set RECORD_URL (e.g. https://hevi-record-midart.vercel.app) and RECORD_TOKEN. Every few minutes HEVI sends the trades and
 equity since the last /paperreset, plus a short status, whenever something changed (and at least every 30 minutes,
 so the page can show "updated N min ago"). Only trade facts are sent: no wallet address, no keys, no balances beyond
 the equity curve. The token is never logged.
