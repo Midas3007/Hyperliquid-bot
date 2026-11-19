@@ -194,11 +194,12 @@ class ScalpEngine:
 
     live = False
 
-    def __init__(self, cfg, mkt, P=PROTOCOL):
-        self.s: Scalp = P.scalp
+    def __init__(self, cfg, mkt, P=PROTOCOL, s: Scalp | None = None, name: str = "scalp"):
+        self.s: Scalp = s or P.scalp
         self.P = P
         self.mkt = mkt
-        d = os.path.join(cfg.data_dir, "scalp")
+        self.name = name
+        d = os.path.join(cfg.data_dir, "scalp") if name == "scalp" else os.path.join(cfg.data_dir, "arms", name)
         os.makedirs(d, exist_ok=True)
         self.store = Store(d, "scalp.db")
         st = self.store.get("scalp_state")
@@ -374,7 +375,7 @@ class ScalpEngine:
             if hit_sl:  # pessimistic: a candle touching both counts as the stop
                 msgs += self._close(t, t["sl"], "be" if plan["tp1_done"] else "sl", k, taker=True, plan=plan)
                 continue
-            if not plan["tp1_done"] and ((k["h"] >= plan["tp1"]) if sgn > 0 else (k["l"] <= plan["tp1"])):
+            if s.tp1_r > 0 and not plan["tp1_done"] and ((k["h"] >= plan["tp1"]) if sgn > 0 else (k["l"] <= plan["tp1"])):
                 half = math.floor(t["qty"] / 2 * 1e5) / 1e5
                 plan["realized"] += half * abs(plan["tp1"] - t["entry"]) - half * plan["tp1"] * s.maker_pct / 100
                 plan["qty_open"] = t["qty"] - half
@@ -463,3 +464,18 @@ class ScalpEngine:
         self.st["halted"] = True
         self._save()
         return "\n".join(out + [f"Scalp flat: {n} order(s)/position(s) closed; halted until /scalp resume."])
+
+
+def scorecard(rs: list[float], seed: int = 7, n_boot: int = 2000) -> dict:
+    """Trades, win rate, expectancy, profit factor, total R and a bootstrap 90% interval for the expectancy."""
+    import random
+    n = len(rs)
+    if not n:
+        return {"n": 0}
+    w, l = sum(r for r in rs if r > 0), -sum(r for r in rs if r <= 0)
+    rnd, means = random.Random(seed), []
+    for _ in range(n_boot):
+        means.append(sum(rnd.choice(rs) for _ in range(n)) / n)
+    means.sort()
+    return {"n": n, "win": sum(r > 0 for r in rs) / n, "exp": sum(rs) / n, "pf": w / l if l else float("inf"),
+            "total": sum(rs), "lo": means[int(0.05 * n_boot)], "hi": means[int(0.95 * n_boot) - 1]}
