@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Midas × Kiyoshi flyers</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;background:#000}
+.serif{font-family:Caladea,"Liberation Serif",serif}.mono{font-family:"JetBrains Mono",monospace}.sans{font-family:Inter,sans-serif}
+.sheet{position:relative;overflow:hidden}
+.qr svg{display:block;width:100%;height:100%}
+</style></head><body>
+
+<!-- A. THE LEDGER: a newspaper front page -->
+<div id="ledger" class="sheet serif" style="width:1240px;height:1754px;background:#F2ECDD;color:#1b1813;padding:64px 76px 50px;display:flex;flex-direction:column">
+  <div class="mono" style="display:flex;justify-content:space-between;font-size:14px;letter-spacing:3px;color:#5d5444"><span>CELO · PRIVATE EDITION</span><span>THURSDAY 13 NOVEMBER 2026</span><span>NO. 2</span></div>
+  <div style="border-top:3px solid #1b1813;border-bottom:1px solid #1b1813;margin-top:14px;padding:14px 0 10px;display:flex;align-items:center;justify-content:center;gap:26px">
+    <img src="../../web/favicon.svg" width="74" height="74" alt="" style="filter:brightness(.55) sepia(1) saturate(2.4) hue-rotate(-8deg)">
+    <span style="font-size:92px;font-weight:700;letter-spacing:4px">The Kiyoshi Ledger</span>
+  </div>
+  <div class="mono" style="text-align:center;font-size:13px;letter-spacing:4px;color:#5d5444;border-bottom:3px double #1b1813;padding:8px 0">THE MIDAS × KIYOSHI FUND · TRADING THE GAPS BETWEEN UNISWAP AND TEXTILE, AROUND THE CLOCK</div>
+  <div style="font-size:96px;font-weight:700;line-height:1;margin-top:40px;text-align:center;letter-spacing:-1px">Season one closes at <span style="color:#8a6a12">+501%</span></div>
+  <div style="font-size:40px;font-style:italic;text-align:center;margin-top:18px;color:#3c352a">Season two is already live, and up 144% in fifteen days</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:34px;margin-top:42px;border-top:1px solid #1b1813;padding-top:26px;font-size:19px;line-height:1.6">
+    <div><span style="float:left;font-size:74px;line-height:.8;margin:6px 10px 0 0;font-weight:700">I</span>n three and a half days at the end of October, a small pool of four members watched each share go from one dollar to six. Kiyoshi, the trading program at the fund's heart, made 471 trades and won 80.9% of them. Every member was paid out: $194.59 in all.</div>
+    <div>The method is plain. The same stablecoin trades at slightly different prices on Uniswap and on Textile. Every few seconds Kiyoshi compares the two, and when the gap is big enough to pay for itself, it buys on one and sells on the other. The difference goes to the pool.</div>
+    <div>Profit settles into the share price once a day. Members deposit USDT on Celo from their own wallets, and redeem whenever they like, back to the same wallet. The manager takes 10% of profit above what a member put in, and nothing on deposits.</div>
+  </div>
+  <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:34px;margin-top:34px">
+    <div style="border:1px solid #1b1813;padding:22px 24px">
+      <div class="mono" style="font-size:13px;letter-spacing:3px;color:#5d5444">FIG. 1 · SEASON TWO SHARE PRICE, DAILY CLOSE</div>
+      <svg id="ledgerChart" viewBox="0 0 560 250" style="width:100%;height:250px;margin-top:10px"></svg>
+      <div class="mono" style="display:flex;justify-content:space-between;font-size:12px;color:#5d5444"><span>29 OCT · $1.00</span><span>13 NOV · $2.45</span></div>
+    </div>
+    <div style="border:1px solid #1b1813;padding:22px 24px">
+      <div class="mono" style="font-size:13px;letter-spacing:3px;color:#5d5444">BY THE NUMBERS</div>
+      <table class="mono" style="width:100%;border-collapse:collapse;margin-top:12px;font-size:16px">
+        <tr style="border-bottom:1px solid #b7ad97"><td style="padding:9px 0"></td><td style="text-align:right;color:#5d5444">SEASON 1</td><td style="text-align:right;color:#5d5444">SEASON 2</td></tr>
+        <tr style="border-bottom:1px solid #d3cab5"><td style="padding:9px 0">Return</td><td style="text-align:right;font-weight:700">+501%</td><td style="text-align:right;font-weight:700">+144%</td></tr>
+        <tr style="border-bottom:1px solid #d3cab5"><td style="padding:9px 0">Share price</td><td style="text-align:right">$6.01</td><td style="text-align:right">$2.45</td></tr>
+        <tr style="border-bottom:1px solid #d3cab5"><td style="padding:9px 0">Trades</td><td style="text-align:right">471</td><td style="text-align:right">3,397</td></tr>
+        <tr style="border-bottom:1px solid #d3cab5"><td style="padding:9px 0">Won</td><td style="text-align:right">80.9%</td><td style="text-align:right">76.5%</td></tr>
+        <tr><td style="padding:9px 0">Days</td><td style="text-align:right">3.5</td><td style="text-align:right">15, live</td></tr>
+      </table>
+    </div>
+  </div>
+  <div style="flex:1"></div>
+  <div style="display:flex;align-items:center;gap:30px;border-top:3px double #1b1813;padding-top:24px">
+    <div class="qr" style="width:150px;height:150px;flex:none"></div>
+    <div style="flex:1"><div style="font-size:42px;font-weight:700">Membership is by invitation.</div><div class="mono" style="font-size:20px;margin-top:10px;color:#8a6a12">midas-kiyoshi-fund.vercel.app</div></div>
+  </div>
+  <div class="mono" style="font-size:11.5px;line-height:1.6;color:#6e6553;margin-top:18px;text-align:center">Past results do not promise future returns. Both seasons were short, with small pools; returns per dollar fall as the fund grows. You can lose money.<br>Not financial advice. Not insured or protected by any compensation scheme. Figures from the fund records and the blockchain.</div>
+</div>
+
+<!-- B. SWISS: the numbers are the design -->
+<div id="swiss" class="sheet sans" style="width:1240px;height:1754px;background:#0B0B0C;color:#F2EEE4;padding:70px 76px 54px;display:grid;grid-template-columns:repeat(12,1fr);grid-template-rows:auto auto auto 1fr auto auto;column-gap:20px">
+  <div style="grid-column:1/13;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2b2b2e;padding-bottom:22px">
+    <div style="display:flex;align-items:center;gap:14px"><img src="../../web/favicon.svg" width="46" height="46" alt=""><span class="mono" style="font-size:16px;letter-spacing:5px">MIDAS × KIYOSHI</span></div>
+    <span class="mono" style="font-size:13px;letter-spacing:4px;color:#8b8678">ARBITRAGE · CELO · EST. 2026</span>
+  </div>
+  <div style="grid-column:1/9;margin-top:46px">
+    <div class="mono" style="font-size:15px;letter-spacing:4px;color:#8b8678">SEASON 1 · 26–29 OCT · FINAL</div>
+    <div style="font-family:'Inter Display',Inter;font-weight:800;font-size:300px;line-height:.86;letter-spacing:-14px;margin-top:10px">501<span style="font-size:150px;letter-spacing:-4px;color:#D4AF37">%</span></div>
+  </div>
+  <div style="grid-column:9/13;margin-top:96px;font-size:18px;line-height:1.6;color:#b9b3a3;align-self:start">Share price $1.00 → $6.01.<br>471 trades, 80.9% won.<br>All 4 members paid out.</div>
+  <div style="grid-column:1/9;margin-top:40px;border-top:1px solid #2b2b2e;padding-top:30px">
+    <div class="mono" style="font-size:15px;letter-spacing:4px;color:#D4AF37">SEASON 2 · SINCE 29 OCT · LIVE</div>
+    <div style="font-family:'Inter Display',Inter;font-weight:800;font-size:300px;line-height:.86;letter-spacing:-14px;margin-top:10px;color:#D4AF37">144<span style="font-size:150px;letter-spacing:-4px;color:#F2EEE4">%</span></div>
+  </div>
+  <div style="grid-column:9/13;margin-top:126px;font-size:18px;line-height:1.6;color:#b9b3a3;align-self:start">Share price $1.00 → $2.45.<br>3,397 trades, 76.5% won.<br>Fifteen days and counting.</div>
+  <div style="grid-column:1/13;margin-top:40px;border-top:1px solid #2b2b2e;padding-top:26px;display:flex;flex-direction:column;justify-content:center">
+    <div class="mono" style="font-size:14px;letter-spacing:4px;color:#8b8678">HOW · TWO MARKETS, ONE GAP</div>
+    <svg id="swissGap" viewBox="0 0 1088 300" style="width:100%;height:300px;margin-top:12px"></svg>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:20px;font-size:17px;line-height:1.55;color:#b9b3a3;margin-top:8px">
+      <div><b style="color:#F2EEE4">Deposit.</b> USDT on Celo, from your own wallet.</div>
+      <div><b style="color:#F2EEE4">Kiyoshi trades.</b> It buys where cheaper, sells where dearer.</div>
+      <div><b style="color:#F2EEE4">Redeem.</b> Any day, at that day's share price.</div>
+    </div>
+  </div>
+  <div style="grid-column:1/13;display:flex;align-items:center;gap:34px;border-top:1px solid #2b2b2e;padding-top:26px;margin-top:20px">
+    <div class="qr" style="width:140px;height:140px;background:#F2EEE4;padding:10px;flex:none"></div>
+    <div style="flex:1"><div style="font-family:'Inter Display',Inter;font-weight:700;font-size:46px;letter-spacing:-1px">Request access.</div><div class="mono" style="font-size:19px;color:#D4AF37;margin-top:8px">midas-kiyoshi-fund.vercel.app</div></div>
+    <div class="mono" style="font-size:14px;color:#8b8678;text-align:right;line-height:1.6">10% fee on profit<br>above your deposit.<br>None on deposits.</div>
+  </div>
+  <div class="mono" style="grid-column:1/13;font-size:11.5px;line-height:1.6;color:#6f6b60;margin-top:20px">Past results do not promise future returns. Both seasons were short, with small pools; returns per dollar fall as the fund grows. You can lose money. Not financial advice. Not insured or protected by any compensation scheme.</div>
+</div>
+
+<!-- C. STORY: phone, vertical -->
+<div id="story" class="sheet sans" style="width:1080px;height:1920px;background:radial-gradient(circle at 50% 22%,#2a2110 0%,#0d0b08 45%,#060606 80%);color:#F4EEDF;padding:110px 80px 90px;display:flex;flex-direction:column;align-items:center;text-align:center">
+  <img src="../../web/favicon.svg" width="250" height="250" alt="" style="filter:drop-shadow(0 0 50px rgba(243,215,122,.45))">
+  <div class="mono" style="font-size:22px;letter-spacing:8px;margin-top:26px">MIDAS × KIYOSHI FUND</div>
+  <div style="margin-top:80px;width:100%;border-top:1px solid #3a3020;padding-top:46px">
+    <div class="mono" style="font-size:22px;letter-spacing:6px;color:#b9af98">SEASON 1 · FINAL</div>
+    <div class="serif" style="font-size:230px;font-weight:700;line-height:1;color:#7BE0AE;margin-top:6px">+501%</div>
+    <div class="mono" style="font-size:24px;color:#b9af98">in 3½ days · all members paid out</div>
+  </div>
+  <div style="margin-top:56px;width:100%;border-top:1px solid #3a3020;padding-top:46px">
+    <div class="mono" style="font-size:22px;letter-spacing:6px;color:#F3D77A">SEASON 2 · LIVE NOW</div>
+    <div class="serif" style="font-size:230px;font-weight:700;line-height:1;color:#F3D77A;margin-top:6px">+144%</div>
+    <div class="mono" style="font-size:24px;color:#b9af98">in 15 days · 3,397 trades</div>
+  </div>
+  <div class="serif" style="font-size:52px;font-style:italic;margin-top:64px;color:#F4EEDF">Patience, turned to gold.</div>
+  <div style="flex:1"></div>
+  <div style="display:flex;align-items:center;gap:34px;background:rgba(243,215,122,.08);border:1px solid #5a4a1e;border-radius:28px;padding:30px 36px;width:100%;text-align:left">
+    <div class="qr" style="width:170px;height:170px;background:#F4EEDF;padding:12px;border-radius:12px;flex:none"></div>
+    <div><div class="serif" style="font-size:50px;font-weight:700">Request access</div><div class="mono" style="font-size:22px;color:#F3D77A;margin-top:10px">midas-kiyoshi-fund.vercel.app</div></div>
+  </div>
+  <div class="mono" style="font-size:15px;line-height:1.6;color:#7d7563;margin-top:30px">Past results do not promise future returns. Short seasons, small pools.<br>You can lose money. Not financial advice.</div>
+</div>
+
+<!-- D. THE INVITATION: landscape card -->
+<div id="invite" class="sheet" style="width:1754px;height:1240px;background:#0A0907;color:#F4EEDF;padding:60px">
+  <div style="position:absolute;inset:44px;border:2px solid #A8862C"></div>
+  <div style="position:absolute;inset:58px;border:1px solid #5a4a1e"></div>
+  <div style="position:absolute;left:50%;top:44%;width:1100px;height:800px;transform:translate(-50%,-50%);background:radial-gradient(ellipse,rgba(212,175,55,.13),rgba(0,0,0,0) 65%)"></div>
+  <div style="position:relative;height:100%;display:flex;flex-direction:column;align-items:center;text-align:center;padding:40px 120px 20px">
+    <img src="../../web/favicon.svg" width="150" height="150" alt="">
+    <div class="mono" style="font-size:18px;letter-spacing:10px;color:#b9af98;margin-top:20px">THE MIDAS × KIYOSHI FUND</div>
+    <div class="serif" style="font-size:118px;font-style:italic;color:#F3D77A;line-height:1;margin-top:38px">You are invited.</div>
+    <div class="serif" style="font-size:34px;line-height:1.5;color:#e8e0cc;margin-top:28px;max-width:1150px">To a private pool on Celo, where Kiyoshi trades the gaps between Uniswap and Textile around the clock, and the profit settles into your shares every evening.</div>
+    <div style="display:flex;gap:0;margin-top:44px;border-top:1px solid #5a4a1e;border-bottom:1px solid #5a4a1e">
+      <div style="padding:22px 56px;border-right:1px solid #5a4a1e"><div class="mono" style="font-size:14px;letter-spacing:5px;color:#b9af98">SEASON 1 · FINAL</div><div class="serif" style="font-size:64px;font-weight:700;color:#7BE0AE;margin-top:4px">+501%</div><div class="mono" style="font-size:14px;color:#8d846f">26–29 Oct · 471 trades</div></div>
+      <div style="padding:22px 56px"><div class="mono" style="font-size:14px;letter-spacing:5px;color:#F3D77A">SEASON 2 · LIVE</div><div class="serif" style="font-size:64px;font-weight:700;color:#F3D77A;margin-top:4px">+144%</div><div class="mono" style="font-size:14px;color:#8d846f">since 29 Oct · 3,397 trades</div></div>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:30px">
+      <div class="qr" style="width:120px;height:120px;background:#F4EEDF;padding:9px;flex:none"></div>
+      <div style="text-align:left"><div class="serif" style="font-size:36px;font-weight:700">Kindly request your seat</div><div class="mono" style="font-size:18px;color:#F3D77A;margin-top:6px">midas-kiyoshi-fund.vercel.app</div></div>
+    </div>
+    <div class="mono" style="font-size:12px;color:#7d7563;margin-top:22px">Past results do not promise future returns. Short seasons, small pools; returns per dollar fall as the fund grows. You can lose money. Not financial advice.</div>
+  </div>
+</div>
+
+<script>
+// Season 2 daily closes, from the chain
+const C = [1.002, 1.212, 1.246, 1.2996, 1.4235, 1.4606, 1.5072, 1.5962, 1.7117, 1.7468, 1.7561, 1.8187, 2.158, 2.383, 2.4289, 2.4461]
+{ const w = 560, h = 250, p = C.map((v, i) => [10 + i * (w - 20) / (C.length - 1), h - 14 - (v - 1) / 1.5 * (h - 28)])
+  let s = ''; for (let k = 1; k < 4; k++) s += `<line x1="0" x2="${w}" y1="${k * h / 4}" y2="${k * h / 4}" stroke="#cfc5ad" stroke-dasharray="3 4"/>`
+  const d = p.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ')
+  s += `<path d="${d}" fill="none" stroke="#1b1813" stroke-width="3"/>` + p.map((q) => `<circle cx="${q[0]}" cy="${q[1]}" r="3.5" fill="#8a6a12"/>`).join('')
+  document.getElementById('ledgerChart').innerHTML = s }
+// two markets and the gold gap between them
+{ const w = 1088, h = 300, n = 120, A = [], B = []
+  for (let i = 0; i < n; i++) { const x = i / (n - 1), base = 150 + Math.sin(x * 7) * 40 + Math.sin(x * 17) * 12, gap = 6 + 46 * Math.max(0, Math.sin(x * 9.5 - 1)) ** 3; A.push([x * w, base + gap / 2]); B.push([x * w, base - gap / 2]) }
+  const path = (P) => P.map((q, i) => (i ? 'L' : 'M') + q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ')
+  const fill = path(B) + ' ' + A.slice().reverse().map((q) => 'L' + q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ') + ' Z'
+  document.getElementById('swissGap').innerHTML = `<path d="${fill}" fill="#D4AF37" opacity=".55"/><path d="${path(B)}" fill="none" stroke="#F2EEE4" stroke-width="2.5"/><path d="${path(A)}" fill="none" stroke="#7b7769" stroke-width="2.5"/>
+    <text x="0" y="40" fill="#F2EEE4" font-family="JetBrains Mono" font-size="15" letter-spacing="3">TEXTILE</text><text x="0" y="285" fill="#7b7769" font-family="JetBrains Mono" font-size="15" letter-spacing="3">UNISWAP</text>
+    <text x="${w}" y="40" text-anchor="end" fill="#D4AF37" font-family="JetBrains Mono" font-size="15" letter-spacing="3">GOLD = THE GAP KIYOSHI KEEPS</text>` }
+</script>
+</body></html>

@@ -185,6 +185,19 @@ function vTiles() {
   </div>`
 }
 
+// Realized fees on the position card. The manager (or fee recipient) sees what members' redemptions have paid them so far
+// and what is still building up in members' profits; a member sees what their own redemptions have paid.
+function vFeeRows() {
+  const d = VS.d, reading = '<span class="muted">Reading…</span>'
+  if (d.isManager || same(VS.account, d.feeRecipient)) {
+    const pending = VS.holders ? VS.holders.filter((h) => !same(h.a, d.feeRecipient)).reduce((s, h) => s + h.fee, 0n) : null
+    return `<div class="total"><span>Fees you have earned (realized)</span><span>${VS.feesEarned === undefined ? reading : money(vUsd(VS.feesEarned))}</span></div>
+        <div><span>From redemptions</span><span>${VS.feesEarned === undefined ? reading : `${VS.feesEarnedCount} with a profit`}</span></div>
+        <div><span>Fees building up, not yet realized</span><span>${pending === null ? reading : money(vUsd(pending))}</span></div>`
+  }
+  return `<div><span>Fees you have paid (realized)</span><span>${VS.feesPaid === undefined ? reading : money(vUsd(VS.feesPaid))}</span></div>`
+}
+
 function vWallet() {
   const g = vGate()
   if (g) return g
@@ -199,6 +212,7 @@ function vWallet() {
         <div><span>Value before fee</span><span>${money(vUsd(me.value))}</span></div>
         <div><span>You put in</span><span>${money(vUsd(me.cost))}</span></div>
         <div><span>Fee if you redeemed today</span><span>${money(vUsd(me.fee))}</span></div>
+        ${vFeeRows()}
         ${me.queued ? `<div><span>Deposit waiting</span><span>${money(vUsd(me.queued))} <button class="btn plain small" data-vault="cancel-deposit">Cancel</button></span></div>` : ''}
         ${me.escrowed ? `<div><span>Redemption waiting</span><span>${vShares(me.escrowed)} shares <button class="btn plain small" data-vault="cancel-redeem">Cancel</button></span></div>` : ''}
         ${me.unclaimed ? `<div class="total"><span>Ready to collect</span><span>${money(vUsd(me.unclaimed))} <button class="btn small" data-vault="claim">Collect</button></span></div>` : ''}
@@ -385,7 +399,7 @@ async function vRefresh() {
 
 // History, holders and the personal P&L, from the vault's events (only when a view needs them).
 async function vExtras() {
-  const needHistory = !!document.querySelector('[data-vx="account"]') && VS.account && VS.d
+  const needHistory = !!document.querySelector('[data-vx="account"],[data-vx="wallet"]') && VS.account && VS.d
   const needHolders = (!!document.querySelector('[data-vx="admin"]') && VS.d && (VS.d.isManager || VS.d.isOwner)) || (!!document.querySelector('[data-vx="board"]') && VS.d)
   const needMine = !!document.getElementById('my-pnl') && VS.account && VS.d
   if (!needHistory && !needHolders && !needMine) return
@@ -393,6 +407,11 @@ async function vExtras() {
     const logs = await vLogs()
     const mine = VS.account ? logs.filter((l) => l.eventName !== 'Transfer' && same(l.args?.member || l.args?.to, VS.account)) : []
     VS.myLogs = mine
+    // Realized fees: the fee in every settled redemption. Members pay it; the fee recipient earns it as fee shares.
+    const feeOf = (list) => list.filter((l) => l.eventName === 'Redeemed').reduce((s, l) => s + (l.args?.fee || 0n), 0n)
+    VS.feesEarned = feeOf(logs)
+    VS.feesEarnedCount = logs.filter((l) => l.eventName === 'Redeemed' && l.args?.fee > 0n).length
+    VS.feesPaid = feeOf(mine)
     if (needHistory) {
       const label = { DepositRequested: 'Deposit queued', DepositCancelled: 'Deposit cancelled', RedeemRequested: 'Redemption queued', RedeemCancelled: 'Redemption cancelled', Deposited: 'Deposit settled', Redeemed: 'Redemption paid', Claimed: 'Payout collected', OpeningShares: 'Opening shares', Allowed: 'Members list' }
       const amt = (l) => {
