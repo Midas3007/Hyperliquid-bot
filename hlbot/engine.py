@@ -1533,11 +1533,12 @@ class Engine:
         out += self._schedule_lines(now)[1:]
         return "\n".join(out)
 
-    def backtest(self, top: int = 15) -> str:
-        """/backtest: replay price history through the current swing and day brackets (hlbot/backtest.py)."""
+    def backtest(self, top: int = 15, mode: str = "") -> str:
+        """/backtest [swing|day|multi]: replay price history through the swing and/or day brackets (hlbot/backtest.py).
+        multi switches between the two, so it shows both side by side."""
         from . import backtest as bt
 
-        variants = bt.current_variants()
+        variants = [v for v in bt.current_variants() if mode in ("", "multi") or v.name == mode]
         rep = bt.run(self.mkt.info, self.mkt.ctxs(), top=top, variants=variants)
         self.last_backtest = rep
         return bt.summarize(rep, variants)

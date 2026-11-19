@@ -69,7 +69,8 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /lessons - rules and hypotheses; /approve N promotes one (needs 5+ supporting trades and 20 closed)
 /pump - BTC post-pump check now
 /paperreset 100 - paper mode: restart the simulated account
-/backtest - replay ~200 days of Hyperliquid prices through the stop/target rules (takes a few minutes)
+/backtest [swing|day|multi] - replay ~200 days of prices through the swing/day exit rules (a few minutes)
+/backtest scalp | arms - replay the scalper (or all its versions) over the last ~3.5 days of BTC 1m candles
 /scalp - BTC scalper (paper, own $100 ledger and gate): /scalp halt · /scalp resume · /scalp flat"""
 
 COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
@@ -77,7 +78,7 @@ COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, draw
             ("journal", "Recent trades"), ("pause", "Stop opening new trades"), ("resume", "Resume autopilot"),
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
             ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"),
-            ("backtest", "Test the stop/target rules on past prices"), ("scalp", "BTC scalper: status · halt · resume · flat"),
+            ("backtest", "Backtest: swing · day · multi · scalp · arms"), ("scalp", "BTC scalper: status · halt · resume · flat"),
             ("arms", "Scalp variants leaderboard"), ("today", "Today's summary (Lagos time)"),
             ("help", "How HEVI works")]
 
@@ -305,14 +306,29 @@ class Bot:
         if self._bt_running:
             await self._reply(update, "A backtest is already running - its result is on the way.")
             return
+        mode = (ctx.args[0].lower() if getattr(ctx, "args", None) else "")
+        if update.callback_query and update.callback_query.data == "p:backtest_scalp":
+            mode = "scalp"
+        if mode not in ("", "swing", "day", "multi", "scalp", "arms"):
+            await self._reply(update, "Use /backtest swing | day | multi | scalp | arms")
+            return
         self._bt_running = True
-        await self._reply(update, "Backtest started: ~200 days of hourly prices on the top 15 coins. It takes about "
-                                  "4 minutes (downloads are paced for Hyperliquid's rate limit); HEVI keeps running.")
+        await self._reply(update, {
+            "scalp": "Scalp backtest started: the live scalp rules over the last ~3.5 days of BTC 1m candles (~30 s).",
+            "arms": "Arms backtest started: all scalp versions over the last ~3.5 days of BTC 1m candles (~2 min).",
+        }.get(mode, f"Backtest started{' (' + mode + ')' if mode else ''}: ~200 days of hourly prices on the top coins. "
+                    "It takes about 4 minutes (downloads are paced for Hyperliquid's rate limit); HEVI keeps running."))
 
         async def job() -> None:
             try:
-                text = await asyncio.to_thread(self.engine.backtest)
-                if self.publisher.enabled and self.engine.last_backtest:
+                if mode in ("scalp", "arms"):
+                    from . import backtest_scalp
+                    text = await asyncio.to_thread(backtest_scalp.run, self.engine.mkt.info, self.engine.mkt.ctxs(), CFG,
+                                                   self.engine.P, mode == "arms")
+                    await self._reply(update, text)
+                    return
+                text = await asyncio.to_thread(self.engine.backtest, 15, mode)
+                if self.publisher.enabled and self.engine.last_backtest and mode in ("", "swing", "multi"):
                     body = backtest_body(self.engine.last_backtest, "swing")
                     await asyncio.to_thread(post, CFG.record_url, CFG.record_token, body)
                     text += f"\n\nPublished {len(body['trades'])} backtest trades to the record page (BACKTEST tab)."
@@ -339,7 +355,8 @@ class Bot:
             [B("▶ Resume swing" if swing_paused else "⏸ Pause swing", callback_data="p:swing_resume" if swing_paused else "p:swing_pause"),
              B("📒 Journal", callback_data="p:journal"), B("🔎 Funnel", callback_data="p:funnel")],
             [B("Mode: swing", callback_data="p:mode_swing"), B("day", callback_data="p:mode_day"), B("multi", callback_data="p:mode_multi")],
-            [B("🏁 Arms", callback_data="p:arms"), B("📅 Today", callback_data="p:today"), B("🧪 Backtest", callback_data="p:backtest")],
+            [B("🏁 Arms", callback_data="p:arms"), B("📅 Today", callback_data="p:today")],
+            [B("🧪 Backtest swing/day", callback_data="p:backtest"), B("🧪 Backtest scalp", callback_data="p:backtest_scalp")],
             [B("🔄 Refresh panel", callback_data="p:panel")],
         ]
         if CFG.record_url:
@@ -382,7 +399,7 @@ class Bot:
         if act == "noop":
             await q.edit_message_text("Cancelled.")
             return
-        if act == "backtest":
+        if act in ("backtest", "backtest_scalp"):
             await self.cmd_backtest(update, ctx)
             return
         fns = {
