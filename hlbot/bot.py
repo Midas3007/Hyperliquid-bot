@@ -70,7 +70,7 @@ override: [reason] - take the closest setup blocked only by soft rules. Hard rul
 /pump - BTC post-pump check now
 /paperreset 100 - paper mode: restart the simulated account
 /backtest [swing|day|multi] - replay ~200 days of prices through the swing/day exit rules (a few minutes)
-/backtest scalp | arms - replay the scalper (or all its versions) over the last ~3.5 days of BTC 1m candles
+/backtest scalp [days] | arms [days] - replay the scalper (or all its versions) on BTC 1m candles (default 7 / 14 days, max 90)
 /scalp - BTC scalper (paper, own $100 ledger and gate): /scalp halt · /scalp resume · /scalp flat"""
 
 COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, drawdown, breakers, positions"), ("why", "Why no trade: last scan, coin by coin"),
@@ -306,7 +306,9 @@ class Bot:
         if self._bt_running:
             await self._reply(update, "A backtest is already running - its result is on the way.")
             return
-        mode = (ctx.args[0].lower() if getattr(ctx, "args", None) else "")
+        args = list(getattr(ctx, "args", None) or [])
+        mode = args[0].lower() if args else ""
+        days = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
         if update.callback_query and update.callback_query.data == "p:backtest_scalp":
             mode = "scalp"
         if mode not in ("", "swing", "day", "multi", "scalp", "arms"):
@@ -314,8 +316,8 @@ class Bot:
             return
         self._bt_running = True
         await self._reply(update, {
-            "scalp": "Scalp backtest started: the live scalp rules over the last ~3.5 days of BTC 1m candles (~30 s).",
-            "arms": "Arms backtest started: all scalp versions over the last ~3.5 days of BTC 1m candles (~2 min).",
+            "scalp": f"Scalp backtest started: the live scalp rules over the last {days or 7} days of BTC 1m candles (~1-2 min).",
+            "arms": f"Arms backtest started: every scalp version over the last {days or 14} days of BTC 1m candles (~5-15 min).",
         }.get(mode, f"Backtest started{' (' + mode + ')' if mode else ''}: ~200 days of hourly prices on the top coins. "
                     "It takes about 4 minutes (downloads are paced for Hyperliquid's rate limit); HEVI keeps running."))
 
@@ -324,7 +326,7 @@ class Bot:
                 if mode in ("scalp", "arms"):
                     from . import backtest_scalp
                     text = await asyncio.to_thread(backtest_scalp.run, self.engine.mkt.info, self.engine.mkt.ctxs(), CFG,
-                                                   self.engine.P, mode == "arms")
+                                                   self.engine.P, mode == "arms", days)
                     await self._reply(update, text)
                     return
                 text = await asyncio.to_thread(self.engine.backtest, 15, mode)
