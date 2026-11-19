@@ -14,15 +14,20 @@ from .scalp import ScalpEngine, scorecard
 
 S = PROTOCOL.scalp
 ARMS = {
-    "B_no_partial": ("one target at 2.5R, no half-off at 1R", replace(S, tp1_r=0.0, tp2_r=2.5)),
-    "C_wider_stop": ("stops 0.35-0.90%, target 2.5R", replace(S, stop_min_pct=0.35, stop_max_pct=0.90, tp2_r=2.5)),
+    "B_no_partial": ("one target at 2R net, no half-off", replace(S, tp1_r=0.0, tp2_r=2.0)),
+    "C_wider_stop": ("stops 0.35-0.90%", replace(S, stop_min_pct=0.35, stop_max_pct=0.90)),
     "D_fast_exit": ("time stop 10 min, max hold 45 min", replace(S, time_stop_min=10, max_hold_min=45)),
     "E_all_day": ("trades 24h instead of the 07-11 / 13-17 UTC sessions", replace(S, sessions_utc=(0, 24))),
+    "F_3m": ("signals on 3m candles", replace(S, signal_tf=3)),
+    "G_5m": ("signals on 5m candles", replace(S, signal_tf=5)),
+    "H_quick_1R": ("take 1R net (small profit after fees) and re-enter; 10-min time stop",
+                   replace(S, tp1_r=0.0, tp2_r=1.0, time_stop_min=10)),
+    "I_claude": ("live rules + Claude may veto or shrink each entry", replace(S, claude_veto=True)),
 }
 
 
-def build(cfg, mkt, P=PROTOCOL) -> dict[str, ScalpEngine]:
-    return {name: ScalpEngine(cfg, mkt, P, s=s, name=name) for name, (_, s) in ARMS.items()}
+def build(cfg, mkt, P=PROTOCOL, veto=None) -> dict[str, ScalpEngine]:
+    return {name: ScalpEngine(cfg, mkt, P, s=s, name=name, veto=veto) for name, (_, s) in ARMS.items()}
 
 
 def leaderboard(live: ScalpEngine | None, arms: dict[str, ScalpEngine]) -> str:
@@ -41,5 +46,5 @@ def leaderboard(live: ScalpEngine | None, arms: dict[str, ScalpEngine]) -> str:
         out.append(f"- {name}: {c['n']} | {c['win'] * 100:.0f}% | {c['exp']:+.2f} [{c['lo']:+.2f}, {c['hi']:+.2f}] | {pf} | {c['total']:+.1f}")
     out.append("")
     out += [f"{n}: {d}" for n, (d, _) in ARMS.items()]
-    out.append("An arm earns real money only when its interval's low end is above 0 over 30+ trades - and only with your go.")
+    out.append("With 9 arms, one can look good by luck: trust an arm only when its low end stays above 0 over 30+ trades.")
     return "\n".join(out)

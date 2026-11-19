@@ -16,7 +16,10 @@ def test_size_derives_leverage_and_checks_liquidation():
     z = sc.size("long", 100_000, 99_750, 100.0, 1.0, 0.1, TIERS, 5, S)
     assert z.ok and z.leverage <= S.max_leverage and z.net_rr >= S.min_net_rr
     assert abs(z.risk_usd - 1.0) < 0.05                                    # 1% of $100 at the stop, costs included
-    assert z.tp1 == 100_000 + (100_000 - z.stop) and z.tp2 == 100_000 + 3 * (100_000 - z.stop)
+    # targets in net R: TP1 pays 1x and TP2 2x what the stop costs, after all fees
+    loss = z.notional * ((100_000 - z.stop) / 100_000 + (S.maker_pct + S.taker_pct + S.slippage_pct) / 100)
+    gain = lambda px: z.qty * (px - 100_000) - z.notional * 2 * S.maker_pct / 100  # noqa: E731
+    assert abs(gain(z.tp1) / loss - 1.0) < 0.01 and abs(gain(z.tp2) / loss - 2.0) < 0.01 and z.net_rr >= 1.0
     assert (100_000 - z.liq) / 100_000 >= S.liq_buffer_mult * (100_000 - z.stop) / 100_000
     assert not sc.size("long", 100_000, 99_000, 100.0, 1.0, 0.1, TIERS, 5, S).ok          # 1% stop > 0.60% band
     z = sc.size("long", 100_000, 99_950, 100.0, 1.0, 0.1, TIERS, 5, S)                      # 0.05% widened to the 0.20% floor
@@ -79,7 +82,7 @@ def test_fill_needs_trade_through_then_tp1_moves_stop_to_breakeven(tmp_path, mon
     c.append(bar(c[-1]["t"] + 60_000, plan["tp1"], plan["tp1"], 99_990, 99_995)); m.t = c[-1]["t"] + 60_001
     e.tick(m.t / 1000)
     t = e.store.trade(tid)
-    assert t["status"] == "closed" and t["exit_type"] == "tp1+be" and 0.3 < t["result_r"] < 0.6
+    assert t["status"] == "closed" and t["exit_type"] == "tp1+be" and 0.45 < t["result_r"] < 0.7
     assert abs(e.equity() - (100 + t["pnl"])) < 1e-9
 
 
@@ -93,11 +96,11 @@ def test_breakers_and_gate(tmp_path):
     assert any("cooldown" in b for b in block)
     e.st["halted"] = True
     assert any("halted" in b for b in e.risk_now(now)[1])
-    assert e.gate()[0] is False and "3/10" in e.gate()[1]
-    for i in range(7):
+    assert e.gate()[0] is False and "3/30" in e.gate()[1]
+    for i in range(27):
         e.store.add_trade(coin="BTC", side="long", status="closed", entry=1, sl=1, tp=1, closed_at=now + 10 + i, result_r=2.0, risk_usd=1)
     ok, msg = e.gate()
-    assert ok and "PASSED" in msg and "live needs your explicit go" in msg   # (3 x -1 + 7 x 2) / 10 = +1.1R, PF 4.67
+    assert ok and "PASSED" in msg and "live needs your explicit go" in msg   # (3 x -1 + 27 x 2) / 30 = +1.7R
 
 
 def test_sessions():
@@ -106,3 +109,37 @@ def test_sessions():
     d = datetime(2026, 11, 19, tzinfo=timezone.utc).timestamp()
     assert e.in_session(d + 8 * 3600)[0] and not e.in_session(d + 12 * 3600)[0] and e.in_session(d + 16.9 * 3600)[0]
     assert not e.in_session(d + 17 * 3600)[0]
+
+
+def test_daily_summary_format_lagos_day(tmp_path):
+    from hlbot.summary import daily_summary
+    e, _ = eng_with(tmp_path, [])
+    now = datetime(2026, 11, 19, 23, 0, tzinfo=timezone.utc).timestamp()   # 00:00 Lagos on the 20th
+    e.st["reset_at"] = now - 86400
+    for i, pnl in enumerate([0.05, 0.04, -0.03]):
+        e.store.add_trade(coin="BTC", side="long", status="closed", entry=100.0, fill_px=100.0, exit_px=101.0, qty=10,
+                          pnl=pnl, result_r=pnl * 10, closed_at=now - 3600 * (3 - i), risk_usd=0.1)
+
+    class Swing:
+        live = False
+        store = e.store.__class__(str(tmp_path / "swing"), "paper.db")
+
+        def _since(self):
+            return 0
+
+    text = daily_summary(Swing(), e, now=now)
+    assert "Thu 19 Nov (Lagos time)" in text and "Normal trades (paper):\nToday (Lagos time): no closed trades" in text
+    assert "Today (Lagos time): 3 trades, 2 profitable (67%)\nProfit +$0.06 after fees · traded $6,030.00\nLast trade 23:00" in text
+
+
+def test_arms_leaderboard_ranks_by_interval(tmp_path):
+    from hlbot import arms
+    e, m = eng_with(tmp_path, [])
+    built = arms.build(Config(data_dir=str(tmp_path)), m)
+    assert set(built) == set(arms.ARMS) and built["F_3m"].s.signal_tf == 3 and built["I_claude"].s.claude_veto
+    now = time.time()
+    for i in range(5):
+        built["H_quick_1R"].store.add_trade(coin="BTC", side="long", status="closed", entry=1, sl=1, tp=1, closed_at=now + i,
+                                             result_r=1.0, risk_usd=1)
+    text = arms.leaderboard(e, built)
+    assert text.splitlines()[2].startswith("- H_quick_1R: 5 | 100% | +1.00")

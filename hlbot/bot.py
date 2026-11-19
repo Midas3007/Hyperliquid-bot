@@ -31,7 +31,9 @@ from .config import CFG
 from .engine import Engine, Proposal
 from . import demo as demo_mod
 from .record import Publisher, backtest_body, post
+from . import arms as arms_mod
 from .scalp import ScalpEngine
+from .summary import daily_summary
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ COMMANDS = [("panel", "Control panel (buttons)"), ("status", "Mode, equity, draw
             ("close", "Close a position: /close SOL"), ("cancel", "Cancel resting entries"),
             ("lessons", "Rules and hypotheses"), ("pump", "BTC post-pump check"),
             ("backtest", "Test the stop/target rules on past prices"), ("scalp", "BTC scalper: status · halt · resume · flat"),
+            ("arms", "Scalp variants leaderboard"), ("today", "Today's summary (Lagos time)"),
             ("help", "How HEVI works")]
 
 START_RE = re.compile(r"^\s*start\b(?:\s*\(?\s*\$?\s*([\d.]+)\s*\)?)?(.*)$", re.I)
@@ -136,7 +139,9 @@ class Bot:
         self.publisher = Publisher(CFG.record_url, CFG.record_token)
         self.demo = demo_mod.make(self.engine)  # one-day demo session (protocol.toml [demo]); None outside its window
         self.demo_pub = Publisher(CFG.record_url, CFG.record_token, account="demo")
-        self.scalp = ScalpEngine(CFG, self.engine.mkt, self.engine.P) if self.engine.P.scalp.enabled else None
+        veto = self.engine.analyst.scalp_review
+        self.scalp = ScalpEngine(CFG, self.engine.mkt, self.engine.P, veto=veto) if self.engine.P.scalp.enabled else None
+        self.arms = arms_mod.build(CFG, self.engine.mkt, self.engine.P, veto=veto) if self.scalp else {}
         self.scalp_pub = Publisher(CFG.record_url, CFG.record_token, account="scalp")
         self._demo_announced = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -334,7 +339,8 @@ class Bot:
             [B("▶ Resume swing" if swing_paused else "⏸ Pause swing", callback_data="p:swing_resume" if swing_paused else "p:swing_pause"),
              B("📒 Journal", callback_data="p:journal"), B("🔎 Funnel", callback_data="p:funnel")],
             [B("Mode: swing", callback_data="p:mode_swing"), B("day", callback_data="p:mode_day"), B("multi", callback_data="p:mode_multi")],
-            [B("🧪 Backtest", callback_data="p:backtest"), B("🔄 Refresh panel", callback_data="p:panel")],
+            [B("🏁 Arms", callback_data="p:arms"), B("📅 Today", callback_data="p:today"), B("🧪 Backtest", callback_data="p:backtest")],
+            [B("🔄 Refresh panel", callback_data="p:panel")],
         ]
         if CFG.record_url:
             rows.append([B("🌐 Public record", url=CFG.record_url)])
@@ -384,6 +390,7 @@ class Bot:
             "swing_pause": lambda: e.set_paused(True), "swing_resume": lambda: e.set_paused(False),
             "mode_swing": lambda: e.set_strategy("swing"), "mode_day": lambda: e.set_strategy("day"),
             "mode_multi": lambda: e.set_strategy("multi"),
+            "arms": lambda: arms_mod.leaderboard(self.scalp, self.arms), "today": lambda: daily_summary(e, sc, True),
         }
         if sc:
             fns.update({"scalp": sc.status, "scalp_halt": lambda: sc.halt(True), "scalp_resume": lambda: sc.halt(False),
@@ -621,6 +628,24 @@ class Bot:
         for m in msgs:
             await self._push(ctx.application, "[SCALP] " + m)
         await asyncio.to_thread(self.scalp_pub.maybe_push, self.scalp)
+        for name, arm in self.arms.items():   # shadow arms: silent, same candles, own ledgers
+            try:
+                await asyncio.to_thread(arm.tick)
+            except Exception as e:  # noqa: BLE001
+                log.info("arm %s tick failed: %s", name, str(e)[:120])
+
+    async def job_daily_summary(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """00:00 Lagos time: yesterday's trades for the swing book and the scalper, in the owner's format."""
+        text = await asyncio.to_thread(daily_summary, self.engine, self.scalp)
+        await self._push(ctx.application, text)
+
+    async def cmd_arms(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, await asyncio.to_thread(arms_mod.leaderboard, self.scalp, self.arms))
+
+    async def cmd_today(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._guard(update):
+            await self._reply(update, await asyncio.to_thread(daily_summary, self.engine, self.scalp, True))
 
     async def cmd_scalp(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._guard(update):
@@ -708,6 +733,7 @@ class Bot:
             "reject": self.cmd_reject, "pump": self.cmd_pump, "paperreset": self.cmd_paperreset,
             "pause": self.cmd_pause, "resume": self.cmd_resume, "mode": self.cmd_mode, "why": self.cmd_why,
             "backtest": self.cmd_backtest, "scalp": self.cmd_scalp, "panel": self.cmd_panel, "funnel": self.cmd_funnel,
+            "arms": self.cmd_arms, "today": self.cmd_today,
         }.items():
             app.add_handler(CommandHandler(name, fn))
         app.add_handler(CallbackQueryHandler(self.on_panel, pattern=r"^p:"))
@@ -723,4 +749,6 @@ class Bot:
             jq.run_repeating(self.job_demo, interval=60, first=60)
         if self.scalp is not None:
             jq.run_repeating(self.job_scalp, interval=20, first=40)
+        import datetime as _dt
+        jq.run_daily(self.job_daily_summary, time=_dt.time(23, 0, tzinfo=_dt.timezone.utc))   # 00:00 in Lagos (UTC+1)
         app.run_polling(allowed_updates=Update.ALL_TYPES)

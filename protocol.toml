@@ -216,7 +216,7 @@ scan_every_min = 15
 
 [scalp]                      # v3.4 / scalp-0.1: BTC scalper, owner's request (19 Nov 2026). Separate protocol, own $100 paper
 # ledger, own breakers, own gate. Never shares risk state with the swing daemon. Paper only: live needs an explicit owner command.
-version = "scalp-0.1"
+version = "scalp-0.2"
 coin = "BTC"
 enabled = true
 paper_balance = 100.0
@@ -228,9 +228,9 @@ liq_buffer_mult = 3.0                 # reject unless liquidation is >= 3x the s
 stop_min_pct = 0.20                   # stop band (the swing 1.5% floor does not apply: different timescale)
 stop_max_pct = 0.60
 stop_atr_mult = 0.8                   # stop >= 0.8 x 5m ATR
-tp1_r = 1.0                           # half off at 1R, stop to break-even + fees
-tp2_r = 3.0                           # rest at 3R (on a 0.2% stop, 0.08% costs leave 2R gross at only 1.3R net) ...
-min_net_rr = 1.8                      # ... which must be >= 1.8R net of costs
+tp1_r = 1.0                           # half off at 1R NET of fees (targets are set in net R: never below 1:1), stop to break-even + fees
+tp2_r = 2.0                           # rest at 2R net of fees ...
+min_net_rr = 1.0                      # never a target below 1:1 net of costs
 time_stop_min = 20                    # out if not +0.5R within 20 minutes (before TP1)
 time_stop_r = 0.5
 max_hold_min = 90
@@ -244,6 +244,8 @@ atr_min_pct = 0.08                    # 5m ATR band: below = dead, above = chaos
 atr_max_pct = 1.20
 trend_slope_pct = 0.05                # 15m EMA20 slope over 3 bars
 max_trades_day = 20
+signal_tf = 1                         # signal timeframe in minutes (1, 3 or 5); fills are always checked on 1m
+claude_veto = false                   # true = Claude may veto or shrink each entry (never enlarge); arm I tests it
 daily_stop_r = -3.0
 daily_lock_r = 4.0                    # at +4R the rest of the day runs at half risk
 loss_streak_cooldown = 3
@@ -251,7 +253,7 @@ cooldown_min = 45
 max_losses_day = 5
 dd_half_pct = 5.0
 dd_pause_pct = 10.0
-gate_min_trades = 10
+gate_min_trades = 30                  # owner (19 Nov): 30 closed scalps before going live
 gate_min_expectancy_r = 0.10
 gate_min_profit_factor = 1.2
 

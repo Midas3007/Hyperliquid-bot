@@ -294,6 +294,8 @@ class Scalp:
     gate_min_trades: int
     gate_min_expectancy_r: float
     gate_min_profit_factor: float
+    signal_tf: int
+    claude_veto: bool
 
 
 @dataclass(frozen=True)

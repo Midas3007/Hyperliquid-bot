@@ -5,8 +5,8 @@ Two setups, routed by regime (15m EMA20 slope + side of the UTC-session VWAP):
     with the trend; stop past the pullback low (high).
   * A, sweep & reclaim: in a range, a 1m wick runs the last 2 hours' high (low) and closes back inside -> fade it;
     stop past the wick extreme.
-Stops are bounded to 0.20-0.60% and >= 0.8x 5m ATR. Targets: half at 1R (stop to break-even + fees), rest at 2R
-(>= 1.8R net of costs or no trade). Time stop: out if not +0.5R within 20 minutes; max hold 90 min; flat at the end of
+Stops are bounded to 0.20-0.60% and >= 0.8x 5m ATR. Targets: half at 1R net of fees (stop to break-even + fees), rest
+at 2R net. Targets are set in net R, so a target never pays less than 1:1 after costs. Time stop: out if not +0.5R within 20 minutes; max hold 90 min; flat at the end of
 each session window (07-11, 13-17 UTC). Nothing within 10 min of CPI/FOMC/NFP.
 
 Sizing: risk % of scalp equity at the stop sets the notional (that is what sets profit per move). Isolated leverage is then
@@ -178,13 +178,14 @@ def size(side: str, entry: float, stop: float, equity: float, risk_pct: float, a
             break
     if lev is None:
         return Size(False, f"no leverage up to {cap}x keeps liquidation >= {s.liq_buffer_mult:g}x the {dist:.2f}% stop away")
-    r = entry * dist / 100
-    tp1, tp2 = entry + sgn * s.tp1_r * r, entry + sgn * s.tp2_r * r
     loss = notional * (dist + cost) / 100
-    gain2 = qty * abs(tp2 - entry) - notional * 2 * s.maker_pct / 100
-    net_rr = gain2 / loss
-    if net_rr < s.min_net_rr:
-        return Size(False, f"net {net_rr:.2f}R < {s.min_net_rr}R")
+    # targets are placed in NET R: k x (stop distance + all costs) + the maker fees of the limit exit, so a target of
+    # kR really pays k times what the stop would cost. Never below 1:1 (min_net_rr >= 1).
+    tgt = lambda k: entry * (1 + sgn * (k * (dist + cost) + 2 * s.maker_pct) / 100)  # noqa: E731
+    tp1, tp2 = tgt(s.tp1_r), tgt(s.tp2_r)
+    net_rr = s.tp2_r
+    if net_rr < max(1.0, s.min_net_rr):
+        return Size(False, f"target {net_rr:.2f}R net < {max(1.0, s.min_net_rr):g}R")
     return Size(True, "ok", qty, notional, lev, stop, tp1, tp2, net_rr, loss, liq)
 
 
@@ -194,11 +195,12 @@ class ScalpEngine:
 
     live = False
 
-    def __init__(self, cfg, mkt, P=PROTOCOL, s: Scalp | None = None, name: str = "scalp"):
+    def __init__(self, cfg, mkt, P=PROTOCOL, s: Scalp | None = None, name: str = "scalp", veto=None):
         self.s: Scalp = s or P.scalp
         self.P = P
         self.mkt = mkt
         self.name = name
+        self.veto = veto            # callable(payload) -> {"verdict": take|skip|downsize, "risk_multiplier": <=1, ...}
         d = os.path.join(cfg.data_dir, "scalp") if name == "scalp" else os.path.join(cfg.data_dir, "arms", name)
         os.makedirs(d, exist_ok=True)
         self.store = Store(d, "scalp.db")
@@ -324,7 +326,12 @@ class ScalpEngine:
         if block:
             self.last_reason = "; ".join(block)
             return []
-        sig, why = find_signal(c1, s)
+        tf = max(1, int(s.signal_tf))
+        if tf > 1 and (c1[-1]["t"] + M1) % (tf * M1):
+            self.last_reason = f"waiting for the {tf}m candle to close"
+            return []
+        bars = c1 if tf == 1 else agg(c1, tf)
+        sig, why = find_signal(bars, s) if tf == 1 or len(bars) >= 130 else (None, "warming up")
         if not sig:
             self.last_reason = why
             return []
@@ -334,6 +341,19 @@ class ScalpEngine:
         if not z.ok:
             self.last_reason = f"{sig.setup} {sig.side} skipped: {z.why}"
             return []
+        if s.claude_veto and self.veto:
+            v = self._ask_veto(sig, z, c1, tf)
+            if v is not None:
+                verdict, mult = v.get("verdict"), min(1.0, max(0.0, float(v.get("risk_multiplier", 1.0))))
+                if verdict == "skip" or mult <= 0:
+                    self.last_reason = f"{sig.setup} {sig.side} vetoed by Claude: {'; '.join(v.get('reasons', []))[:120]}"
+                    return []
+                if verdict == "downsize" and mult < 1:
+                    z = size(sig.side, sig.entry, sig.stop, self.equity(), risk * mult, atr_pct(agg(c1, 5)) or 0,
+                             ctx["margin_tiers"], ctx["sz_decimals"], s)
+                    if not z.ok:
+                        self.last_reason = f"downsized by Claude below the minimum: {z.why}"
+                        return []
         tid = self.store.add_trade(coin=s.coin, side=sig.side, status="pending", entry=sig.entry, sl=z.stop, tp=z.tp2,
                                    qty=z.qty, leverage=z.leverage, margin=z.notional / z.leverage, created_at=now,
                                    version=s.version, strategy=f"scalp {sig.setup}", risk_usd=z.risk_usd, risk_pct=risk,
@@ -344,6 +364,24 @@ class ScalpEngine:
         return [f"#{tid} {sig.setup}: BTC {sig.side.upper()} post-only {sig.entry:,.1f} | SL {z.stop:,.1f} "
                 f"({abs(sig.entry - z.stop) / sig.entry * 100:.2f}%) | TP1 {z.tp1:,.1f} / TP2 {z.tp2:,.1f} | "
                 f"{z.leverage}x isolated, risk ${z.risk_usd:.2f} | {sig.why}"]
+
+    def _ask_veto(self, sig: Signal, z: Size, c1: list[dict], tf: int) -> dict | None:
+        """Claude reviews the entry (advisory). Any error or slow answer = None = the deterministic decision stands."""
+        import concurrent.futures as cf
+        c5 = agg(c1, 5)[-24:]
+        payload = {"coin": self.s.coin, "setup": sig.setup, "side": sig.side, "why": sig.why, "entry": sig.entry,
+                   "stop": z.stop, "tp1": z.tp1, "tp2": z.tp2, "net_rr_tp2": round(z.net_rr, 2), "signal_tf_min": tf,
+                   "last_5m_candles": [{k: round(v, 1) for k, v in x.items() if k != "t"} for x in c5],
+                   "regime": regime(c1, self.s)[0], "atr_5m_pct": atr_pct(agg(c1, 5)),
+                   "recent_results_r": [t["result_r"] for t in self.store.closed(self._since())[-10:]]}
+        ex = cf.ThreadPoolExecutor(max_workers=1)
+        try:
+            return ex.submit(self.veto, payload).result(timeout=8)
+        except Exception as e:  # noqa: BLE001
+            log.info("claude veto unavailable (%s) - deterministic decision stands", str(e)[:80])
+            return None
+        finally:
+            ex.shutdown(wait=False)
 
     def _manage(self, k: dict, c1: list[dict], now: float) -> list[str]:
         import json
