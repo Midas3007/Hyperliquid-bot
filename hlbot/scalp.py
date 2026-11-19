@@ -103,8 +103,9 @@ def regime(c1: list[dict], s: Scalp) -> tuple[str, float | None, float | None]:
 
 def find_signal(c1: list[dict], s: Scalp) -> tuple[Signal | None, str]:
     """Look at the last completed 1m candle. Returns (signal, reason when none)."""
-    if len(c1) < 400:
-        return None, "warming up (needs ~7h of 1m candles)"
+    tf = max(1, round((c1[-1]["t"] - c1[-2]["t"]) / M1)) if len(c1) > 1 else 1
+    if len(c1) < max(130, 400 // tf):          # ~7h of history whatever the timeframe (1m: 400 bars, 5m: 130)
+        return None, "warming up (needs ~7h of candles)"
     a5 = atr_pct(agg(c1, 5))
     if a5 is None or not (s.atr_min_pct <= a5 <= s.atr_max_pct):
         return None, f"5m ATR {a5 and round(a5, 3)}% outside {s.atr_min_pct}-{s.atr_max_pct}%"
