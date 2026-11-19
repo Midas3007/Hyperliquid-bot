@@ -220,9 +220,9 @@ version = "scalp-0.1"
 coin = "BTC"
 enabled = true
 paper_balance = 100.0
-risk_pct = 1.0                        # of scalp equity at the stop (ladder: 2% after 30 scalps with a positive CI, cap 3%)
-risk_cap_pct = 4.0
-max_leverage = 20
+risk_pct = 3.0                        # of scalp equity at the stop (owner: higher exposure; ~16x notional on a 0.2% stop)
+risk_cap_pct = 5.0
+max_leverage = 40                     # BTC's Hyperliquid max; isolated, as high as the 3x liquidation buffer allows
 margin_headroom = 1.5                 # isolated leverage = ceil(effective leverage x 1.5)
 liq_buffer_mult = 3.0                 # reject unless liquidation is >= 3x the stop distance away
 stop_min_pct = 0.20                   # stop band (the swing 1.5% floor does not apply: different timescale)
@@ -243,7 +243,7 @@ macro_buffer_min = 10
 atr_min_pct = 0.08                    # 5m ATR band: below = dead, above = chaos
 atr_max_pct = 1.20
 trend_slope_pct = 0.05                # 15m EMA20 slope over 3 bars
-max_trades_day = 12
+max_trades_day = 20
 daily_stop_r = -3.0
 daily_lock_r = 4.0                    # at +4R the rest of the day runs at half risk
 loss_streak_cooldown = 3

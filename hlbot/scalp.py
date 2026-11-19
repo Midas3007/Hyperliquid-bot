@@ -9,8 +9,9 @@ Stops are bounded to 0.20-0.60% and >= 0.8x 5m ATR. Targets: half at 1R (stop to
 (>= 1.8R net of costs or no trade). Time stop: out if not +0.5R within 20 minutes; max hold 90 min; flat at the end of
 each session window (07-11, 13-17 UTC). Nothing within 10 min of CPI/FOMC/NFP.
 
-Sizing: risk 1% of scalp equity at the stop. Leverage is an OUTPUT (notional / equity, x1.5 headroom, cap 20x), and a
-trade is rejected unless the isolated liquidation price is >= 3x the stop distance away (Hyperliquid margin tiers).
+Sizing: risk % of scalp equity at the stop sets the notional (that is what sets profit per move). Isolated leverage is then
+the highest the coin allows (BTC 40x) whose liquidation is still >= 3x the stop distance away, so the least margin is
+posted per trade; it never changes the $ at risk.
 
 Paper fills (honest by design): a post-only limit fills only when a later 1m candle trades THROUGH it (touch is not
 enough), within 2 bars; a candle that touches both stop and target counts as the stop; maker fee in, maker on the
@@ -161,16 +162,22 @@ def size(side: str, entry: float, stop: float, equity: float, risk_pct: float, a
     notional = qty * entry
     mm, coin_max, mmr = maintenance(notional, tiers)
     cap = min(s.max_leverage, coin_max)                         # the coin's own max at this size also caps it
-    lev = min(cap, max(1, math.ceil(notional / equity * s.margin_headroom)))
-    if notional / lev > equity:
+    need = max(1, math.ceil(notional / equity))                 # the least leverage that fits the margin
+    if need > cap:
         return Size(False, f"needs more than {cap}x")
-    margin = notional / lev
-    if margin <= mm:
-        return Size(False, "margin below maintenance: would be liquidated at once")
-    liq = entry - sgn * (margin - mm) / qty / (1 - sgn * mmr)
-    liq_dist = abs(entry - liq) / entry * 100
-    if liq_dist < s.liq_buffer_mult * dist:
-        return Size(False, f"liquidation {liq_dist:.2f}% away < {s.liq_buffer_mult:g}x the {dist:.2f}% stop")
+    # leverage only sets the margin posted (profit per trade comes from risk %): use the highest leverage whose
+    # isolated liquidation is still >= liq_buffer_mult x the stop away, so the least capital is tied up per trade
+    lev = liq = None
+    for L in range(cap, need - 1, -1):
+        margin = notional / L
+        if margin <= mm:
+            continue
+        lq = entry - sgn * (margin - mm) / qty / (1 - sgn * mmr)
+        if abs(entry - lq) / entry * 100 >= s.liq_buffer_mult * dist:
+            lev, liq = L, lq
+            break
+    if lev is None:
+        return Size(False, f"no leverage up to {cap}x keeps liquidation >= {s.liq_buffer_mult:g}x the {dist:.2f}% stop away")
     r = entry * dist / 100
     tp1, tp2 = entry + sgn * s.tp1_r * r, entry + sgn * s.tp2_r * r
     loss = notional * (dist + cost) / 100
