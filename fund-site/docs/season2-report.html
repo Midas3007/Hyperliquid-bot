@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Season 2: the full record and the forecast</title>
+<style>
+@page{size:A4;margin:0}*{box-sizing:border-box}html,body{margin:0;background:#fff}
+:root{--ink:#16130c;--mute:#6b6454;--gold:#9a7a14;--line:#e3dccb;--green:#1c8a5c;--red:#b4452f;--bg:#faf7ef;--blue:#3b5bdb}
+.p{width:794px;height:1123px;padding:42px 46px;font-family:Inter,sans-serif;color:var(--ink);background:#fff;position:relative;overflow:hidden;page-break-after:always}
+h1{font-family:Caladea,"Liberation Serif",serif;font-size:31px;margin:0 0 3px;letter-spacing:-.5px;line-height:1.1}
+h2{font-family:Caladea,"Liberation Serif",serif;font-size:18.5px;margin:15px 0 6px;border-bottom:1px solid var(--line);padding-bottom:4px}
+p,li{font-size:11.3px;line-height:1.5;margin:4px 0}ul{margin:3px 0;padding-left:17px}
+.m{font-family:"JetBrains Mono",monospace}.lab{font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:2.2px;color:var(--mute);text-transform:uppercase}
+table{border-collapse:collapse;width:100%;font-size:10.3px}th,td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right}th:first-child,td:first-child{text-align:left}th{font-family:"JetBrains Mono",monospace;font-size:8.6px;letter-spacing:1.2px;color:var(--mute);font-weight:400}
+.card{font-size:11.3px;line-height:1.5;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:9px 11px}
+.g{display:grid;gap:9px}.up{color:var(--green)}.dn{color:var(--red)}.mu{color:var(--mute)}
+.foot{position:absolute;left:46px;right:46px;bottom:22px;font-size:8.8px;color:var(--mute);font-family:"JetBrains Mono",monospace;display:flex;justify-content:space-between}
+.tldr{border:2px solid var(--gold);background:#fffaf0;border-radius:11px;padding:11px 14px;margin-top:10px}
+.tldr li{font-size:11.6px;margin:3px 0}.tldr .lab{color:var(--gold)}
+svg text{font-family:"JetBrains Mono",monospace;font-size:8.5px;fill:#6b6454}
+.kpi .v{font-family:"JetBrains Mono",monospace;font-size:18px;margin-top:3px}
+</style></head><body>
+
+<!-- PAGE 1: TLDR + SNAPSHOT -->
+<div class="p">
+  <div class="lab">Midas × Kiyoshi Fund · 20 November 2026 · Season 2 (29 Oct – 20 Nov, 23 days)</div>
+  <h1>Season 2: the full record, week by week, and what comes next</h1>
+  <div class="tldr">
+    <div class="lab" style="font-size:10px;letter-spacing:3px">TL;DR</div>
+    <ul>
+      <li><b>The result:</b> the share price went from $1.00 to <b>$2.4971 (+149.7%)</b>. 4,003 trades, 76.1% won, $1.06M traded, <b>$365.75 trading profit</b> before gas.</li>
+      <li><b>Two seasons in one:</b> the first two weeks made <b>$330.80 (90%)</b> of the profit. The last 9 days made only <b>$34.95</b>, and the share price has been flat at about $2.49 for a week.</li>
+      <li><b>Why:</b> margin per traded dollar fell from about 4 bps (weeks 1–2) to 1.3 bps, then 0.1 bps this week, while the win rate held at 74–77%. Kiyoshi is still trading well; the gaps got smaller.</li>
+      <li><b>Who holds it:</b> the fund is $645.94. The manager holds roughly four-fifths. Members who joined on 12 Nov are up about <b>2.8%</b>; the big gains were made before they came in.</li>
+      <li><b>Fees:</b> <b>$2.53 realized</b> from 7 redemptions (15% on chain; the flyers still say 10%, which needs fixing). Fee income only grows with member money, which is about $116 now.</li>
+      <li><b>Forecast:</b> plan on the <b>Quiet</b> case: $2 a day of trading profit gives <b>+$23 (+3.6%) in 30 days</b>, share price about $2.59. A "Typical" $8 a day gives +31%; the big numbers need a spike like 10–11 Nov.</li>
+      <li><b>What moves it:</b> naira volatility first; then the hour (13:00–18:00 and 21:00–23:00 Lagos are best), the weekday (Saturday is worst), trade size (over $600 loses margin) and the $1.22 daily running costs.</li>
+      <li><b>Do next:</b> confirm the fee rate, keep trades at or under $600, and start recording Textile and Uniswap prices so we can prove what drives profit.</li>
+    </ul>
+  </div>
+
+  <div class="g" style="grid-template-columns:repeat(5,1fr);margin-top:10px">
+    <div class="card kpi"><div class="lab">Share price</div><div class="v">$2.4971</div><div class="lab mu" style="margin-top:2px">+149.7%</div></div>
+    <div class="card kpi"><div class="lab">Fund value</div><div class="v">$645.94</div><div class="lab" style="margin-top:2px">peak $884.75</div></div>
+    <div class="card kpi"><div class="lab">Trades</div><div class="v">4,003</div><div class="lab" style="margin-top:2px">76.1% won</div></div>
+    <div class="card kpi"><div class="lab">Traded</div><div class="v">$1.06M</div><div class="lab" style="margin-top:2px">avg $266 a trade</div></div>
+    <div class="card kpi"><div class="lab">Profit</div><div class="v up">$365.75</div><div class="lab" style="margin-top:2px">22 of 23 days up</div></div>
+  </div>
+
+  <h2>Share price, day by day</h2>
+  <svg id="price" viewBox="0 0 700 250" style="width:100%;height:250px"></svg>
+  <p style="font-size:10.3px" class="mu">Daily close of the vault's share price (Lagos days). Bands are the four weeks. The jump on 10–11 Nov was the two best trading days; the step in the fund's value on 12 Nov was members' deposits, which do not move the price.</p>
+  <div class="foot"><span>Midas × Kiyoshi Fund · Season 2 report</span><span>1 / 6</span></div>
+</div>
+
+<!-- PAGE 2: WEEKLY -->
+<div class="p">
+  <h2 style="margin-top:0">1. Weekly analysis (weeks run Thursday to Wednesday, from the season's first day)</h2>
+  <table>
+    <tr><th>Week</th><th>Trades</th><th>Won</th><th>Traded</th><th>Profit</th><th>Per day</th><th>Margin</th><th>Share price</th><th>Price move</th><th>Fund value</th></tr>
+    <tr><td><b>1</b> · 29 Oct–4 Nov</td><td>1,383</td><td>76.8%</td><td>$287k</td><td class="up">$114.55</td><td>$16.36</td><td>3.99 bps</td><td>1.000 → 1.507</td><td class="up">+50.7%</td><td>$370</td></tr>
+    <tr><td><b>2</b> · 5–11 Nov</td><td>1,703</td><td>76.9%</td><td>$492k</td><td class="up">$216.25</td><td>$30.89</td><td>4.39 bps</td><td>1.507 → 2.383</td><td class="up">+58.1%</td><td>$585</td></tr>
+    <tr><td><b>3</b> · 12–18 Nov</td><td>824</td><td>74.2%</td><td>$255k</td><td class="up">$34.61</td><td>$4.94</td><td>1.35 bps</td><td>2.383 → 2.496</td><td class="up">+4.7%</td><td>$709</td></tr>
+    <tr><td><b>4</b> · 19–20 Nov <span class="mu">(2 days)</span></td><td>93</td><td>69.9%</td><td>$29k</td><td>$0.34</td><td>$0.17</td><td>0.12 bps</td><td>2.496 → 2.497</td><td>+0.1%</td><td>$646</td></tr>
+    <tr style="font-weight:600"><td>Season 2</td><td>4,003</td><td>76.1%</td><td>$1.06M</td><td class="up">$365.75</td><td>$15.90</td><td>3.44 bps</td><td>1.000 → 2.497</td><td class="up">+149.7%</td><td>$646</td></tr>
+  </table>
+  <div class="g" style="grid-template-columns:1fr 1fr;margin-top:10px">
+    <div><div class="lab">Profit a week ($) · W4* = 2 days so far</div><svg id="wk1" viewBox="0 0 340 170" style="width:100%;height:160px"></svg></div>
+    <div><div class="lab">Margin per $ traded (bps) and win rate</div><svg id="wk2" viewBox="0 0 340 170" style="width:100%;height:160px"></svg></div>
+  </div>
+  <h2>What happened each week</h2>
+  <ul>
+    <li><b>Week 1: a fast start.</b> $114.55 on a small pool. 30 Oct alone made $39.58 from 384 trades. Margin about 4 bps. Share price +50.7%.</li>
+    <li><b>Week 2: the best week.</b> $216.25. Smart sizing switched on 5 Nov, trades got larger, and 10 Nov (+$83.88, 7.6 bps) and 11 Nov (+$54.07 on $140k, the busiest day) made <b>38% of the whole season's profit</b> between them. Share price +58.1%.</li>
+    <li><b>Week 3: the drop.</b> Profit fell <b>84%</b> to $34.61, margin to 1.35 bps. Members' $280 of deposits joined on 12 Nov (fund value jumped to $877 but the price did not move), and redemptions began on 14 Nov. 14 Nov made $0.08 on 80 trades.</li>
+    <li><b>Week 4 so far:</b> $0.34 from 93 trades. Today is 17 trades and −$0.51. The naira moved about 1.6% overnight, so the fuel for gaps is there; Kiyoshi simply has not been paid for it yet.</li>
+  </ul>
+  <div class="card" style="margin-top:8px"><b>This week against last (the weekly read).</b> Last 7 days (14–20 Nov): <b>$15.15 profit, $2.16 a day</b>, 70% won. The 7 days before (7–13 Nov): $184.13. The last five days average $1.67 a day. Running costs are about $1.22 a day, so <b>the pool is keeping less than half of what it earns</b>; the rest pays for gas and hosting.</div>
+  <h2>Reading the weeks</h2>
+  <ul>
+    <li><b>Win rate barely moved</b> (76.8% → 76.9% → 74.2% → 69.9% on a tiny sample) while margin per dollar fell to a third and then a tenth. That points at the market, not at Kiyoshi: smaller gaps, or other bots taking them first.</li>
+    <li><b>Volume fell with it:</b> $492k in week 2, $255k in week 3. Fewer gaps pay for themselves, so fewer trades fire.</li>
+    <li><b>The gains and the money did not overlap.</b> Almost all of the +149.7% was earned in weeks 1–2, when the pool was $116–$585. Most member money arrived in week 3.</li>
+  </ul>
+  <div class="foot"><span>Midas × Kiyoshi Fund · Season 2 report</span><span>2 / 6</span></div>
+</div>
+
+<!-- PAGE 3: DAILY + DRIVERS -->
+<div class="p">
+  <h2 style="margin-top:0">2. The daily record</h2>
+  <svg id="daily" viewBox="0 0 700 215" style="width:100%;height:215px"></svg>
+  <p>22 of 23 days made money (today is partial). The best five days: 10 Nov $83.88, 11 Nov $54.07, 30 Oct $39.58, 2 Nov $28.85, 6 Nov $26.09. The two best days made <b>38%</b> of the season, so one calm fortnight can look very different from a spike fortnight. Median day: <b>$7.90</b>. Mean day: $15.90.</p>
+
+  <h2>3. What moves earnings (all 4,003 trades, Lagos time)</h2>
+  <div class="g" style="grid-template-columns:1.3fr 1fr">
+    <div><div class="lab">Margin by hour of day (bps of traded $)</div><svg id="hours" viewBox="0 0 400 165" style="width:100%;height:150px"></svg></div>
+    <div><div class="lab">Margin by trade size (bps): early vs late</div><svg id="sizes" viewBox="0 0 300 165" style="width:100%;height:150px"></svg></div>
+  </div>
+  <ul>
+    <li><b>Hour.</b> The best margins: <b>13:00–18:00</b> (17:00 at 5.7 bps, 13:00 at 5.2, 16:00 at 5.0; 14:00 earns the most money, $39 on 338 trades) and <b>21:00–23:00</b> (21:00 at 5.7, 22:00 at 4.1). Overnight and mornings run 1.6–3.0. The three weakest hours: 06:00, 04:00 and 11:00.</li>
+    <li><b>Weekday.</b> Tuesday earns most ($96.95, 4.9 bps). Friday has the most trades (877). <b>Saturday is weakest</b> (1.5 bps, $14.10). Sunday and Monday are fine.</li>
+    <li><b>Size.</b> Trades of <b>$400–600 earn 5.6 bps</b> and made $114 from only 432 trades. Trades over <b>$600 earn 1.8 bps and win only 61%</b>: past that, the trade moves the price against itself. The Uniswap pool holds only about $49k of USDT.</li>
+    <li><b>Mid-size trades lost margin.</b> Before vs after 7 Nov: $100–250 went from <b>3.9 to 2.3 bps</b>; $250–400 from <b>4.0 to 1.65 bps</b>. The larger sizes ($400+) only appear after smart sizing, when Kiyoshi picks its widest gaps for them.</li>
+    <li><b>Costs.</b> Gas ($0.96) and hosting ($0.26) are about <b>$1.22 a day</b>. Over the season that is about $28, or 8% of profit. In the last 7 days it is $8.54 against $15.15 profit: <b>56%</b>.</li>
+  </ul>
+  <div class="foot"><span>Midas × Kiyoshi Fund · Season 2 report</span><span>3 / 6</span></div>
+</div>
+
+<!-- PAGE 4: MEMBERS AND FEES -->
+<div class="p">
+  <h2 style="margin-top:0">4. Members, money in and out, and fees</h2>
+  <div class="g" style="grid-template-columns:repeat(4,1fr)">
+    <div class="card kpi"><div class="lab">Deposits</div><div class="v">$429</div><div class="lab" style="margin-top:2px">12 deposits + opening $116</div></div>
+    <div class="card kpi"><div class="lab">Redeemed</div><div class="v">$284</div><div class="lab" style="margin-top:2px">11 redemptions</div></div>
+    <div class="card kpi"><div class="lab">Fees realized</div><div class="v up">$2.53</div><div class="lab" style="margin-top:2px">7 with a fee</div></div>
+    <div class="card kpi"><div class="lab">Costs pot</div><div class="v">$0.23</div><div class="lab" style="margin-top:2px">of ~$37 a month needed</div></div>
+  </div>
+  <table style="margin-top:10px">
+    <tr><th>Week</th><th>Deposits in</th><th>Redeemed out</th><th>Shares at week end</th><th>Fund value at week end</th><th>What happened</th></tr>
+    <tr><td>1 · 29 Oct–4 Nov</td><td>$139.4*</td><td>$0</td><td>245.6</td><td>$370</td><td style="text-align:left">Manager opens at $116.28; one member joins (3 Nov)</td></tr>
+    <tr><td>2 · 5–11 Nov</td><td>$0</td><td>$0</td><td>245.6</td><td>$585</td><td style="text-align:left">No flows; the profit surge</td></tr>
+    <tr><td>3 · 12–18 Nov</td><td>$289.7</td><td>$203.4</td><td>284.2</td><td>$709</td><td style="text-align:left">8 wallets join on 12 Nov ($279.75); redemptions start 14 Nov</td></tr>
+    <tr><td>4 · 19–20 Nov</td><td>$0</td><td>$80.4</td><td>258.7</td><td>$646</td><td style="text-align:left">Two more redemptions</td></tr>
+  </table>
+  <p style="font-size:9.8px" class="mu">* Includes the manager's own $123.16 of deposits (29 Oct, 2 Nov); the opening shares are not counted. Source: the vault's Deposited, Redeemed and Settled events.</p>
+
+  <h2>Who owns the fund, and how members have done</h2>
+  <ul>
+    <li><b>The manager wallet holds roughly four-fifths of the fund</b> (about $530 of $646). It put in $239 in total and has taken out $75, and holds the rest in shares that rose from $1.00 to $2.50. Its redemptions carry no fee.</li>
+    <li><b>Four member wallets still hold about $116</b> (deposits of $113.79). The 12 Nov group bought at $2.4289 and is up <b>about 2.8%</b> in 8 days, before the fee. One example: $50 deposited on 12 Nov was redeemed on 18 Nov for $51.40, a $0.21 fee, $51.19 paid.</li>
+    <li><b>The member who joined early did best:</b> $16.26 deposited on 3 Nov (price $1.46) was redeemed on 16 Nov for $28.09. That one redemption paid the largest fee in the season, <b>$1.77</b>.</li>
+  </ul>
+
+  <h2>The fee ledger (all times UTC)</h2>
+  <table>
+    <tr><th>When</th><th>Member</th><th>Redeemed</th><th>Fee</th><th>Member received</th></tr>
+    <tr><td>14 Nov 10:57</td><td>0x9Bb99c</td><td>$14.11</td><td class="up">$0.0246</td><td>$14.09</td></tr>
+    <tr><td>16 Nov 14:10</td><td>0xEb74C0</td><td>$15.01</td><td class="up">$0.0531</td><td>$14.96</td></tr>
+    <tr><td>16 Nov 14:25</td><td>0x342854</td><td>$28.09</td><td class="up">$1.7739</td><td>$26.31</td></tr>
+    <tr><td>17 Nov 12:10</td><td>0xEb74C0</td><td>$20.01</td><td class="up">$0.0804</td><td>$19.93</td></tr>
+    <tr><td>18 Nov 10:53</td><td>0x0fD9B3</td><td>$51.40</td><td class="up">$0.2107</td><td>$51.19</td></tr>
+    <tr><td>19 Nov 20:07</td><td>0x009B0D</td><td>$64.05</td><td class="up">$0.3073</td><td>$63.74</td></tr>
+    <tr><td>20 Nov 11:28</td><td>0xEb74C0</td><td>$16.38</td><td class="up">$0.0764</td><td>$16.30</td></tr>
+    <tr style="font-weight:600"><td>Total · 7 redemptions</td><td></td><td>$209.05</td><td class="up">$2.5265</td><td>$206.52</td></tr>
+  </table>
+  <p style="font-size:10.3px">Fees are paid to the fee recipient wallet as <b>shares</b>, at that day's price, so they rise and fall with the fund. <b>Rate:</b> the vault reads <b>15%</b> (1500 basis points) of profit above what a member put in, never on a loss. The flyers and parts of the site text still say 10%. <b>Fees still building up</b> in members' profits are about $0.45. Fees from week 3: $2.14; week 4 so far: $0.38. The manager's own 4 redemptions ($74.80) paid none.</p>
+  <div class="foot"><span>Midas × Kiyoshi Fund · Season 2 report</span><span>4 / 6</span></div>
+</div>
+
+<!-- PAGE 5: MARKET + FORECAST -->
+<div class="p">
+  <h2 style="margin-top:0">5. Scan of the markets (20 Nov, midday UTC)</h2>
+  <table>
+    <tr><th>Market</th><th>Uniswap v3 depth</th><th>Textile 24h volume</th><th>Price now</th><th>Read</th></tr>
+    <tr><td><b>cNGN / USDT</b></td><td>$49.4k USDT · 182M cNGN · 0.01% fee</td><td><b>$2.51M</b></td><td>Uniswap ₦1,438.4 · Textile ₦1,437.4–1,437.6</td><td style="text-align:left">The fund's market. By the quotes, a gap of about 6 bps is open now (indicative; a firm quote decides). The naira rose ~1.6% since yesterday (₦1,462 → ₦1,438); Textile's 24h range is 2.4%.</td></tr>
+    <tr><td>USDC / NGN</td><td>(Textile only)</td><td>$14k</td><td>₦1,444</td><td style="text-align:left">Small second route for the same naira flow.</td></tr>
+    <tr><td>USDT / WARS</td><td>$22k USDT (19 Nov)</td><td>$5k</td><td>~1,714</td><td style="text-align:left">Pool exists but Textile volume has dried up. Watch only.</td></tr>
+    <tr><td>USDT / IDR</td><td>none on Uniswap Celo</td><td>$505k</td><td>18,339</td><td style="text-align:left">Busy on Textile, no second venue to pair with.</td></tr>
+    <tr><td>wBRL, USDC/USDT</td><td>wBRL $23; USDC deep</td><td>~$0</td><td>n/a</td><td style="text-align:left">Dead, or no Textile flow.</td></tr>
+  </table>
+  <p>Kiyoshi trades about <b>$46k a day</b> over the season ($1.06M in 23 days) against <b>$2.5M a day</b> on Textile's naira market, so volume is not the limit. The limit is how often the two venues disagree by more than the costs, and how much Uniswap's pool can absorb at once. The Uniswap USDT side has grown from $35k to $49k in a day, which also means more room.</p>
+
+  <h2>6. Forecast (fund $645.94 · share price $2.4971 · 15% fee)</h2>
+  <table>
+    <tr><th>Scenario (trading profit a day)</th><th>Pool keeps</th><th>7 days</th><th>30 days</th><th>Share price in 30 d</th><th>Per $100, 30 d*</th><th>Fee income, 30 d**</th></tr>
+    <tr><td><b>Quiet</b> · $2 · the last 7 days</td><td>$0.78</td><td>+$5 (+0.8%)</td><td>+$23 (+3.6%)</td><td>$2.59</td><td class="up">+$3.1</td><td>$0.63</td></tr>
+    <tr><td><b>Typical</b> · $8 · the season median</td><td>$6.78</td><td>+$48 (+7.3%)</td><td>+$203 (+31%)</td><td>$3.28</td><td class="up">+$27</td><td>$5.48</td></tr>
+    <tr><td><b>Busy</b> · $16 · the season average</td><td>$14.40</td><td>+$101 (+16%)</td><td>+$432 (+67%)</td><td>$4.17</td><td class="up">+$57</td><td>$11.64</td></tr>
+    <tr><td><b>Spike</b> · $40 · like 10–11 Nov</td><td>$36.00</td><td>+$252 (+39%)</td><td>+$1,080 (+167%)</td><td>$6.67</td><td class="up">+$142</td><td>$29.09</td></tr>
+  </table>
+  <p style="font-size:9.8px" class="mu">* After the 15% fee on the gain. "Pool keeps" is profit minus the larger of the $1.22 running costs or the 10% carve into the costs pot (the pot is almost empty). Daily profit is held fixed, not scaled with the pool. ** The fee on about $116 of member money; per $1,000 of new member deposits it would be $5 / $47 / $100 / $251.</p>
+  <div class="g" style="grid-template-columns:1.1fr 1fr;margin-top:6px">
+    <div class="card"><b>Which row to plan on.</b> The <b>Quiet</b> row. Profit has fallen about <b>$3.6 a day, every day</b> over the last ten days, the last three days average $0.25, and the weeks above show the same slide. Typical needs the gaps to come back to the early-season level; the last two rows need a spike. Treat them as upside. The simulations agree: reshuffling the last 7 days gives <b>+$11 to +$46</b> over 30 days (middle +$28); reshuffling all 23 gives +$294 to +$546, but that assumes the early spikes return.</div>
+    <div class="card"><b>What would change the call.</b> A day above $15 in a row; Textile's naira volume and range growing; the gap staying open for hours. Any of these would move us toward Typical. A third quiet week would make Quiet look permanent, and then the 10% carve will not cover the $1.22 costs for a long time.</div>
+  </div>
+
+  <h2>7. What to watch (predictors)</h2>
+  <ul>
+    <li><b>Naira volatility and Textile volume:</b> gaps open when the naira moves fast and one venue lags. Today's 1.6% overnight move is the kind of thing to watch for over the next days.</li>
+    <li><b>Hour and weekday:</b> 13:00–18:00 and 21:00–23:00 Lagos, Tuesday to Friday. Saturday and the early morning are weak.</li>
+    <li><b>Our size against the Uniswap pool:</b> $400–600 is the sweet spot; over $600 loses margin.</li>
+    <li><b>Costs against profit:</b> below about $12 a day of profit, the pool pays the gap in running costs.</li>
+    <li><b>Competition:</b> a falling margin at an unchanged win rate is what other bots look like. We cannot separate it from calm markets without market data.</li>
+  </ul>
+  <div class="foot"><span>Midas × Kiyoshi Fund · Season 2 report</span><span>5 / 6</span></div>
+</div>
+
+<!-- PAGE 6: NEXT STEPS + METHOD -->
+<div class="p">
+  <h2 style="margin-top:0">8. Recommended next steps</h2>
+  <ol style="font-size:11.6px;line-height:1.55;padding-left:18px">
+    <li><b>Confirm the fee.</b> The vault reads 15%; the flyers say 10%. Either change the flyers to 15% or queue the fee change on chain (it takes effect after 48 hours).</li>
+    <li><b>Keep trades at $600 or under.</b> Over $600 wins only 61% at 1.8 bps. If smart sizing can cap there, it protects margin when the pool grows.</li>
+    <li><b>Record market data.</b> Save Textile's naira ticker and Uniswap's price every few minutes in the database. In two weeks we can test directly whether volatility and volume predict profit, instead of inferring it.</li>
+    <li><b>Decide on the tight first-leg rule.</b> It has been on throughout. The win rate held, so it is not obviously hurting, but its effect cannot be separated from the market's. A clean test costs real money.</li>
+    <li><b>Grow member money if you want fee income.</b> Fees come only from members' gains: today that is about $116 of money. In the Quiet case each extra $1,000 of member deposits earns about $5 a month in fees; in the Typical case about $47.</li>
+    <li><b>Watch the costs pot.</b> It holds $0.23. At today's profit the 10% carve (about $0.20 a day) does not cover the $1.22 a day of costs, so the pool keeps paying them.</li>
+  </ol>
+
+  <h2>Where these numbers come from</h2>
+  <ul>
+    <li><b>Trades:</b> the pool wallet's transactions on Celo, paired into trades (a buy leg and its sale) by the database. Profit is the sale minus the buy, before gas. Days are Lagos days.</li>
+    <li><b>Share price and fund value:</b> the vault's own settlement history, daily close. The earlier "unit price" in the old off-chain ledger is not used; it does not account for deposits.</li>
+    <li><b>Members, deposits, redemptions, fees:</b> every Deposited and Redeemed event read from the vault contract, from its first block to today.</li>
+    <li><b>Markets:</b> Uniswap v3 factory and pool reads on Celo, and Textile's public ticker, at midday UTC on 20 Nov.</li>
+  </ul>
+
+  <h2>What this report cannot tell you</h2>
+  <ul>
+    <li><b>Why the margin fell.</b> Calmer markets, other bots, our larger sizes and the tight first-leg rule all fit the data. Only market data over time will separate them.</li>
+    <li><b>The future.</b> Twenty-three days is a short history, dominated by two spike days. The forecast rows are scenarios, not odds. The Quiet row is my best reading, not a promise.</li>
+    <li><b>Net returns.</b> Trading profit is before gas. The forecast subtracts running costs and the fee; member returns also depend on when each member joined.</li>
+    <li><b>The 15% fee on chain.</b> It is read from the vault's current setting. If a change is queued or recent, the earlier redemptions may have used a different rate.</li>
+  </ul>
+  <div class="card" style="margin-top:14px"><b>One line to take away.</b> Season 2 earned its +149.7% almost entirely in its first two weeks, and the market has since become much quieter. Kiyoshi is trading as well as before; the plan should assume a quiet market, protect margin by keeping trades at $600 or under, and treat any spike as a bonus.</div>
+  <div class="foot"><span>Past results do not promise future returns. Short history; the fund can lose money. Not financial advice.</span><span>6 / 6</span></div>
+</div>
+
+<script>
+const PRICE = [1.0, 1.0020, 1.2120, 1.2460, 1.2996, 1.4235, 1.4606, 1.5072, 1.5962, 1.7117, 1.7468, 1.7561, 1.8187, 2.1580, 2.3830, 2.4289, 2.4493, 2.4526, 2.4612, 2.4835, 2.4900, 2.4955, 2.4991, 2.4971]
+const DAYS = ['29 Oct', '30', '31', '1 Nov', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20']
+const DAILY = [6.69, 39.58, 7.19, 11.92, 28.85, 10.10, 10.22, 25.83, 26.09, 6.83, 2.04, 17.51, 83.88, 54.07, 11.90, 7.90, 0.08, 6.71, 4.62, 2.98, 0.42, 0.85, -0.51]
+{ // share price with week bands
+  const w = 700, h = 250, L = 34, B = 26, T = 12, mx = 2.6, y = (v) => h - B - (v - 0.8) / (mx - 0.8) * (h - B - T), x = (i) => L + i * (w - L - 8) / (PRICE.length - 1)
+  let s = ''; for (const v of [1, 1.5, 2, 2.5]) s += `<line x1="${L}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="#e3dccb"/><text x="0" y="${y(v) + 3}">$${v.toFixed(1)}</text>`
+  const bands = [[0, 6, 'W1'], [7, 13, 'W2'], [14, 20, 'W3'], [21, 23, 'W4']]
+  bands.forEach(([a, b, n], i) => { s += `<rect x="${x(a === 0 ? 0 : a)}" y="${T}" width="${x(Math.min(b + 1, 23)) - x(a)}" height="${h - B - T}" fill="${i % 2 ? '#faf7ef' : '#fff'}" opacity=".9"/><text x="${x(a) + 4}" y="${T + 9}">${n}</text>` })
+  const d = PRICE.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ')
+  s += `<path d="${d} L${x(23)},${h - B} L${x(0)},${h - B} Z" fill="#9a7a14" opacity=".12"/><path d="${d}" fill="none" stroke="#9a7a14" stroke-width="2.6" stroke-linejoin="round"/>`
+  s += `<circle cx="${x(23)}" cy="${y(PRICE[23])}" r="4" fill="#9a7a14"/><text x="${x(23) - 110}" y="${y(PRICE[23]) + 20}" style="fill:#16130c;font-size:10px">$2.4971 today</text>`
+  s += `<text x="${x(0)}" y="${y(1) + 14}">$1.00</text>`
+  for (const i of [0, 7, 14, 21]) s += `<text x="${x(i)}" y="${h - 8}">${DAYS[Math.min(i, 22)]}</text>`
+  document.getElementById('price').innerHTML = s }
+{ // weekly profit and margin
+  const W = [['W1', 114.55, 3.99, 76.8], ['W2', 216.25, 4.39, 76.9], ['W3', 34.61, 1.35, 74.2], ['W4*', 0.34, 0.12, 69.9]]
+  const bar = (id, vals, max, fmt, col) => { const w = 340, h = 170, L = 6, B = 28, bw = (w - L) / vals.length; let s = ''
+    vals.forEach(([n, v], i) => { const hh = Math.max(1, v / max * (h - B - 24)), x = L + i * bw + 12; s += `<rect x="${x}" y="${h - B - hh}" width="${bw - 24}" height="${hh}" fill="${col(i)}" rx="3"/><text x="${x + (bw - 24) / 2 - 14}" y="${h - B - hh - 5}" style="fill:#16130c;font-size:10px">${fmt(v)}</text><text x="${x + (bw - 24) / 2 - 7}" y="${h - 10}">${n}</text>` })
+    document.getElementById(id).innerHTML = s }
+  bar('wk1', W.map(([n, p]) => [n, p]), 230, (v) => '$' + v.toFixed(0), (i) => (i === 3 ? '#cdb571' : '#9a7a14'))
+  bar('wk2', W.map(([n, , b]) => [n, b]), 5, (v) => v.toFixed(2), (i) => (i >= 2 ? '#b4452f' : '#1c8a5c'))
+  const e = document.getElementById('wk2'); e.innerHTML += W.map(([, , , w], i) => `<text x="${6 + i * 83.5 + 24}" y="${19}" style="fill:#6b6454">${w}% won</text>`).join('') }
+{ // daily profit
+  const w = 700, h = 215, L = 34, B = 26, T = 8, mx = 90, y = (v) => h - B - (v + 5) / (mx + 5) * (h - B - T), bw = (w - L - 6) / DAILY.length
+  let s = ''; for (const v of [0, 30, 60, 90]) s += `<line x1="${L}" x2="${w}" y1="${y(v)}" y2="${y(v)}" stroke="#e3dccb"/><text x="0" y="${y(v) + 3}">$${v}</text>`
+  DAILY.forEach((v, i) => { const x = L + i * bw + 3, top = Math.min(y(v), y(0)), hh = Math.max(1.5, Math.abs(y(v) - y(0))); s += `<rect x="${x}" y="${top}" width="${bw - 6}" height="${hh}" fill="${v < 0 ? '#b4452f' : i < 14 ? '#9a7a14' : '#cdb571'}" rx="2"/><text x="${x - 1}" y="${h - 9}" style="font-size:7px">${DAYS[i].replace(' Oct', '').replace(' Nov', '')}</text>` })
+  s += `<line x1="${L}" x2="${w}" y1="${y(1.22)}" y2="${y(1.22)}" stroke="#b4452f" stroke-dasharray="4 3"/><text x="${w - 140}" y="${y(1.22) - 14}" style="fill:#b4452f">running costs ~$1.22 a day</text>`
+  s += `<text x="${L}" y="${T + 4}">Trading profit a day, before gas · Lagos days · 29 Oct to 20 Nov (20 Nov is partial)</text>`
+  document.getElementById('daily').innerHTML = s }
+function bars(id, rows, max, hi, W, H) { // simple vertical bars
+  const L = 20, B = 28, bw = (W - L) / rows.length; let s = ''
+  for (const v of [0, 2, 4, 6]) s += `<line x1="${L}" x2="${W}" y1="${H - B - v / max * (H - B - 10)}" y2="${H - B - v / max * (H - B - 10)}" stroke="#e3dccb"/><text x="0" y="${H - B - v / max * (H - B - 10) + 3}">${v}</text>`
+  rows.forEach(([lab, v], i) => { const yy = H - B - v / max * (H - B - 10), x = L + i * bw + 1; s += `<rect x="${x}" y="${yy}" width="${bw - 2}" height="${H - B - yy}" fill="${v >= hi ? '#1c8a5c' : v < 1.9 ? '#b4452f' : '#cdb571'}" rx="1.5"/><text x="${x}" y="${H - 14}" style="font-size:6.5px">${lab}</text>` })
+  document.getElementById(id).innerHTML = s }
+bars('hours', [[0, 2.45], [1, 2.76], [2, 2.20], [3, 2.41], [4, 1.64], [5, 2.50], [6, 1.60], [7, 2.68], [8, 2.01], [9, 2.97], [10, 2.21], [11, 1.84], [12, 2.66], [13, 5.16], [14, 4.54], [15, 3.70], [16, 5.02], [17, 5.71], [18, 2.97], [19, 2.79], [20, 2.72], [21, 5.72], [22, 4.12], [23, 3.26]].map(([a, b]) => [String(a), b]), 7, 4.5, 400, 165)
+{ // size, early vs late
+  const R = [['<100', 3.70, 4.45], ['100-250', 3.90, 2.34], ['250-400', 4.02, 1.65], ['400-600', null, 5.60], ['600+', null, 1.77]], W = 300, H = 165, L = 20, B = 28, bw = (W - L) / R.length, max = 7
+  let s = ''; for (const v of [0, 2, 4, 6]) s += `<line x1="${L}" x2="${W}" y1="${H - B - v / max * (H - B - 10)}" y2="${H - B - v / max * (H - B - 10)}" stroke="#e3dccb"/><text x="0" y="${H - B - v / max * (H - B - 10) + 3}">${v}</text>`
+  R.forEach(([lab, a, b], i) => { const x = L + i * bw + 3, h1 = a == null ? 0 : a / max * (H - B - 10), h2 = b / max * (H - B - 10)
+    if (a != null) s += `<rect x="${x}" y="${H - B - h1}" width="${bw / 2 - 3}" height="${h1}" fill="#cdb571" rx="1.5"/>`
+    s += `<rect x="${x + (a == null ? 0 : bw / 2 - 2)}" y="${H - B - h2}" width="${a == null ? bw - 6 : bw / 2 - 3}" height="${h2}" fill="${b < 1.9 ? '#b4452f' : '#9a7a14'}" rx="1.5"/><text x="${x}" y="${H - 14}">${lab}</text>` })
+  s += `<text x="${L + 4}" y="10">light = to 6 Nov · dark = from 7 Nov</text>`
+  document.getElementById('sizes').innerHTML = s }
+</script></body></html>
