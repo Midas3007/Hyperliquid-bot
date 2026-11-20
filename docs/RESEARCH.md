@@ -29,3 +29,21 @@ The 4h EMA 10/200 system now runs forward on paper as the TREND arm (`hlbot/tren
 DATA_DIR/trend, 1% risk, 3x notional cap). Rules are frozen as above. `/trend` shows the record, `/trend backtest`
 reruns the history. It is not part of any go-live gate; real money needs 30+ forward trades with the low end of the
 interval above zero, and the owner's explicit go-ahead.
+
+## Doing the opposite (20 Nov 2026, scripts/research_inverse.py)
+
+Every strategy above with the side flipped, stop and target mirrored, same costs, same walk-forward judging.
+Nothing passes; most flipped versions lose about as much as the originals, because fees are paid either way.
+
+| flipped | out-of-sample | full period |
+|---|---|---|
+| live scalper (A) | - | -0.19R [-0.31, -0.06], 141 trades (original -0.24R) |
+| best flipped scalp variant (C wider stop) | -0.15R [-0.33, +0.06] | -0.17R |
+| ORB | -0.62R [-0.84, -0.34] | -0.08R |
+| VWAP fade | -0.47R | -0.39R |
+| 15m Donchian | -0.17R | -0.08R |
+| 4h Donchian 55/10 | -0.12R | -0.08R (-29R) |
+| 4h EMA 10/50 | -0.09R | -0.11R (-30R) |
+
+Reading: a strategy and its mirror both losing means the entries are close to random and costs decide the result.
+The flipped scalper was also flattered (market-price entries charged the maker fee) and still lost.
