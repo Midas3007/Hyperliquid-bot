@@ -51,6 +51,7 @@ def scalper(days):
     rows = []
     for name, s in [("A_live", PROTOCOL.scalp)] + [(n, v[1]) for n, v in ARMS.items() if n != "I_claude"]:
         for inv in (False, True):
+            print(f"  replaying {name} {'flipped' if inv else 'original'}...", flush=True)
             SC.find_signal = flipped if inv else _orig
             tr = BS.replay(candles, [(0.0, 40)], 5, cfg, PROTOCOL, s=s, warm=warm)
             rs = [(t["created_at"] * 1000, t["result_r"]) for t in tr]
@@ -69,12 +70,24 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=32)
     ap.add_argument("--setup-days", type=int, default=90)
+    ap.add_argument("--part", default="123")
     a = ap.parse_args()
-    scalper(a.days)
+    if "1" in a.part:
+        scalper(a.days)
+    if "2" in a.part:
+        setups(a)
+    if "3" in a.part:
+        trend()
+
+
+def setups(a):
     print(f"\n== 2. Scalp setup families, flipped, {a.setup_days} days ==")
     RS.INVERT = True
     sys.argv = ["x", "--days", str(a.setup_days)]
     RS.main()
+
+
+def trend():
     print("\n== 3. 4h trend systems, flipped ==")
     orig_run = RT.run
     RT.run = lambda c, system, x, y: orig_run(c, system, x, y, inv=True)
