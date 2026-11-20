@@ -44,7 +44,7 @@ def ema_series(vals, n):
     return out
 
 
-def run(c, system, a, b):
+def run(c, system, a, b, inv=False):
     trades, pos = [], None
     closes = [x["c"] for x in c]
     ef, es = (ema_series(closes, a), ema_series(closes, b)) if system == "ema" else (None, None)
@@ -52,18 +52,18 @@ def run(c, system, a, b):
     for i in range(start, len(c)):
         x = c[i]
         if pos:
-            s = pos["s"]
-            hit = (x["l"] <= pos["stop"]) if s > 0 else (x["h"] >= pos["stop"])
+            s = pos["o"]          # exits follow the original signal's direction
             if system == "donchian":
                 m = b
                 ch = min(y["l"] for y in c[i - m:i]) if s > 0 else max(y["h"] for y in c[i - m:i])
                 exit_sig = (x["c"] < ch) if s > 0 else (x["c"] > ch)
             else:
                 exit_sig = (ef[i] < es[i]) if s > 0 else (ef[i] > es[i])
+            hit = (x["l"] <= pos["stop"]) if pos["s"] > 0 else (x["h"] >= pos["stop"])
             if hit or exit_sig:
                 px = pos["stop"] if hit else x["c"]
                 held_h = (x["t"] - pos["t"]) / 3_600_000
-                move = s * (px - pos["e"]) / pos["e"] * 100
+                move = pos["s"] * (px - pos["e"]) / pos["e"] * 100
                 net = move - 2 * CE - FUND_8H * held_h / 8
                 trades.append((pos["t"], net / pos["risk"]))
                 pos = None
@@ -74,9 +74,10 @@ def run(c, system, a, b):
         else:
             s = 1 if ef[i] > es[i] and ef[i - 1] <= es[i - 1] else -1 if ef[i] < es[i] and ef[i - 1] >= es[i - 1] else 0
         if s:
+            o, s = s, (-s if inv else s)
             stop = x["c"] - s * 2 * atr(c, i)
             risk = abs(x["c"] - stop) / x["c"] * 100 + 2 * CE
-            pos = {"s": s, "e": x["c"], "stop": stop, "risk": risk, "t": x["t"]}
+            pos = {"s": s, "o": o, "e": x["c"], "stop": stop, "risk": risk, "t": x["t"]}
     return trades
 
 

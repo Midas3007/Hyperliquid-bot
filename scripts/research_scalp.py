@@ -36,8 +36,14 @@ def load(days: int, cache: str) -> list[dict]:
     return out
 
 
+INVERT = False             # scripts/research_inverse.py: take the opposite side, stop and target mirrored around entry
+
+
 def walk(c, i, side, entry, stop, tp, end_i):
     """Follow 1m bars after the entry bar i. -> (R, exit index)."""
+    if INVERT:
+        side, stop = ("short" if side == "long" else "long"), 2 * entry - stop
+        tp = 2 * entry - tp if tp else None
     s = 1 if side == "long" else -1
     risk = abs(entry - stop) / entry * 100
     loss = risk + CE + CE
