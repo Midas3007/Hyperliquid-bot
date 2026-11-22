@@ -8,7 +8,7 @@
 //   - The Kiyoshi bot's heartbeat {heartbeat: {message, signature}}, signed by the bot wallet (the vault's
 //     treasury), so nobody can fake it.
 // Checks: bot silent or erroring, share price down sharply, settlement missed or waiting, keeper errors or low on
-// CELO, fund paused; and a short daily summary after the settlement. Each alert is sent once when it starts,
+// CELO, fund paused, a vault change queued (48-hour delay); and a short daily summary after the settlement. Each alert is sent once when it starts,
 // reminded every 6 hours, and followed by an "OK again" message.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4'
 import { createPublicClient, defineChain, erc20Abi, formatEther, formatUnits, http, isAddress, parseAbi } from 'npm:viem@2.21.0'
@@ -36,7 +36,11 @@ const vaultAbi = parseAbi([
   'function paused() view returns (bool)', 'function treasury() view returns (address)', 'function operator() view returns (address)',
   'function queueLengths() view returns (uint256, uint256)', 'function totalPendingDeposits() view returns (uint256)',
   'function balanceOf(address) view returns (uint256)', 'function sharePrice() view returns (uint256)', 'function nav() view returns (uint256)',
+  'function pending(uint8) view returns (uint256 value, uint256 eta)',
 ])
+// The vault's delayed changes (48 hours). Any queued one is alerted until it is cancelled or applied, so a change nobody
+// meant to make is seen two days before it can take effect.
+const CHANGE_NAMES = ['Owner', 'Operator (keeper)', 'Manager', 'Fee recipient', 'Fee', 'Daily value limit', 'Treasury']
 const SITE = 'https://midas-kiyoshi-fund.vercel.app'
 const COMMANDS = [
   { command: 'dashboard', description: 'Every command as buttons' },
@@ -50,7 +54,7 @@ const COMMANDS = [
   { command: 'tight', description: 'Tight first-leg tolerance: on/off' },
   { command: 'help', description: 'What this bot does' },
 ]
-const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, or the fund is paused. After each daily settlement you get a summary.
+const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, the fund is paused, or a change to the vault (owner, treasury, keeper, manager, fee) is queued. After each daily settlement you get a summary.
 
 Commands (nothing here moves money):
 /dashboard: every command as buttons
@@ -323,6 +327,11 @@ Deno.serve(async (req) => {
     found.settle_missed = now.getUTCHours() >= SETTLE_HOUR_UTC + 1 && vc.last_settle_day !== today && !found.settle_waiting ? `Today's settlement has not happened yet (due 20:07 UTC). Keeper: ${res || 'no result'}` : null
     try {
       found.paused = (await readV('paused')) ? 'The fund is paused: deposits, redemptions and settlements are stopped.' : null
+      const queued = (await Promise.all(CHANGE_NAMES.map((_, i) => readV('pending', [i]))))
+        .map((p: any, i: number) => ({ i, value: BigInt(p[0]), eta: Number(p[1]) })).filter((p) => p.eta > 0)
+      found.vault_change = queued.length
+        ? `A change to the vault is queued: ${queued.map((p) => `${CHANGE_NAMES[p.i]} → ${p.i === 4 || p.i === 5 ? `${Number(p.value) / 100}%` : '0x' + p.value.toString(16).padStart(40, '0')} (takes effect ${new Date(p.eta * 1000).toISOString().slice(0, 16).replace('T', ' ')} UTC)`).join('; ')}. If you did not queue it, cancel it on the Admin page (Queued changes) and pause the fund now.`
+        : null
       if (vc.keeper_address && isAddress(vc.keeper_address)) {
         const bal = Number(formatEther(await pub.getBalance({ address: vc.keeper_address as `0x${string}` })))
         const days = bal / KEEPER_CELO_PER_DAY

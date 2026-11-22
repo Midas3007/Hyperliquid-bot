@@ -31,7 +31,17 @@ const VAULT_ABI_SRC = [
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]
 const VS = { viem: null, abi: null, pub: null, chain: null, net: null, account: null, chainId: null, d: null, msg: null, loadErr: null, busy: false, logs: null, logsTo: 0n, times: {}, hidden: false }
-const vcfg = () => (state.pub?.vault?.address ? state.pub.vault : window.FUND_CONFIG.vault || {})
+// The vault and USDT addresses come only from this site's own code (config.js), never from the database: whoever could
+// change a database row must not be able to point members' deposits at another contract. The database still supplies
+// the keeper details. If it names a different vault or USDT, the site warns and refuses to send any transaction.
+const vcfg = () => {
+  const s = window.FUND_CONFIG.vault || {}, d = state.pub?.vault || {}
+  return s.address ? { ...d, network: s.network, address: s.address, usdt: s.usdt, fromBlock: s.fromBlock } : {}
+}
+const vMismatch = () => {
+  const s = window.FUND_CONFIG.vault || {}, d = state.pub?.vault || {}
+  return !!(s.address && ((d.address && !same(d.address, s.address)) || (d.usdt && s.usdt && !same(d.usdt, s.usdt))))
+}
 const vnet = () => VNETS[vcfg().network] || VNETS.mainnet
 const vOn = () => !!vcfg().address
 const vUsd = (v) => Number(v) / 1e6
@@ -166,7 +176,8 @@ function vGate(what = 'to deposit USDT, see your shares and redeem') {
   if (!VS.d?.me) return `<div class="card"><div class="sub">${VS.loadErr ? esc(VS.loadErr) + ' <button class="btn plain small" data-vault="retry">Try again</button>' : 'Reading the fund contract…'}</div></div>`
   return null
 }
-const vNotice = () => (VS.msg ? `<div class="msg ${VS.msg.startsWith('Done') ? 'ok' : 'err'}" style="margin-bottom:12px">${esc(VS.msg)}</div>` : '')
+const vNotice = () => (vMismatch() ? '<div class="msg err" style="margin-bottom:12px">Safety stop: the fund database names a different vault or USDT contract than this site, so deposits and redemptions are blocked here. Tell the fund manager.</div>' : '') +
+  (VS.msg ? `<div class="msg ${VS.msg.startsWith('Done') ? 'ok' : 'err'}" style="margin-bottom:12px">${esc(VS.msg)}</div>` : '')
 function vNextSettle() {
   const t = new Date(); t.setUTCHours(20, 7, 0, 0)
   if (t < new Date()) t.setUTCDate(t.getUTCDate() + 1)
@@ -545,6 +556,7 @@ function vWalletClient() {
   return VS.viem.createWalletClient({ account: VS.account, chain: VS.chain, transport: VS.viem.custom(vProv()) })
 }
 async function vSend(label, fn, args, address = vcfg().address) {
+  if (vMismatch()) { VS.msg = 'Safety stop: the fund database names a different vault or USDT contract than this site. Nothing was sent. Tell the fund manager.'; vRender(); return }
   VS.busy = true; VS.msg = `${label}: confirm in your wallet…`; vRender()
   try {
     const { request } = await VS.pub.simulateContract({ account: VS.account, address, abi: VS.abi, functionName: fn, args })
