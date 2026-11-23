@@ -26,6 +26,40 @@ export const RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number
   quiet: { minEdgeBps: 1.5, minEdgeFloorUsd: 0.03 },
 }
 
+// Careful mode (Telegram /careful_on|off, on unless switched off; added 23 Nov after a -$6.37 day). Gaps are now thin,
+// and trades that cleared by a hair lost money when the naira moved between the two legs, big trades lost more, and
+// a wARS trade got stuck because Textile had no buyer for wARS. Careful mode, on top of whatever sizing is active:
+//   - a higher minimum edge per window (below), never lower than the normal one;
+//   - at most CAREFUL_CAP_USD a trade outside the peak hours;
+//   - before buying on Uniswap, re-checks Textile's live price for the exact amount and needs the minimum edge plus
+//     CAREFUL_UNI_FIRST_CUSHION_BPS (Textile's firm price is usually a little worse than its preview);
+//   - trades only CAREFUL_CORRIDORS (the ones with a two-sided Textile market).
+export const CAREFUL_RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number }> = {
+  peak: { minEdgeBps: 2, minEdgeFloorUsd: 0.05 },
+  busy: { minEdgeBps: 3, minEdgeFloorUsd: 0.05 },
+  quiet: { minEdgeBps: 4, minEdgeFloorUsd: 0.05 },
+}
+export const CAREFUL_CAP_USD = 500
+export const CAREFUL_UNI_FIRST_CUSHION_BPS = 2
+export const CAREFUL_CORRIDORS = ['cNGN', 'USDC']
+
+/** Which window a moment falls in (peak, busy or quiet), whether or not smart sizing is on. */
+export function windowAt(now: Date): Window {
+  const { dow, hour } = lagosTime(now)
+  const weekend = dow === 0 || dow === 6
+  return PEAK_HOURS.includes(hour) ? 'peak' : !weekend && BUSY_HOURS.includes(hour) ? 'busy' : 'quiet'
+}
+
+/** Careful mode's minimum edge and cap on top of the normal ones (never looser than them). */
+export function carefulLimits(now: Date, normalMinEdgeUsd: (sizeUsd: number) => number, normalCapUsd: number) {
+  const window = windowAt(now)
+  return {
+    window,
+    capUsd: window === 'peak' ? normalCapUsd : Math.min(normalCapUsd, CAREFUL_CAP_USD),
+    minEdge: (sizeUsd: number) => Math.max(normalMinEdgeUsd(sizeUsd), minEdgeFor(sizeUsd, CAREFUL_RULES[window])),
+  }
+}
+
 /** Lagos weekday (0 = Sunday) and hour for a moment in time. */
 export function lagosTime(now: Date) {
   const t = new Date(now.getTime() + LAGOS_OFFSET_MS)

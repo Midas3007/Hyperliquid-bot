@@ -16,7 +16,7 @@ import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from '
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { botSettings } from './settings.js'
 import { payout } from './payout.js'
-import { describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
+import { CAREFUL_CORRIDORS, CAREFUL_UNI_FIRST_CUSHION_BPS, carefulLimits, describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
 import { byEdge, candidateSizes, edgeUsd, freeForTextile, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip, type TextileHold } from './strategy.js'
 
 const LIVE = process.env.LIVE === '1'
@@ -34,6 +34,8 @@ const INTERVAL_MS = Number(process.env.INTERVAL_SEC ?? '60') * 1000
 const CHASE_MS = Number(process.env.CHASE_SEC ?? '5') * 1000
 // After a profitable trade, re-check only that corridor and direction quickly until the gap closes
 let chase: { X: TokenKey; route: 'uni->textile' | 'textile->uni' } | null = null
+// Careful mode (Telegram /careful_on|off, on unless switched off): see schedule.ts. Set at the start of each cycle.
+let careful = true
 const MAX_FLATTEN_LOSS_BPS = BigInt(process.env.MAX_FLATTEN_LOSS_BPS ?? '50') // 0.5%
 const MAX_HOLD_MS = Number(process.env.MAX_HOLD_MIN ?? '30') * 60_000
 const PORT = Number(process.env.PORT ?? 0)
@@ -164,6 +166,7 @@ async function scan(size: bigint): Promise<Opp[]> {
   const opps: Opp[] = []
   for (const X of CORRIDORS) {
     if (chase && X !== chase.X) continue
+    if (careful && !CAREFUL_CORRIDORS.includes(X)) continue // careful mode: only corridors Textile buys and sells
     const a1 = !chase || chase.route === 'uni->textile' ? await uniQuote('USDT', X, size) : null
     const a2 = a1 ? await texPreview(X, 'USDT', a1.out) : null
     if (a1 && a2) opps.push({ X, route: 'uni->textile', size, mid: a1.out, out: a2, uniFee: a1.fee, edge: edgeUsd(a2, size) })
@@ -190,6 +193,19 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
   const X = o.X
   const firstMin = await firstLegMin(o, minEdgeUsd)
   if (o.route === 'uni->textile') {
+    // Careful mode: before buying on Uniswap, ask Textile's live price for the least we could receive, and buy only if
+    // selling that still pays the minimum edge plus a cushion. A Uniswap-first trade whose Textile side has moved is
+    // what got stuck and was sold back at a loss.
+    if (careful) {
+      const back = await texPreview(X, 'USDT', firstMin)
+      const needUsd = usd(o.size) + minEdgeUsd + (usd(o.size) * CAREFUL_UNI_FIRST_CUSHION_BPS) / 10_000
+      if (back === null || usd(back) < needUsd) {
+        lastSkipped = true
+        console.log(`  careful: Textile would pay ${back === null ? 'nothing' : '$' + usd(back).toFixed(4)} for it, need $${needUsd.toFixed(4)}; not buying`)
+        log({ event: 'skip', X, route: o.route, sizeUsd: usd(o.size), reason: 'careful_textile_check', textileUsd: back === null ? null : usd(back), needUsd })
+        return null
+      }
+    }
     const { hash: tx1, out: got } = await uniSwap('USDT', X, o.size, o.uniFee, firstMin)
     // Bought: remember the cost now, so if the second leg fails or throws, flatten() keeps the 0.5% loss guard
     pending.set(X, { costUsdt: o.size, since: Date.now() })
@@ -253,14 +269,21 @@ async function cycle() {
     return
   }
   // Smart sizing: max trade and minimum edge follow the time of day (schedule.ts), when switched on from Telegram
-  const profile: Profile | null = (await botSettings()).smart_sizing === true ? smartProfile(new Date(), MAX_TRADE_USD, SMART_PEAK_MAX_USD) : null
+  const settings = await botSettings()
+  const profile: Profile | null = settings.smart_sizing === true ? smartProfile(new Date(), MAX_TRADE_USD, SMART_PEAK_MAX_USD) : null
+  careful = settings.careful !== false
+  const normalMin = (sizeUsd: number) => (profile ? minEdgeFor(sizeUsd, profile) : MIN_EDGE_USD)
+  const normalCap = profile ? profile.capUsd : MAX_TRADE_USD
+  const lim = careful ? carefulLimits(new Date(), normalMin, normalCap) : null
+  const minEdge = lim ? lim.minEdge : normalMin
+  const capUsd = lim ? lim.capUsd : normalCap
+  const carefulText = lim ? `careful ON (${lim.window}: max trade $${capUsd.toFixed(0)}, min edge $${minEdge(capUsd).toFixed(4)} at that size; ${CAREFUL_CORRIDORS.join(' and ')} only)` : 'careful OFF'
   status.smart = profile ? { on: true, ...profile } : { on: false }
-  status.smartSummary = profile ? 'ON · ' + describeProfile(profile) : 'OFF'
-  if (profile) console.log('  smart sizing: ' + describeProfile(profile))
-  const minEdge = (sizeUsd: number) => (profile ? minEdgeFor(sizeUsd, profile) : MIN_EDGE_USD)
+  status.smartSummary = `${profile ? 'ON · ' + describeProfile(profile) : 'OFF'} · ${carefulText}`
+  console.log(`  ${profile ? 'smart sizing: ' + describeProfile(profile) + ' · ' : ''}${carefulText}`)
 
   const cash = await balanceOf(TOKENS.USDT.address)
-  const cap = parseUnits((profile ? profile.capUsd : MAX_TRADE_USD).toFixed(2), 6)
+  const cap = parseUnits(capUsd.toFixed(2), 6)
   const { size, watchOnly } = tradeSize(cash, cap, LIVE, BigInt(Math.round(FIRST_TRADE_SHARE * 100)))
   status.watchOnly = watchOnly
   if (watchOnly) console.log(`  not enough USDT to trade (have ${usd(cash).toFixed(2)}); scanning in watch mode`)

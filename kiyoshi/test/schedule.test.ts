@@ -40,3 +40,20 @@ test('the table names every window', () => {
   const t = scheduleTable(330, 800)
   assert.match(t, /Peak 13:00–14:59/); assert.match(t, /Mon \$660/); assert.match(t, /Quiet/)
 })
+
+import { CAREFUL_CAP_USD, CAREFUL_CORRIDORS, carefulLimits, windowAt } from '../src/schedule.js'
+
+test('careful mode: higher minimum edge, never looser than normal, $500 cap outside the peak', () => {
+  const normal = (s: number) => Math.max(0.01, (s * 0.3) / 10_000) // the old peak rule
+  const peak = carefulLimits(at('2026-11-23T12:30:00Z'), normal, 1000) // Monday 13:30 Lagos
+  assert.equal(peak.window, 'peak'); assert.equal(peak.capUsd, 1000) // the peak keeps its size
+  assert.equal(peak.minEdge(500), 0.1) // 2 bps of $500
+  assert.equal(peak.minEdge(100), 0.05) // the $0.05 floor
+  const quiet = carefulLimits(at('2026-11-23T14:30:00Z'), normal, 750) // Monday 15:30 Lagos
+  assert.equal(quiet.window, 'quiet'); assert.equal(quiet.capUsd, CAREFUL_CAP_USD)
+  assert.equal(quiet.minEdge(500), 0.2) // 4 bps of $500
+  const busy = carefulLimits(at('2026-11-23T19:30:00Z'), () => 5, 300) // a stricter normal rule wins
+  assert.equal(busy.window, 'busy'); assert.equal(busy.capUsd, 300); assert.equal(busy.minEdge(300), 5)
+  assert.equal(windowAt(at('2026-11-22T19:30:00Z')), 'quiet') // Sunday 20:30: weekend
+  assert.deepEqual(CAREFUL_CORRIDORS, ['cNGN', 'USDC'])
+})

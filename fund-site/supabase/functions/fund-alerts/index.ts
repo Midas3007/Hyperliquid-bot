@@ -52,6 +52,7 @@ const COMMANDS = [
   { command: 'smart', description: 'Smart sizing by time of day: on/off' },
   { command: 'schedule', description: 'The smart sizing schedule for the week' },
   { command: 'tight', description: 'Tight first-leg tolerance: on/off' },
+  { command: 'careful', description: 'Careful mode (higher minimum edge, $500 cap, Textile check): on/off' },
   { command: 'help', description: 'What this bot does' },
 ]
 const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, the fund is paused, or a change to the vault (owner, treasury, keeper, manager, fee) is queued. After each daily settlement you get a summary.
@@ -66,6 +67,7 @@ Commands (nothing here moves money):
 /smart: is smart sizing on? It sets the max trade and minimum edge by time of day. /smart_on and /smart_off switch it
 /schedule: the smart sizing schedule for the week
 /tight: is the tight first-leg tolerance on? /tight_on and /tight_off switch it
+/careful: is careful mode on? /careful_on and /careful_off switch it
 /help: this message
 
 Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
@@ -173,6 +175,7 @@ Deno.serve(async (req) => {
       : cmd === '/smart' ? await smartText() : cmd === '/schedule' ? await scheduleText()
       : cmd === '/smart_on' || cmd === '/smart_off' ? await setSmart(cmd === '/smart_on')
       : cmd === '/tight' ? await tightText() : cmd === '/tight_on' || cmd === '/tight_off' ? await setTight(cmd === '/tight_on')
+      : cmd === '/careful' ? await carefulText() : cmd === '/careful_on' || cmd === '/careful_off' ? await setCareful(cmd === '/careful_on')
       : cmd === '/dashboard' || cmd === '/menu' ? 'Command dashboard. Tap a button; the switches show their current state. Nothing here moves money.'
       : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
   }
@@ -180,7 +183,7 @@ Deno.serve(async (req) => {
   // The dashboard's buttons. Switch labels show the current state; tapping one flips it.
   async function dashboardKeys() {
     const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
-    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true, tight = st?.tight_slip !== false
+    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true, tight = st?.tight_slip !== false, careful = st?.careful !== false
     const b = (text: string, data: string) => ({ text, callback_data: data })
     return { inline_keyboard: [
       [b('Status', '/status'), b('Today', '/today')],
@@ -189,6 +192,7 @@ Deno.serve(async (req) => {
       [b('Smart sizing now', '/smart'), b('Weekly schedule', '/schedule')],
       [b(`Skip waits: ${skip ? 'ON' : 'OFF'} (tap to turn ${skip ? 'off' : 'on'})`, skip ? '/skipwait_off' : '/skipwait_on')],
       [b(`Tight first leg: ${tight ? 'ON' : 'OFF'} (tap to turn ${tight ? 'off' : 'on'})`, tight ? '/tight_off' : '/tight_on')],
+      [b(`Careful mode: ${careful ? 'ON' : 'OFF'} (tap to turn ${careful ? 'off' : 'on'})`, careful ? '/careful_off' : '/careful_on')],
       [{ text: 'Open the site', url: SITE }, b('Help', '/help')],
     ] }
   }
@@ -221,6 +225,18 @@ Deno.serve(async (req) => {
   async function setTight(on: boolean) {
     await db.from('bot_settings').update({ tight_slip: on, tight_updated_at: new Date().toISOString() }).eq('id', 1)
     return `Done: tight first-leg tolerance is now ${on ? 'ON' : 'OFF'}. The bot picks this up within 2 minutes.`
+  }
+
+  async function carefulText() {
+    const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
+    const on = st?.careful !== false
+    return `Careful mode: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.careful_updated_at)})\n${on
+      ? 'Higher minimum edge (2 bps at the 13:00–14:59 Lagos peak, 3 bps busy hours, 4 bps quiet hours, at least $0.05), at most $500 a trade outside the peak, Textile checked again before buying on Uniswap, and only cNGN and USDC are traded.'
+      : 'The old rules: smart sizing alone sets the size and minimum edge, every corridor is traded.'}\n${on ? '/careful_off to go back' : '/careful_on to turn it on'}`
+  }
+  async function setCareful(on: boolean) {
+    await db.from('bot_settings').update({ careful: on, careful_updated_at: new Date().toISOString() }).eq('id', 1)
+    return `Done: careful mode is now ${on ? 'ON' : 'OFF'}. The bot picks this up within 2 minutes.`
   }
 
   async function skipText() {
