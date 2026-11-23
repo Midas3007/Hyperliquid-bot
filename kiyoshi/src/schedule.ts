@@ -33,7 +33,7 @@ export const RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number
 //   - at most CAREFUL_CAP_USD a trade outside the peak hours;
 //   - before buying on Uniswap, re-checks Textile's live price for the exact amount and needs the minimum edge plus
 //     CAREFUL_UNI_FIRST_CUSHION_BPS (Textile's firm price is usually a little worse than its preview);
-//   - trades only CAREFUL_CORRIDORS (the ones with a two-sided Textile market).
+//   - trades only CAREFUL_CORRIDORS (wBRL is out: its Uniswap pool is empty; wARS stays, guarded by the Textile re-check).
 export const CAREFUL_RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number }> = {
   peak: { minEdgeBps: 2, minEdgeFloorUsd: 0.05 },
   busy: { minEdgeBps: 3, minEdgeFloorUsd: 0.05 },
@@ -41,7 +41,7 @@ export const CAREFUL_RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd
 }
 export const CAREFUL_CAP_USD = 500
 export const CAREFUL_UNI_FIRST_CUSHION_BPS = 2
-export const CAREFUL_CORRIDORS = ['cNGN', 'USDC']
+export const CAREFUL_CORRIDORS = ['cNGN', 'USDC', 'wARS']
 
 /** Which window a moment falls in (peak, busy or quiet), whether or not smart sizing is on. */
 export function windowAt(now: Date): Window {

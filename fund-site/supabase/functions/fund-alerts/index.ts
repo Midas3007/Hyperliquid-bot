@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
     const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
     const on = st?.careful !== false
     return `Careful mode: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.careful_updated_at)})\n${on
-      ? 'Higher minimum edge (2 bps at the 13:00–14:59 Lagos peak, 3 bps busy hours, 4 bps quiet hours, at least $0.05), at most $500 a trade outside the peak, Textile checked again before buying on Uniswap, and only cNGN and USDC are traded.'
+      ? 'Higher minimum edge (2 bps at the 13:00–14:59 Lagos peak, 3 bps busy hours, 4 bps quiet hours, at least $0.05), at most $500 a trade outside the peak, Textile checked again before buying on Uniswap, and only cNGN, USDC and wARS are traded (wARS only when Textile will buy it back).'
       : 'The old rules: smart sizing alone sets the size and minimum edge, every corridor is traded.'}\n${on ? '/careful_off to go back' : '/careful_on to turn it on'}`
   }
   async function setCareful(on: boolean) {

@@ -55,5 +55,5 @@ test('careful mode: higher minimum edge, never looser than normal, $500 cap outs
   const busy = carefulLimits(at('2026-11-23T19:30:00Z'), () => 5, 300) // a stricter normal rule wins
   assert.equal(busy.window, 'busy'); assert.equal(busy.capUsd, 300); assert.equal(busy.minEdge(300), 5)
   assert.equal(windowAt(at('2026-11-22T19:30:00Z')), 'quiet') // Sunday 20:30: weekend
-  assert.deepEqual(CAREFUL_CORRIDORS, ['cNGN', 'USDC'])
+  assert.deepEqual(CAREFUL_CORRIDORS, ['cNGN', 'USDC', 'wARS'])
 })
