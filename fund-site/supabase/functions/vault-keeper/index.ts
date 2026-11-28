@@ -74,6 +74,12 @@ async function toUsdt(token: `0x${string}`, amount: bigint) {
   return best
 }
 /** Value of a mainnet wallet in USDT units (6 decimals). */
+// The fund's value: the bot wallet plus the atomic contract (settings.arb_contract, kiyoshi/contracts/KiyoshiArb.sol),
+// which holds part of the fund's USDT as its float. The contract can only send funds back to the bot wallet.
+let arbContract: `0x${string}` | null = null
+async function fundValue(wallet: `0x${string}`) {
+  return (await walletValue(wallet)) + (arbContract && arbContract.toLowerCase() !== wallet.toLowerCase() ? await walletValue(arbContract) : 0n)
+}
 async function walletValue(wallet: `0x${string}`) {
   let value = 0n
   for (const t of TOKENS) {
@@ -99,6 +105,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
   const reply = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json', ...cors } })
   const { data: cfg } = await db.from('vault_config').select('*').eq('id', 1).single()
+  { const { data: st } = await db.from('settings').select('arb_contract').eq('id', 1).single(); arbContract = st?.arb_contract && isAddress(st.arb_contract) ? st.arb_contract as `0x${string}` : null }
   if (!cfg) return reply({ error: 'vault_config missing' })
   // "Settle now" from the site's Admin page: a message signed by the vault's manager or owner, at most 10 minutes old
   const ask = req.method === 'POST' ? await req.json().catch(() => null) : null
@@ -138,7 +145,7 @@ Deno.serve(async (req) => {
     const { data: lastEntry } = await db.from('ledger').select('created_at').order('seq', { ascending: false }).limit(1).maybeSingle()
     if (s?.bot_wallet && isAddress(s.bot_wallet) && !(lastEntry && Date.now() - Date.parse(lastEntry.created_at) < LEDGER_QUIET_MS)) {
       // the pot (if on) is taken out of the wallet's value; if it cannot be, nothing is recorded this run
-      const tv = await treasuryValue(db, { due: dueEarly, forWallet: s.bot_wallet, head: () => mainnet.getBlockNumber(), wallet: () => walletValue(s.bot_wallet as `0x${string}`), refresh: refreshHistory })
+      const tv = await treasuryValue(db, { due: dueEarly, forWallet: s.bot_wallet, head: () => mainnet.getBlockNumber(), wallet: () => fundValue(s.bot_wallet as `0x${string}`), refresh: refreshHistory })
       if (tv.kind === 'skip') notes.push(`season value not recorded (${tv.why})`)
       const v = tv.kind === 'skip' ? 0 : Math.round(Number(formatUnits(tv.micro, 6)) * 100) / 100
       const { data: last } = await db.from('nav_snapshots').select('value').order('recorded_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
@@ -209,7 +216,7 @@ Deno.serve(async (req) => {
     // the pot, after the day's carve; if that cannot be worked out safely the run ends here and posts nothing.
     let value: bigint, carvePending = false
     if (cfg.network === 'mainnet') {
-      const tv = await treasuryValue(db, { due, forWallet: treasury, head: () => mainnet.getBlockNumber(), wallet: () => walletValue(treasury), refresh: refreshHistory })
+      const tv = await treasuryValue(db, { due, forWallet: treasury, head: () => mainnet.getBlockNumber(), wallet: () => fundValue(treasury), refresh: refreshHistory })
       if (tv.kind === 'skip') {
         notes.push(`value not posted (${tv.why})`)
         await db.from('vault_config').update({ last_result: notes.join(' · ') }).eq('id', 1)

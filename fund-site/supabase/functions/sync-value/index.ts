@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
   if (!memberId) return reply(403, { error: 'Members only' })
 
   const db = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const { data: s } = await db.from('settings').select('bot_wallet').eq('id', 1).single()
+  const { data: s } = await db.from('settings').select('bot_wallet, arb_contract').eq('id', 1).single()
   const wallet = s?.bot_wallet
   if (!wallet || !isAddress(wallet)) return reply(200, { skipped: 'no pool wallet set' })
 
@@ -105,8 +105,11 @@ Deno.serve(async (req) => {
   const readWallet = async () => { // the wallet's value in USDT micro-units, as counted above
     holdings.length = 0
     let sum = 0
+    // the bot wallet plus the atomic contract's float (settings.arb_contract), both the fund's
+    const owners = [wallet, ...(s?.arb_contract && isAddress(s.arb_contract) ? [s.arb_contract] : [])]
     for (const t of TOKENS) {
-      const raw = await chain.readContract({ address: t.address, abi: erc20Abi, functionName: 'balanceOf', args: [wallet] })
+      let raw = 0n
+      for (const o of owners) raw += await chain.readContract({ address: t.address, abi: erc20Abi, functionName: 'balanceOf', args: [o] })
       if (raw === 0n) continue
       const amount = Number(formatUnits(raw, t.decimals))
       const usd = t.stable ? amount : await toUsdt(t.address, raw)

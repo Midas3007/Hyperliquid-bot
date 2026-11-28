@@ -17,6 +17,7 @@ import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { botSettings } from './settings.js'
 import { payout } from './payout.js'
 import { poolGuard } from './guards.js'
+import { ATOMIC_CORRIDORS, arbHoldings, atomic, atomicSummary, manageFloat, startAtomicWatcher } from './atomic.js'
 import { CAREFUL_CORRIDORS, CAREFUL_UNI_FIRST_CUSHION_BPS, CAREFUL_UNI_SALE_TOLERANCE_BPS, carefulLimits, describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
 import { byEdge, candidateSizes, edgeUsd, freeForTextile, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip, type TextileHold } from './strategy.js'
 
@@ -119,6 +120,11 @@ async function equity() {
     if (bal === 0n) continue
     const exit = await bestExit(X, bal)
     if (exit) total += usd(exit.out)
+  }
+  // the atomic contract's float belongs to the fund too (atomic.ts)
+  for (const h of await arbHoldings().catch(() => [])) {
+    if (h.token === 'USDT') total += usd(h.amount)
+    else { const exit = await bestExit(h.token, h.amount); if (exit) total += usd(exit.out) }
   }
   return total
 }
@@ -280,6 +286,16 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
 async function cycle() {
   const pause = await settlePause()
   status.settlePause = pause
+  const early = await botSettings()
+  const atomicOn = LIVE && early.atomic === true && !pause
+  atomic.allowed = atomicOn
+  const floatUsd = Math.min(5000, Math.max(0, Number(early.arb_float_usd ?? 300)))
+  // atomic float: topped up while on; returned to the bot wallet (and the contract paused) when off or before settlement
+  if (LIVE) {
+    try { const line = await manageFloat(atomicOn, floatUsd); if (line) { console.log('  ' + line); log({ event: 'atomic_float', line }) } }
+    catch (e: any) { console.error('  atomic float:', e.shortMessage ?? e.message) }
+  }
+  status.atomicSummary = atomicSummary(atomicOn, floatUsd)
   if (pause) {
     chase = null
     console.log('  ' + pause)
@@ -306,7 +322,7 @@ async function cycle() {
   const capUsd = lim ? lim.capUsd : normalCap
   const carefulText = lim ? `careful ON (${lim.window}: max trade $${capUsd.toFixed(0)}, min edge $${lim.minEdgeFor(capUsd, 'uni->textile').toFixed(4)} Uniswap-first / $${lim.minEdgeFor(capUsd, 'textile->uni').toFixed(4)} Textile-first at that size; pool guards on; ${CAREFUL_CORRIDORS.join(' and ')} only)` : 'careful OFF'
   status.smart = profile ? { on: true, ...profile } : { on: false }
-  status.smartSummary = `${profile ? 'ON · ' + describeProfile(profile) : 'OFF'} · ${carefulText}`
+  status.smartSummary = `${profile ? 'ON · ' + describeProfile(profile) : 'OFF'} · ${carefulText} · ${status.atomicSummary}`
   console.log(`  ${profile ? 'smart sizing: ' + describeProfile(profile) + ' · ' : ''}${carefulText}`)
 
   const cash = await balanceOf(TOKENS.USDT.address)
@@ -330,7 +346,8 @@ async function cycle() {
   status.lastScan = { at: new Date().toISOString(), maxSizeUsd: usd(size), opps: opps.map((o) => ({ X: o.X, route: o.route, sizeUsd: usd(o.size), outUsd: usd(o.out), edge: o.edge })) }
 
   // Careful mode: the best candidate whose Uniswap pool passes the liquidity and volatility guards (guards.ts)
-  const passing = tradable.filter((o) => o.edge >= routeMin(usd(o.size), o.route))
+  // with atomic on, Textile-first trades in its corridors go through the contract (atomic.ts), never in two legs
+  const passing = tradable.filter((o) => o.edge >= routeMin(usd(o.size), o.route) && !(atomicOn && o.route === 'textile->uni' && ATOMIC_CORRIDORS.includes(o.X)))
   let best = pickBest(passing, -Infinity)
   if (careful) {
     // read every scanned pool each cycle, so each keeps a full history for its 7-day normal and 10-minute range
@@ -404,6 +421,9 @@ if (STARTUP_DELAY_MS > 0) {
   console.log('Waiting ' + STARTUP_DELAY_MS / 1000 + 's before trading so any previous copy can finish and shut down')
   await sleep(STARTUP_DELAY_MS)
 }
+
+// ---------- atomic watcher (its own fast loop; trades only while the main loop allows it) ----------
+if (LIVE) startAtomicWatcher(log)
 
 // ---------- main loop ----------
 console.log(`Kiyoshi ${LIVE ? 'LIVE' : 'DRY RUN'} | wallet ${account.address} | max trade $${MAX_TRADE_USD} | min edge $${MIN_EDGE_USD} | every ${INTERVAL_MS / 1000}s`)

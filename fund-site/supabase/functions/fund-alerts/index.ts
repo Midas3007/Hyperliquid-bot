@@ -53,6 +53,7 @@ const COMMANDS = [
   { command: 'schedule', description: 'The smart sizing schedule for the week' },
   { command: 'tight', description: 'Tight first-leg tolerance: on/off' },
   { command: 'careful', description: 'Careful mode (higher edges, $300 cap, re-checks, pool guards): on/off' },
+  { command: 'atomic', description: 'One-transaction trades through the contract: on/off, float' },
   { command: 'help', description: 'What this bot does' },
 ]
 const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, the fund is paused, or a change to the vault (owner, treasury, keeper, manager, fee) is queued. After each daily settlement you get a summary.
@@ -68,6 +69,7 @@ Commands (nothing here moves money):
 /schedule: the smart sizing schedule for the week
 /tight: is the tight first-leg tolerance on? /tight_on and /tight_off switch it
 /careful: is careful mode on? /careful_on and /careful_off switch it
+/atomic: one-transaction trades through the fund's contract. /atomic_on and /atomic_off switch it; /float 600 sets the contract's float (off returns it to the bot wallet)
 /help: this message
 
 Pause, settle and approvals stay on the site (signed with your wallet) and on the phone.`
@@ -144,7 +146,7 @@ Deno.serve(async (req) => {
       const c = String(cq.data ?? '')
       if (!/^\/[a-z_]+$/.test(c)) return reply({ ok: true })
       let text = ''
-      try { text = await run(c) } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
+      try { text = await run(c, '') } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
       if (c !== '/dashboard') await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true })
       await tg('editMessageReplyMarkup', { chat_id: chat, message_id: cq.message.message_id, reply_markup: await dashboardKeys() })
       return reply({ ok: true })
@@ -152,6 +154,7 @@ Deno.serve(async (req) => {
     const m = body?.message
     if (!m || m.chat?.type !== 'private') return reply({ ok: true })
     const cmd = String(m.text ?? '').trim().split(/[\s@]/)[0].toLowerCase()
+    const arg = String(m.text ?? '').trim().split(/\s+/)[1] ?? ''
     if (!chat) {
       if (cmd === '/start') {
         chat = m.chat.id
@@ -162,13 +165,13 @@ Deno.serve(async (req) => {
     }
     if (m.chat.id !== chat) return reply({ ok: true }) // only the linked chat gets answers
     let text = ''
-    try { text = await run(cmd) } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
+    try { text = await run(cmd, arg) } catch (e) { text = `Could not read that right now: ${(e as Error).message.split('\n')[0]}` }
     const dash = cmd === '/dashboard' || cmd === '/menu'
     await tg('sendMessage', { chat_id: chat, text, disable_web_page_preview: true, ...(dash ? { reply_markup: await dashboardKeys() } : {}) })
     return reply({ ok: true })
   }
 
-  async function run(cmd: string) {
+  async function run(cmd: string, arg: string) {
     return cmd === '/status' ? await statusText() : cmd === '/today' ? await todayText() : cmd === '/queue' ? await queueText()
       : cmd === '/keeper' ? await keeperText() : cmd === '/skipwait' ? await skipText()
       : cmd === '/skipwait_on' || cmd === '/skipwait_off' ? await setSkip(cmd === '/skipwait_on')
@@ -176,6 +179,8 @@ Deno.serve(async (req) => {
       : cmd === '/smart_on' || cmd === '/smart_off' ? await setSmart(cmd === '/smart_on')
       : cmd === '/tight' ? await tightText() : cmd === '/tight_on' || cmd === '/tight_off' ? await setTight(cmd === '/tight_on')
       : cmd === '/careful' ? await carefulText() : cmd === '/careful_on' || cmd === '/careful_off' ? await setCareful(cmd === '/careful_on')
+      : cmd === '/atomic' ? await atomicText() : cmd === '/atomic_on' || cmd === '/atomic_off' ? await setAtomic(cmd === '/atomic_on')
+      : cmd === '/float' ? await setFloat(arg)
       : cmd === '/dashboard' || cmd === '/menu' ? 'Command dashboard. Tap a button; the switches show their current state. Nothing here moves money.'
       : cmd === '/start' ? 'Alerts are already connected to this chat.' : HELP
   }
@@ -183,7 +188,7 @@ Deno.serve(async (req) => {
   // The dashboard's buttons. Switch labels show the current state; tapping one flips it.
   async function dashboardKeys() {
     const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
-    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true, tight = st?.tight_slip !== false, careful = st?.careful !== false
+    const skip = st?.skip_reserved !== false, smart = st?.smart_sizing === true, tight = st?.tight_slip !== false, careful = st?.careful !== false, atomic = st?.atomic === true
     const b = (text: string, data: string) => ({ text, callback_data: data })
     return { inline_keyboard: [
       [b('Status', '/status'), b('Today', '/today')],
@@ -193,6 +198,7 @@ Deno.serve(async (req) => {
       [b(`Skip waits: ${skip ? 'ON' : 'OFF'} (tap to turn ${skip ? 'off' : 'on'})`, skip ? '/skipwait_off' : '/skipwait_on')],
       [b(`Tight first leg: ${tight ? 'ON' : 'OFF'} (tap to turn ${tight ? 'off' : 'on'})`, tight ? '/tight_off' : '/tight_on')],
       [b(`Careful mode: ${careful ? 'ON' : 'OFF'} (tap to turn ${careful ? 'off' : 'on'})`, careful ? '/careful_off' : '/careful_on')],
+      [b(`Atomic trades: ${atomic ? 'ON' : 'OFF'} (tap to turn ${atomic ? 'off' : 'on'})`, atomic ? '/atomic_off' : '/atomic_on'), b('Atomic now', '/atomic')],
       [{ text: 'Open the site', url: SITE }, b('Help', '/help')],
     ] }
   }
@@ -237,6 +243,29 @@ Deno.serve(async (req) => {
   async function setCareful(on: boolean) {
     await db.from('bot_settings').update({ careful: on, careful_updated_at: new Date().toISOString() }).eq('id', 1)
     return `Done: careful mode is now ${on ? 'ON' : 'OFF'}. The bot picks this up within 2 minutes.`
+  }
+
+  async function atomicText() {
+    const [{ data: st }, { data: hb }, { data: se }] = await Promise.all([db.from('bot_settings').select('*').eq('id', 1).single(), db.from('bot_heartbeat').select('smart_summary, at').eq('id', 1).single(), db.from('settings').select('arb_contract').eq('id', 1).single()])
+    const on = st?.atomic === true
+    const now = String(hb?.smart_summary ?? '').match(/atomic (ON|OFF)[^·]*/)?.[0]
+    return [
+      `Atomic trades: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.atomic_updated_at)}) · float target $${Number(st?.arb_float_usd ?? 300).toFixed(0)}`,
+      "Textile-first trades go through the fund's contract in one transaction that reverts unless it makes a profit. The contract holds a USDT float and can only send funds back to the bot wallet. When off, and every evening before settlement, the bot returns the float to the bot wallet and pauses the contract.",
+      now ? `Bot now (reported ${ago(hb?.at)}): ${now.trim()}` : '',
+      se?.arb_contract ? `Contract: https://celoscan.io/address/${se.arb_contract}` : '',
+      on ? '/atomic_off to stop · /float 600 to change the float' : '/atomic_on to start · /float 600 to change the float',
+    ].filter(Boolean).join('\n')
+  }
+  async function setAtomic(on: boolean) {
+    await db.from('bot_settings').update({ atomic: on, atomic_updated_at: new Date().toISOString() }).eq('id', 1)
+    return `Done: atomic trades are now ${on ? 'ON. Within 2 minutes the bot moves the float into the contract and starts.' : 'OFF. Within 2 minutes the bot stops, returns the float to the bot wallet and pauses the contract.'}`
+  }
+  async function setFloat(arg: string) {
+    const v = Number(arg.replace(/[$,]/g, ''))
+    if (!arg || !Number.isFinite(v) || v < 0 || v > 5000) return 'Send /float followed by an amount from 0 to 5000, e.g. /float 600'
+    await db.from('bot_settings').update({ arb_float_usd: Math.round(v), atomic_updated_at: new Date().toISOString() }).eq('id', 1)
+    return `Done: the contract's float target is now $${Math.round(v)}. While atomic is on, the bot tops it up from the bot wallet (keeping at least half the wallet's USDT for its own trades) or returns the extra, within 2 minutes.`
   }
 
   async function skipText() {

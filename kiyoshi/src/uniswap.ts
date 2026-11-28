@@ -20,9 +20,9 @@ async function verifyRouter() {
 }
 
 // Best quote across v3 fee tiers. Read-only.
-export async function uniQuote(tin: TokenKey, tout: TokenKey, amountIn: bigint) {
+export async function uniQuote(tin: TokenKey, tout: TokenKey, amountIn: bigint, tiers: number[] = [100, 500, 3000, 10000]) {
   let best: { out: bigint; fee: number } | null = null
-  for (const fee of [100, 500, 3000, 10000]) {
+  for (const fee of tiers) {
     try {
       const { result } = await pub.simulateContract({
         address: UNI.QUOTER, abi: quoterAbi, functionName: 'quoteExactInputSingle',
