@@ -34,13 +34,19 @@ export const RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number
 //   - before buying on Uniswap, re-checks Textile's live price for the exact amount and needs the minimum edge plus
 //     CAREFUL_UNI_FIRST_CUSHION_BPS (Textile's firm price is usually a little worse than its preview);
 //   - trades only CAREFUL_CORRIDORS (wBRL is out: its Uniswap pool is empty; wARS stays, guarded by the Textile re-check).
+// Revised 28 Nov (docs/earnings-investigation.pdf): arbitrage contracts now trade the Uniswap pools between our two
+// legs. Uniswap-first trades stayed 96% profitable but the 2 bps cushion blocked ~80% of them, while Textile-first
+// trades (34% profitable, about 4 bps lost between the legs) went through. So: the cushion is 0.5 bps, Textile-first
+// trades need CAREFUL_TEX_FIRST_MIN_BPS and a fresh Uniswap quote before buying, and the cap is $300 at every hour.
 export const CAREFUL_RULES: Record<Window, { minEdgeBps: number; minEdgeFloorUsd: number }> = {
   peak: { minEdgeBps: 2, minEdgeFloorUsd: 0.05 },
   busy: { minEdgeBps: 3, minEdgeFloorUsd: 0.05 },
   quiet: { minEdgeBps: 4, minEdgeFloorUsd: 0.05 },
 }
-export const CAREFUL_CAP_USD = 500
-export const CAREFUL_UNI_FIRST_CUSHION_BPS = 2
+export const CAREFUL_CAP_USD = 300 // every hour, the peak included (peak trades of $450-600 won 12% of the time, 23-28 Nov)
+export const CAREFUL_UNI_FIRST_CUSHION_BPS = 0.5
+export const CAREFUL_TEX_FIRST_MIN_BPS = 5 // Textile-first trades lose about 4.2 bps between the legs
+export const CAREFUL_UNI_SALE_TOLERANCE_BPS = 1 // the Uniswap sale of a Textile-first trade: at most 1 bp under its fresh quote
 export const CAREFUL_CORRIDORS = ['cNGN', 'USDC', 'wARS']
 
 /** Which window a moment falls in (peak, busy or quiet), whether or not smart sizing is on. */
@@ -53,10 +59,14 @@ export function windowAt(now: Date): Window {
 /** Careful mode's minimum edge and cap on top of the normal ones (never looser than them). */
 export function carefulLimits(now: Date, normalMinEdgeUsd: (sizeUsd: number) => number, normalCapUsd: number) {
   const window = windowAt(now)
+  const minEdge = (sizeUsd: number) => Math.max(normalMinEdgeUsd(sizeUsd), minEdgeFor(sizeUsd, CAREFUL_RULES[window]))
   return {
     window,
-    capUsd: window === 'peak' ? normalCapUsd : Math.min(normalCapUsd, CAREFUL_CAP_USD),
-    minEdge: (sizeUsd: number) => Math.max(normalMinEdgeUsd(sizeUsd), minEdgeFor(sizeUsd, CAREFUL_RULES[window])),
+    capUsd: Math.min(normalCapUsd, CAREFUL_CAP_USD),
+    minEdge,
+    /** Textile-first trades need at least CAREFUL_TEX_FIRST_MIN_BPS on top of the window's rule. */
+    minEdgeFor: (sizeUsd: number, route: 'uni->textile' | 'textile->uni') =>
+      route === 'textile->uni' ? Math.max(minEdge(sizeUsd), (sizeUsd * CAREFUL_TEX_FIRST_MIN_BPS) / 10_000) : minEdge(sizeUsd),
   }
 }
 

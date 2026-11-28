@@ -1,6 +1,6 @@
 -- Careful mode (23 Nov 2026): a bot switch, on by default, flipped from Telegram (/careful_on, /careful_off).
 -- When on, the bot needs a higher minimum edge, caps trades at $500 outside the 13:00-14:59 Lagos peak, re-checks
--- Textile's live price before a Uniswap-first trade, and trades only cNGN and USDC. Off = exactly the old behaviour.
+-- Textile's live price before a Uniswap-first trade, and trades only cNGN, USDC and wARS. Off = exactly the old behaviour. (Rules revised 28 Nov in the bot, kiyoshi/src/schedule.ts; no schema change.)
 alter table public.bot_settings add column if not exists careful boolean not null default true;
 alter table public.bot_settings add column if not exists careful_updated_at timestamptz;
 

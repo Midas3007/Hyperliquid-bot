@@ -16,7 +16,8 @@ import { recordSkip, recordWaited, skipReserved, skipSummary, skipTally } from '
 import { flowSummary, netDeposits, updateFlows } from './flows.js'
 import { botSettings } from './settings.js'
 import { payout } from './payout.js'
-import { CAREFUL_CORRIDORS, CAREFUL_UNI_FIRST_CUSHION_BPS, carefulLimits, describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
+import { poolGuard } from './guards.js'
+import { CAREFUL_CORRIDORS, CAREFUL_UNI_FIRST_CUSHION_BPS, CAREFUL_UNI_SALE_TOLERANCE_BPS, carefulLimits, describe as describeProfile, minEdgeFor, scheduleTable, smartProfile, type Profile } from './schedule.js'
 import { byEdge, candidateSizes, edgeUsd, freeForTextile, parseLedger, pickBest, resolveBaseline, shouldHold, summarizeFills, tradeSize, usd, withSlippage as slip, type TextileHold } from './strategy.js'
 
 const LIVE = process.env.LIVE === '1'
@@ -217,6 +218,18 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
     log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1, leg2: r.status, ...(filled ? { tx2: r.txHash, textileUsd: usd(r.received) } : {}), pnl })
     return pnl
   }
+  // Careful mode: before buying on Textile, re-quote Uniswap for what we expect to receive and go ahead only if selling
+  // it there still pays the minimum edge (Textile-first needs 5 bps). Bots often move the pool after our scan.
+  if (careful) {
+    const now = await uniQuote(X, 'USDT', o.mid)
+    const needUsd = usd(o.size) + minEdgeUsd
+    if (!now || usd(now.out) < needUsd) {
+      lastSkipped = true
+      console.log(`  careful: Uniswap would pay ${now ? '$' + usd(now.out).toFixed(4) : 'nothing'} for it now, need $${needUsd.toFixed(4)}; not buying on Textile`)
+      log({ event: 'skip', X, route: o.route, sizeUsd: usd(o.size), reason: 'careful_uniswap_check', uniswapUsd: now ? usd(now.out) : null, needUsd })
+      return null
+    }
+  }
   const skip = await skipReserved()
   const r = await textileSwap('USDT', X, o.size, firstMin, { skipIfReserved: skip })
   if (r.status === 'reserved') {
@@ -243,7 +256,20 @@ async function execute(o: Opp, minEdgeUsd: number): Promise<number | null> {
     log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, textileUsd: usd(o.size), leg2: 'no_uniswap_quote', pnl: null })
     return null
   }
-  const { hash: tx2, out } = await uniSwap(X, 'USDT', r.received, q.fee, withSlippage(q.out))
+  // Careful mode: the sale may fill at most 1 bp under its fresh quote. If a bot moved the pool first it reverts (only
+  // gas is spent) and the coins stay with flatten(), which sells on the better venue under the loss guard, instead of
+  // being dumped on Uniswap.
+  const saleMin = careful ? (q.out * BigInt(10_000 - CAREFUL_UNI_SALE_TOLERANCE_BPS)) / 10_000n : withSlippage(q.out)
+  let tx2: `0x${string}`, out: bigint
+  try {
+    ({ hash: tx2, out } = await uniSwap(X, 'USDT', r.received, q.fee, saleMin))
+  } catch (e: any) {
+    if (!careful) throw e
+    const why = String(e.shortMessage ?? e.message).split('\n')[0].slice(0, 120)
+    console.log(`  careful: Uniswap sale did not fill at $${usd(saleMin).toFixed(4)} or better (${why}); holding for flatten`)
+    log({ event: 'cycle', X, route: o.route, sizeUsd: usd(o.size), tx1: r.txHash, textileUsd: usd(o.size), leg2: 'uniswap_min_out', pnl: null })
+    return null
+  }
   pending.delete(X)
   const pnl = usd(out) - usd(o.size)
   if (r.waited) { recordWaited(pnl); console.log(`  this trade waited for Textile (${skipSummary()})`) }
@@ -276,8 +302,9 @@ async function cycle() {
   const normalCap = profile ? profile.capUsd : MAX_TRADE_USD
   const lim = careful ? carefulLimits(new Date(), normalMin, normalCap) : null
   const minEdge = lim ? lim.minEdge : normalMin
+  const routeMin = (sizeUsd: number, route: Opp['route']) => (lim ? lim.minEdgeFor(sizeUsd, route) : normalMin(sizeUsd))
   const capUsd = lim ? lim.capUsd : normalCap
-  const carefulText = lim ? `careful ON (${lim.window}: max trade $${capUsd.toFixed(0)}, min edge $${minEdge(capUsd).toFixed(4)} at that size; ${CAREFUL_CORRIDORS.join(' and ')} only)` : 'careful OFF'
+  const carefulText = lim ? `careful ON (${lim.window}: max trade $${capUsd.toFixed(0)}, min edge $${lim.minEdgeFor(capUsd, 'uni->textile').toFixed(4)} Uniswap-first / $${lim.minEdgeFor(capUsd, 'textile->uni').toFixed(4)} Textile-first at that size; pool guards on; ${CAREFUL_CORRIDORS.join(' and ')} only)` : 'careful OFF'
   status.smart = profile ? { on: true, ...profile } : { on: false }
   status.smartSummary = `${profile ? 'ON · ' + describeProfile(profile) : 'OFF'} · ${carefulText}`
   console.log(`  ${profile ? 'smart sizing: ' + describeProfile(profile) + ' · ' : ''}${carefulText}`)
@@ -302,13 +329,27 @@ async function cycle() {
   for (const o of opps.filter((o) => o.size === size)) console.log(`  ${o.X.padEnd(5)} ${o.route.padEnd(13)} $${usd(o.size).toFixed(2)} -> $${usd(o.out).toFixed(4)}  edge ${o.edge >= 0 ? '+' : ''}${o.edge.toFixed(4)}`)
   status.lastScan = { at: new Date().toISOString(), maxSizeUsd: usd(size), opps: opps.map((o) => ({ X: o.X, route: o.route, sizeUsd: usd(o.size), outUsd: usd(o.out), edge: o.edge })) }
 
-  const best = pickBest(tradable.filter((o) => o.edge >= minEdge(usd(o.size))), -Infinity)
+  // Careful mode: the best candidate whose Uniswap pool passes the liquidity and volatility guards (guards.ts)
+  const passing = tradable.filter((o) => o.edge >= routeMin(usd(o.size), o.route))
+  let best = pickBest(passing, -Infinity)
+  if (careful) {
+    // read every scanned pool each cycle, so each keeps a full history for its 7-day normal and 10-minute range
+    const guard = new Map<string, { ok: boolean; reason?: string }>()
+    for (const o of opps) { const k = `${o.X}-${o.uniFee}`; if (!guard.has(k)) guard.set(k, await poolGuard(o.X, o.uniFee)) }
+    best = null
+    for (const o of [...passing].sort(byEdge)) {
+      const g = guard.get(`${o.X}-${o.uniFee}`) ?? { ok: true }
+      if (g.ok) { best = o; break }
+      console.log(`  careful: skipping ${o.X} ${o.route} (${g.reason})`)
+      log({ event: 'skip', X: o.X, route: o.route, sizeUsd: usd(o.size), reason: 'careful_pool_guard', detail: g.reason })
+    }
+  }
   if (!best) { if (chase) console.log('  gap closed, back to full scans'); chase = null; console.log(`  no trade: best edge below $${minEdge(usd(size)).toFixed(4)}${profile ? ' (smart sizing)' : ''}`); return }
   if (watchOnly) { console.log(`  watch mode: edge of $${best.edge.toFixed(4)} available, fund the wallet to trade it`); return }
   console.log(`  >> ${LIVE ? 'TRADING' : 'would trade'}: ${best.X} ${best.route} at $${usd(best.size).toFixed(2)}, expected +$${best.edge.toFixed(4)}`)
   if (LIVE) {
     lastSkipped = false
-    const pnl = await execute(best, minEdge(usd(best.size)))
+    const pnl = await execute(best, routeMin(usd(best.size), best.route))
     chase = pnl !== null && pnl > 0 ? { X: best.X, route: best.route } : null
     if (chase) console.log(`  chasing ${best.X} ${best.route}, next check in ${CHASE_MS / 1000}s`)
     console.log(`  result: ${pnl === null ? (lastSkipped ? 'skipped (nothing bought)' : 'incomplete (leftover held and managed by flatten)') : (pnl >= 0 ? '+' : '') + pnl.toFixed(4) + ' USDT'}`)

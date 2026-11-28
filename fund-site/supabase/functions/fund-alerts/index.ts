@@ -52,7 +52,7 @@ const COMMANDS = [
   { command: 'smart', description: 'Smart sizing by time of day: on/off' },
   { command: 'schedule', description: 'The smart sizing schedule for the week' },
   { command: 'tight', description: 'Tight first-leg tolerance: on/off' },
-  { command: 'careful', description: 'Careful mode (higher minimum edge, $500 cap, Textile check): on/off' },
+  { command: 'careful', description: 'Careful mode (higher edges, $300 cap, re-checks, pool guards): on/off' },
   { command: 'help', description: 'What this bot does' },
 ]
 const HELP = `Midas × Kiyoshi Fund alerts. I message you when something needs attention: the bot stops or keeps failing, the share price drops sharply, settlement is missed or waiting, the keeper has a problem or runs low on gas, the fund is paused, or a change to the vault (owner, treasury, keeper, manager, fee) is queued. After each daily settlement you get a summary.
@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
     const { data: st } = await db.from('bot_settings').select('*').eq('id', 1).single()
     const on = st?.careful !== false
     return `Careful mode: ${on ? 'ON' : 'OFF'} (changed ${ago(st?.careful_updated_at)})\n${on
-      ? 'Higher minimum edge (2 bps at the 13:00–14:59 Lagos peak, 3 bps busy hours, 4 bps quiet hours, at least $0.05), at most $500 a trade outside the peak, Textile checked again before buying on Uniswap, and only cNGN, USDC and wARS are traded (wARS only when Textile will buy it back).'
+      ? 'Minimum edge 2 bps at the 13:00–14:59 Lagos peak, 3 bps busy hours, 4 bps quiet hours (at least $0.05); Textile-first trades need at least 5 bps. At most $300 a trade at every hour. Before buying on Uniswap, Textile is checked again (0.5 bp cushion); before buying on Textile, Uniswap is checked again, and the Uniswap sale may fill at most 1 bp under its quote (otherwise the coins are held and sold later). Pools are skipped when their liquidity is under half its 7-day normal or their price moved over 0.5% in 10 minutes. Only cNGN, USDC and wARS are traded.'
       : 'The old rules: smart sizing alone sets the size and minimum edge, every corridor is traded.'}\n${on ? '/careful_off to go back' : '/careful_on to turn it on'}`
   }
   async function setCareful(on: boolean) {
