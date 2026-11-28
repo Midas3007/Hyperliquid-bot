@@ -4,3 +4,6 @@ __pycache__/
 .env
 data/
 *.db
+kiyoshi/contracts/node_modules
+kiyoshi/contracts/cache
+kiyoshi/contracts/artifacts
